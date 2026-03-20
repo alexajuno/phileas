@@ -15,9 +15,9 @@ from phileas.models import Category, MemoryItem, Resource
 class MemoryEngine:
     def __init__(self, db: Database, use_embeddings: bool = False):
         self.db = db
+        self._use_embeddings = use_embeddings
         self._embedder = None
-        if use_embeddings:
-            self._embedder = _load_embedder()
+        self._embedder_loaded = False
 
     def store_resource(self, content: str, modality: str = "conversation") -> Resource:
         """L1: Store raw content (immutable)."""
@@ -110,10 +110,17 @@ class MemoryEngine:
             })
         return result
 
+    def _get_embedder(self):
+        if not self._embedder_loaded and self._use_embeddings:
+            self._embedder = _load_embedder()
+            self._embedder_loaded = True
+        return self._embedder
+
     def _embed(self, text: str) -> list[float] | None:
-        if self._embedder is None:
+        embedder = self._get_embedder()
+        if embedder is None:
             return None
-        return self._embedder.encode(text).tolist()
+        return embedder.encode(text).tolist()
 
 
 def _load_embedder():
