@@ -6,7 +6,7 @@ Named after Phileas Fogg: a steadfast partner for the journey.
 
 ## What this is
 
-Phileas is not another chatbot or assistant framework. It's the persistent layer that lets an AI actually *know you* over time — remembering, forgetting naturally, and adapting as you change.
+It's the persistent layer that lets an AI actually *know you* over time — remembering, forgetting naturally, and adapting as you change.
 
 The goal: an open-source infrastructure anyone can run locally to give their AI companion genuine continuity.
 
