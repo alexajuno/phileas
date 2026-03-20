@@ -5,7 +5,7 @@ via skills/agents and calls these tools to store and retrieve them.
 
 Tools:
   - memorize: store a pre-extracted memory
-  - store_conversation: save raw conversation as a resource (L1)
+  - digest: store a conversation digest (L1 — survives beyond Claude's 30-day cleanup)
   - recall: retrieve relevant memories
   - profile: get user profile memories
   - categories: list memory categories
@@ -52,16 +52,35 @@ def memorize(
 
 
 @mcp.tool()
-def store_conversation(content: str) -> str:
-    """Store a raw conversation as an immutable resource (L1).
+def digest(summary: str, topics: str = "", date: str = "") -> str:
+    """Store a conversation digest — a compressed record of what was discussed.
 
-    Use this to preserve the original conversation before extracting memories.
+    Call this at the end of meaningful conversations. This is L1: it survives
+    beyond Claude's 30-day conversation cleanup, giving permanent traceability
+    for why memories were formed.
 
     Args:
-        content: The full conversation text.
+        summary: 2-4 sentence summary of what was discussed, decided, or learned.
+        topics: Comma-separated topic labels (e.g., "career, phileas, architecture").
+        date: Date of the conversation (YYYY-MM-DD). Defaults to today.
     """
-    resource = engine.store_resource(content, modality="conversation")
-    return f"Stored conversation (id: {resource.id})"
+    from datetime import date as date_type, datetime, timezone
+
+    content = summary
+    if topics:
+        content = f"[{topics}] {summary}"
+
+    resource = engine.store_resource(content, modality="digest")
+
+    # Also store as a memory item for searchability
+    item = engine.store_memory(
+        summary=summary,
+        memory_type="event",
+        category_name="conversations",
+        resource_id=resource.id,
+    )
+
+    return f"Stored digest: {summary[:80]}..."
 
 
 @mcp.tool()
