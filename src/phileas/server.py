@@ -23,7 +23,7 @@ mcp = FastMCP(
     instructions="Phileas is a long-term memory companion. Use 'memorize' to store important information about the user, and 'recall' to retrieve relevant memories.",
 )
 
-use_embeddings = os.environ.get("PHILEAS_EMBEDDINGS", "false").lower() == "true"
+use_embeddings = os.environ.get("PHILEAS_EMBEDDINGS", "true").lower() == "true"
 db = Database()
 engine = MemoryEngine(db, use_embeddings=use_embeddings)
 

@@ -58,15 +58,41 @@ class MemoryEngine:
         return item
 
     def recall(self, query: str, top_k: int = 10, memory_type: str | None = None) -> list[MemoryItem]:
-        """Retrieve relevant memories. Uses embeddings if available, else keyword search."""
+        """Hybrid retrieval: keyword match first for exact hits, then embedding search.
+
+        This handles both "@phuongtq" (exact name) and "feeling alone" (semantic).
+        """
         if memory_type:
             return self.db.get_items_by_type(memory_type)[:top_k]
 
-        if self._embedder:
-            query_embedding = self._embed(query)
-            return self.db.search_items_by_embedding(query_embedding, top_k=top_k)
+        # Fetch more candidates than needed so profile boost can find them
+        keyword_results = self.db.search_items_by_keyword(query, top_k=top_k * 3)
 
-        return self.db.search_items_by_keyword(query, top_k=top_k)
+        if not self._embedder:
+            return keyword_results
+
+        # Also run embedding search for semantic matches
+        query_embedding = self._embed(query)
+        embedding_results = self.db.search_items_by_embedding(query_embedding, top_k=top_k)
+
+        # Merge with profile boost: if query matches a @handle, put that profile first
+        seen_ids = set()
+        merged = []
+
+        # Boost: profile-type items matching the query go first
+        query_lower = query.lower().replace("@", "")
+        for item in keyword_results:
+            summary_start = item.summary[:50].lower().replace("@", "")
+            if item.memory_type == "profile" and query_lower in summary_start:
+                if item.id not in seen_ids:
+                    seen_ids.add(item.id)
+                    merged.append(item)
+
+        for item in keyword_results + embedding_results:
+            if item.id not in seen_ids:
+                seen_ids.add(item.id)
+                merged.append(item)
+        return merged[:top_k]
 
     def get_user_profile(self) -> list[MemoryItem]:
         return self.db.get_items_by_type("profile")

@@ -620,6 +620,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
+    { name = "sentence-transformers" },
 ]
 
 [package.optional-dependencies]
@@ -630,6 +631,7 @@ embeddings = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", extras = ["cli"] },
+    { name = "sentence-transformers", specifier = ">=5.3.0" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'" },
 ]
 provides-extras = ["embeddings"]
