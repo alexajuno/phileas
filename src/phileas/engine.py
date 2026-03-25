@@ -1,137 +1,289 @@
-"""Memory engine: store and retrieve memories.
+"""Memory engine: orchestrates SQLite, ChromaDB, and KuzuDB backends.
 
-Two retrieval paths:
-  1. Keyword search (no dependencies, always available)
-  2. Embedding search (requires sentence-transformers, optional)
+Three retrieval paths:
+  1. Keyword search (SQLite LIKE)
+  2. Semantic search (ChromaDB embeddings)
+  3. Graph search (KuzuDB entity nodes → connected memory IDs)
 
-LLM extraction is NOT done here — Claude Code handles that via skills/agents
-and calls the MCP tools to store pre-extracted memories.
+SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 """
 
+from datetime import date, datetime, timezone
+
 from phileas.db import Database
-from phileas.models import Category, MemoryItem, Resource
+from phileas.graph import GraphStore
+from phileas.models import MemoryItem
+from phileas.scoring import compute_score
+from phileas.vector import VectorStore
+
+# Graph-path similarity boost for candidates found via entity match
+_GRAPH_BOOST = 0.5
+
+
+def _days_since(dt: datetime | None) -> float:
+    if dt is None:
+        return 0.0
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - dt).total_seconds() / 86400.0)
+
+
+def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
+    return {
+        "id": item.id,
+        "summary": item.summary,
+        "type": item.memory_type,
+        "importance": item.importance,
+        "score": score,
+    }
 
 
 class MemoryEngine:
-    def __init__(self, db: Database, use_embeddings: bool = False):
+    def __init__(self, db: Database, vector: VectorStore, graph: GraphStore) -> None:
         self.db = db
-        self._use_embeddings = use_embeddings
-        self._embedder = None
-        self._embedder_loaded = False
+        self.vector = vector
+        self.graph = graph
 
-    def store_resource(self, content: str, modality: str = "conversation") -> Resource:
-        """L1: Store raw content (immutable)."""
-        resource = Resource(content=content, modality=modality)
-        self.db.save_resource(resource)
-        return resource
+    # ------------------------------------------------------------------
+    # memorize
+    # ------------------------------------------------------------------
 
-    def store_memory(
+    def memorize(
         self,
         summary: str,
         memory_type: str = "knowledge",
-        category_name: str | None = None,
-        resource_id: str | None = None,
+        importance: int = 5,
         daily_ref: str | None = None,
-    ) -> MemoryItem:
-        """L2: Store a pre-extracted memory. Claude Code decides what to store."""
-        embedding = self._embed(summary) if self._embedder else None
+        source_session_id: str | None = None,
+        tier: int = 2,
+        entities: list[dict] | None = None,
+        relationships: list[dict] | None = None,
+    ) -> dict:
+        """Store a memory across all three backends.
 
+        Returns a dict with keys: id, summary, deduplicated.
+        """
+        # 1. Deduplicate via ChromaDB
+        duplicate_id = self.vector.find_duplicate(summary, threshold=0.95)
+        if duplicate_id:
+            existing = self.db.get_item(duplicate_id)
+            if existing and existing.status == "active":
+                return {"id": existing.id, "summary": existing.summary, "deduplicated": True}
+
+        # 2. Default daily_ref to today
+        if daily_ref is None:
+            daily_ref = date.today().isoformat()
+
+        # 3. Create and persist MemoryItem
         item = MemoryItem(
-            resource_id=resource_id,
-            memory_type=memory_type,
             summary=summary,
-            embedding=embedding,
+            memory_type=memory_type,
+            importance=importance,
+            tier=tier,
             daily_ref=daily_ref,
+            source_session_id=source_session_id,
         )
         self.db.save_item(item)
 
-        if category_name:
-            category = self.db.get_category_by_name(category_name)
-            if not category:
-                cat_embedding = self._embed(category_name) if self._embedder else None
-                category = Category(
-                    name=category_name,
-                    description=f"Memories about {category_name}",
-                    embedding=cat_embedding,
-                )
-                self.db.save_category(category)
-            self.db.link_item_to_category(item.id, category.id)
+        # 4. Add to ChromaDB
+        self.vector.add(item.id, summary)
 
-        return item
+        # 5. Link entities and relationships in KuzuDB
+        if entities:
+            for entity in entities:
+                name = entity.get("name")
+                etype = entity.get("type")
+                if name and etype:
+                    self.graph.upsert_node(etype, name)
+                    self.graph.link_memory(item.id, etype, name)
 
-    def recall(self, query: str, top_k: int = 10, memory_type: str | None = None) -> list[MemoryItem]:
-        """Hybrid retrieval: keyword match first for exact hits, then embedding search.
+        if relationships:
+            for rel in relationships:
+                from_name = rel.get("from_name")
+                from_type = rel.get("from_type")
+                edge = rel.get("edge")
+                to_name = rel.get("to_name")
+                to_type = rel.get("to_type")
+                if from_name and from_type and edge and to_name and to_type:
+                    self.graph.upsert_node(from_type, from_name)
+                    self.graph.upsert_node(to_type, to_name)
+                    try:
+                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                    except Exception:
+                        # Silently ignore unsupported edge types
+                        pass
 
-        This handles both "@phuongtq" (exact name) and "feeling alone" (semantic).
+        return {"id": item.id, "summary": item.summary, "deduplicated": False}
+
+    # ------------------------------------------------------------------
+    # recall
+    # ------------------------------------------------------------------
+
+    def recall(
+        self,
+        query: str,
+        top_k: int = 10,
+        memory_type: str | None = None,
+        min_importance: int | None = None,
+    ) -> list[dict]:
+        """Multi-path retrieval: keyword + semantic + graph.
+
+        Returns list of dicts with id, summary, type, importance, score.
         """
-        if memory_type:
-            return self.db.get_items_by_type(memory_type)[:top_k]
+        candidates: dict[str, tuple[MemoryItem, float]] = {}  # id -> (item, similarity)
 
-        # Fetch more candidates than needed so profile boost can find them
-        keyword_results = self.db.search_items_by_keyword(query, top_k=top_k * 3)
+        # Path 1: keyword search (SQLite)
+        keyword_hits = self.db.search_by_keyword(query, top_k=top_k * 2)
+        for item in keyword_hits:
+            candidates[item.id] = (item, 0.6)  # keyword match similarity proxy
 
-        if not self._embedder:
-            return keyword_results
+        # Path 2: semantic search (ChromaDB)
+        semantic_hits = self.vector.search(query, top_k=top_k * 2)
+        for mem_id, sim in semantic_hits:
+            item = self.db.get_item(mem_id)
+            if item:
+                # Take max similarity if already seen
+                if mem_id in candidates:
+                    prev_sim = candidates[mem_id][1]
+                    candidates[mem_id] = (item, max(prev_sim, sim))
+                else:
+                    candidates[mem_id] = (item, sim)
 
-        # Also run embedding search for semantic matches
-        query_embedding = self._embed(query)
-        embedding_results = self.db.search_items_by_embedding(query_embedding, top_k=top_k)
+        # Path 3: graph search (KuzuDB)
+        words = query.split()
+        for word in words:
+            if len(word) < 2:
+                continue
+            graph_nodes = self.graph.search_nodes(word)
+            for node in graph_nodes:
+                entity_name = node.get("name")
+                entity_type = node.get("type")
+                if not entity_name or not entity_type:
+                    continue
+                try:
+                    memory_ids = self.graph.get_memories_about(entity_type, entity_name)
+                except Exception:
+                    continue
+                for mem_id in memory_ids:
+                    if mem_id not in candidates:
+                        item = self.db.get_item(mem_id)
+                        if item:
+                            candidates[mem_id] = (item, _GRAPH_BOOST)
+                    # Don't lower existing similarity scores
 
-        # Merge with profile boost: if query matches a @handle, put that profile first
-        seen_ids = set()
-        merged = []
+        # Score, filter, rank
+        results = []
+        for mem_id, (item, similarity) in candidates.items():
+            # Filter archived
+            if item.status != "active":
+                continue
+            # Filter by memory_type
+            if memory_type and item.memory_type != memory_type:
+                continue
+            # Filter by min_importance
+            if min_importance is not None and item.importance < min_importance:
+                continue
 
-        # Boost: profile-type items matching the query go first
-        query_lower = query.lower().replace("@", "")
-        for item in keyword_results:
-            summary_start = item.summary[:50].lower().replace("@", "")
-            if item.memory_type == "profile" and query_lower in summary_start:
-                if item.id not in seen_ids:
-                    seen_ids.add(item.id)
-                    merged.append(item)
+            days = _days_since(item.last_accessed)
+            score = compute_score(similarity, item.importance, days, item.access_count, item.tier)
+            results.append(_item_to_dict(item, score))
 
-        for item in keyword_results + embedding_results:
-            if item.id not in seen_ids:
-                seen_ids.add(item.id)
-                merged.append(item)
-        return merged[:top_k]
+        results.sort(key=lambda r: r["score"], reverse=True)
+        top_results = results[:top_k]
 
-    def get_user_profile(self) -> list[MemoryItem]:
-        return self.db.get_items_by_type("profile")
+        # Bump access counts
+        for r in top_results:
+            self.db.bump_access(r["id"])
 
-    def get_all_categories(self) -> list[dict]:
-        categories = self.db.get_all_categories()
-        result = []
-        for cat in categories:
-            items = self.db.get_items_in_category(cat.id)
-            result.append(
-                {
-                    "name": cat.name,
-                    "description": cat.description,
-                    "summary": cat.summary,
-                    "item_count": len(items),
-                }
-            )
-        return result
+        return top_results
 
-    def _get_embedder(self):
-        if not self._embedder_loaded and self._use_embeddings:
-            self._embedder = _load_embedder()
-            self._embedder_loaded = True
-        return self._embedder
+    # ------------------------------------------------------------------
+    # forget
+    # ------------------------------------------------------------------
 
-    def _embed(self, text: str) -> list[float] | None:
-        embedder = self._get_embedder()
-        if embedder is None:
-            return None
-        return embedder.encode(text).tolist()
+    def forget(self, memory_id: str, reason: str | None = None) -> str:
+        """Archive a memory in SQLite and delete it from ChromaDB."""
+        self.db.archive_item(memory_id, reason)
+        try:
+            self.vector.delete(memory_id)
+        except Exception:
+            pass
+        return f"Memory {memory_id} archived."
 
+    # ------------------------------------------------------------------
+    # relate
+    # ------------------------------------------------------------------
 
-def _load_embedder():
-    """Load sentence-transformers model. Fails gracefully if not installed."""
-    try:
-        from sentence_transformers import SentenceTransformer
+    def relate(
+        self,
+        from_name: str,
+        from_type: str,
+        edge_type: str,
+        to_name: str,
+        to_type: str,
+        memory_id: str | None = None,
+    ) -> str:
+        """Create an edge in the graph, optionally linking a memory."""
+        self.graph.upsert_node(from_type, from_name)
+        self.graph.upsert_node(to_type, to_name)
+        self.graph.create_edge(from_type, from_name, edge_type, to_type, to_name)
+        if memory_id:
+            self.graph.link_memory(memory_id, from_type, from_name)
+        return f"Edge {from_name} -[{edge_type}]-> {to_name} created."
 
-        return SentenceTransformer("all-MiniLM-L6-v2")
-    except ImportError:
-        return None
+    # ------------------------------------------------------------------
+    # about
+    # ------------------------------------------------------------------
+
+    def about(self, name: str, entity_type: str | None = None) -> list[dict]:
+        """Return memories connected to an entity node in the graph."""
+        # Search graph for the entity
+        node_hits = self.graph.search_nodes(name)
+        if entity_type:
+            node_hits = [n for n in node_hits if n.get("type") == entity_type]
+
+        results = []
+        seen_ids: set[str] = set()
+        for node in node_hits:
+            etype = node.get("type")
+            ename = node.get("name")
+            if not etype or not ename:
+                continue
+            try:
+                memory_ids = self.graph.get_memories_about(etype, ename)
+            except Exception:
+                continue
+            for mem_id in memory_ids:
+                if mem_id in seen_ids:
+                    continue
+                seen_ids.add(mem_id)
+                item = self.db.get_item(mem_id)
+                if item and item.status == "active":
+                    results.append(_item_to_dict(item))
+
+        return results
+
+    # ------------------------------------------------------------------
+    # timeline
+    # ------------------------------------------------------------------
+
+    def timeline(self, start_date: str, end_date: str | None = None) -> list[dict]:
+        """Return memories in a date range, delegating to SQLite."""
+        items = self.db.get_items_by_date_range(start_date, end_date)
+        return [_item_to_dict(item) for item in items]
+
+    # ------------------------------------------------------------------
+    # status
+    # ------------------------------------------------------------------
+
+    def status(self) -> dict:
+        """Aggregate stats from all three backends."""
+        counts = self.db.get_counts()
+        graph_stats = self.graph.get_stats()
+        return {
+            **counts,
+            "vector_count": self.vector.count(),
+            "graph_nodes": graph_stats["nodes"],
+            "graph_edges": graph_stats["edges"],
+        }
