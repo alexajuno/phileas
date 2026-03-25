@@ -1,7 +1,9 @@
 """Core data models for Phileas memory system.
 
-Follows memU's three-layer hierarchy:
-  Resource (raw data) -> MemoryItem (extracted facts) -> Category (organized topics)
+Three-tier memory hierarchy:
+  Tier 1: JSONL pointers (processed_sessions table)
+  Tier 2: Extracted facts (memory_items table + ChromaDB + KuzuDB)
+  Tier 3: Consolidated knowledge (same tables, tier=3)
 """
 
 import uuid
@@ -9,16 +11,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-# Memory types — what kinds of things do we remember?
-# memU uses: profile, event, knowledge, behavior, skill, tool
-# For a companion, we keep the ones that matter for relationships.
 MemoryType = Literal[
-    "profile",  # who the user is: name, role, preferences, identity
-    "event",  # things that happened: "got promoted", "moved to Tokyo"
-    "knowledge",  # things the user knows or cares about: "studying ML", "loves jazz"
-    "behavior",  # patterns: "prefers morning meetings", "gets stressed before deadlines"
-    "reflection",  # higher-level inferences: "going through a career transition"
+    "profile",     # who the user is
+    "event",       # things that happened
+    "knowledge",   # things the user knows or cares about
+    "behavior",    # patterns and preferences
+    "reflection",  # higher-level inferences
 ]
+
+MemoryStatus = Literal["active", "archived"]
 
 
 def _now() -> datetime:
@@ -30,46 +31,19 @@ def _uuid() -> str:
 
 
 @dataclass
-class Resource:
-    """L1: Raw, immutable input data. A conversation, a document, a note."""
-
-    id: str = field(default_factory=_uuid)
-    content: str = ""
-    modality: str = "conversation"  # conversation, document, note
-    created_at: datetime = field(default_factory=_now)
-
-
-@dataclass
 class MemoryItem:
-    """L2: An extracted, structured memory. Editable — this is our understanding."""
+    """A structured memory. The core unit of Phileas."""
 
     id: str = field(default_factory=_uuid)
-    resource_id: str | None = None  # traces back to the source
-    memory_type: MemoryType = "knowledge"
     summary: str = ""
-    embedding: list[float] | None = None
-    happened_at: datetime | None = None
-    daily_ref: str | None = None  # links to ~/life/daily/{date}.md
+    memory_type: MemoryType = "knowledge"
+    importance: int = 5  # 1-10 scale
+    tier: int = 2  # 2=long-term, 3=consolidated
+    status: MemoryStatus = "active"
+    access_count: int = 0
+    last_accessed: datetime | None = None
+    daily_ref: str | None = None
+    source_session_id: str | None = None
+    consolidated_into: str | None = None  # memory ID of tier-3 parent
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
-
-
-@dataclass
-class Category:
-    """Organizational grouping. Auto-generated from memory items."""
-
-    id: str = field(default_factory=_uuid)
-    name: str = ""
-    description: str = ""
-    summary: str | None = None  # LLM-generated summary of all items in this category
-    embedding: list[float] | None = None
-    created_at: datetime = field(default_factory=_now)
-    updated_at: datetime = field(default_factory=_now)
-
-
-@dataclass
-class CategoryItem:
-    """Links a MemoryItem to a Category."""
-
-    item_id: str = ""
-    category_id: str = ""
