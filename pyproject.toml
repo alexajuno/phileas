@@ -7,13 +7,15 @@ requires-python = ">=3.14"
 dependencies = [
     "mcp[cli]",
     "sentence-transformers>=5.3.0",
+    "chromadb>=1.0.0",
+    "kuzu>=0.8.0",
 ]
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers"]
 
 [dependency-groups]
-dev = ["ruff"]
+dev = ["ruff", "pytest"]
 
 [build-system]
 requires = ["hatchling"]
