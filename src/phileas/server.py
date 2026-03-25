@@ -5,18 +5,27 @@ via skills/agents and calls these tools to store and retrieve them.
 
 Tools:
   - memorize: store a pre-extracted memory
-  - digest: store a conversation digest (L1 — survives beyond Claude's 30-day cleanup)
   - recall: retrieve relevant memories
-  - profile: get user profile memories
-  - categories: list memory categories
+  - forget: archive a memory
+  - relate: create a graph edge between entities
+  - about: get memories connected to an entity
+  - timeline: get memories in a date range
+  - profile: get all profile-type memories
+  - ingest_session: parse a JSONL session for Claude Code to extract from
+  - mark_session_done: mark a session as processed
+  - consolidate: find clusters of similar tier-2 memories for summarization
+  - status: system health/stats
 """
 
-import os
+import json
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from phileas.db import Database
 from phileas.engine import MemoryEngine
+from phileas.graph import GraphStore
+from phileas.vector import VectorStore
 
 mcp = FastMCP(
     "phileas",
@@ -27,17 +36,20 @@ mcp = FastMCP(
     ),
 )
 
-use_embeddings = os.environ.get("PHILEAS_EMBEDDINGS", "true").lower() == "true"
 db = Database()
-engine = MemoryEngine(db, use_embeddings=use_embeddings)
+vector = VectorStore()
+graph = GraphStore()
+engine = MemoryEngine(db=db, vector=vector, graph=graph)
 
 
 @mcp.tool()
 def memorize(
     summary: str,
     memory_type: str = "knowledge",
-    category: str | None = None,
+    importance: int = 5,
     daily_ref: str | None = None,
+    entities: str | None = None,
+    relationships: str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -46,96 +58,299 @@ def memorize(
     Args:
         summary: What to remember (1-2 sentences).
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
-        category: Topic label (e.g., "career", "relationships", "hobbies").
+        importance: Importance score 1-10 (10 = most important).
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
+        entities: JSON array of {"name": str, "type": str} objects to link in the graph.
+        relationships: JSON array of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
     """
-    from datetime import date
+    parsed_entities = json.loads(entities) if entities else None
+    parsed_relationships = json.loads(relationships) if relationships else None
 
-    if daily_ref is None:
-        daily_ref = date.today().isoformat()
-
-    item = engine.store_memory(
+    result = engine.memorize(
         summary=summary,
         memory_type=memory_type,
-        category_name=category,
+        importance=importance,
         daily_ref=daily_ref,
+        entities=parsed_entities,
+        relationships=parsed_relationships,
     )
-    return f"Stored [{item.memory_type}] {item.summary}"
+
+    if result.get("deduplicated"):
+        return f"Duplicate detected — existing memory: [{result['id']}] {result['summary']}"
+
+    return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
 
 
 @mcp.tool()
-def digest(summary: str, topics: str = "", date: str = "") -> str:
-    """Store a conversation digest — a compressed record of what was discussed.
-
-    Call this at the end of meaningful conversations. This is L1: it survives
-    beyond Claude's 30-day conversation cleanup, giving permanent traceability
-    for why memories were formed.
-
-    Args:
-        summary: 2-4 sentence summary of what was discussed, decided, or learned.
-        topics: Comma-separated topic labels (e.g., "career, phileas, architecture").
-        date: Date of the conversation (YYYY-MM-DD). Defaults to today.
-    """
-
-    content = summary
-    if topics:
-        content = f"[{topics}] {summary}"
-
-    resource = engine.store_resource(content, modality="digest")
-
-    # Also store as a memory item for searchability
-    engine.store_memory(
-        summary=summary,
-        memory_type="event",
-        category_name="conversations",
-        resource_id=resource.id,
-    )
-
-    return f"Stored digest: {summary[:80]}..."
-
-
-@mcp.tool()
-def recall(query: str, top_k: int = 5, memory_type: str | None = None) -> str:
+def recall(
+    query: str,
+    top_k: int = 5,
+    memory_type: str | None = None,
+    min_importance: int | None = None,
+) -> str:
     """Retrieve memories relevant to a query.
 
     Args:
         query: What to search for (natural language or keywords).
         top_k: Maximum number of memories to return.
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
+        min_importance: Only return memories with importance >= this value.
     """
-    items = engine.recall(query, top_k=top_k, memory_type=memory_type)
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance)
     if not items:
         return "No relevant memories found."
 
     lines = [f"Found {len(items)} memories:"]
     for item in items:
-        lines.append(f"  [{item.memory_type}] {item.summary}")
+        score_str = f"score={item['score']:.2f}" if item.get("score") else ""
+        imp_str = f"importance={item['importance']}"
+        meta = ", ".join(filter(None, [imp_str, score_str]))
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']} ({meta})")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def forget(memory_id: str, reason: str | None = None) -> str:
+    """Archive a memory so it is no longer retrieved.
+
+    Args:
+        memory_id: The UUID of the memory to archive.
+        reason: Optional reason for archiving (for audit trail).
+    """
+    return engine.forget(memory_id, reason=reason)
+
+
+@mcp.tool()
+def relate(
+    from_name: str,
+    from_type: str,
+    edge_type: str,
+    to_name: str,
+    to_type: str,
+    memory_id: str | None = None,
+) -> str:
+    """Create a relationship edge between two entities in the knowledge graph.
+
+    Args:
+        from_name: Name of the source entity (e.g., "Giao").
+        from_type: Type of the source entity (e.g., "Person").
+        edge_type: Relationship type (e.g., "WORKS_AT", "KNOWS", "LIKES").
+        to_name: Name of the target entity (e.g., "Anthropic").
+        to_type: Type of the target entity (e.g., "Company").
+        memory_id: Optional memory UUID to link to the source entity.
+    """
+    return engine.relate(
+        from_name=from_name,
+        from_type=from_type,
+        edge_type=edge_type,
+        to_name=to_name,
+        to_type=to_type,
+        memory_id=memory_id,
+    )
+
+
+@mcp.tool()
+def about(name: str, entity_type: str | None = None) -> str:
+    """Get all memories connected to an entity in the knowledge graph.
+
+    Args:
+        name: Name of the entity to look up (e.g., "Giao", "React").
+        entity_type: Optional type filter (e.g., "Person", "Technology").
+    """
+    items = engine.about(name, entity_type=entity_type)
+    if not items:
+        return f"No memories found for '{name}'."
+
+    lines = [f"Memories about '{name}' ({len(items)} found):"]
+    for item in items:
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def timeline(start_date: str, end_date: str | None = None) -> str:
+    """Get memories anchored to a date or date range.
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format.
+        end_date: End date in YYYY-MM-DD format (optional; if omitted, returns only start_date).
+    """
+    items = engine.timeline(start_date, end_date=end_date)
+    if not items:
+        if end_date:
+            return f"No memories found between {start_date} and {end_date}."
+        return f"No memories found for {start_date}."
+
+    range_str = f"{start_date} to {end_date}" if end_date else start_date
+    lines = [f"Memories for {range_str} ({len(items)} found):"]
+    for item in items:
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
     return "\n".join(lines)
 
 
 @mcp.tool()
 def profile() -> str:
-    """Get all profile memories — who the user is."""
-    items = engine.get_user_profile()
+    """Get all profile memories — who the user is, their identity and core traits."""
+    items = db.get_items_by_type("profile")
     if not items:
         return "No profile memories stored yet."
 
-    lines = ["User profile:"]
+    lines = [f"User profile ({len(items)} items):"]
     for item in items:
-        lines.append(f"  - {item.summary}")
+        imp = f"importance={item.importance}"
+        lines.append(f"  [{item.id}] {item.summary} ({imp})")
     return "\n".join(lines)
 
 
 @mcp.tool()
-def categories() -> str:
-    """List all memory categories and how many memories each contains."""
-    cats = engine.get_all_categories()
-    if not cats:
-        return "No categories yet."
+def ingest_session(session_path: str) -> str:
+    """Parse a Claude Code JSONL session file and return its conversation text.
 
-    lines = ["Memory categories:"]
-    for cat in cats:
-        lines.append(f"  {cat['name']}: {cat['item_count']} memories")
-        if cat["summary"]:
-            lines.append(f"    Summary: {cat['summary']}")
+    Claude Code should then extract memories from the returned text and call
+    memorize() for each one. Call mark_session_done() when extraction is complete.
+
+    Args:
+        session_path: Absolute path to the .jsonl session file.
+    """
+    from phileas.ingest import parse_session_jsonl
+
+    path = Path(session_path)
+    session_id = path.stem
+
+    if db.is_session_processed(session_id):
+        return f"Session {session_id} already processed. Skipping."
+
+    if not path.exists():
+        return f"File not found: {session_path}"
+
+    messages = parse_session_jsonl(path)
+    if not messages:
+        return f"No messages found in {session_path}."
+
+    lines = [f"Session: {session_id}", f"Messages: {len(messages)}", "---"]
+    for msg in messages:
+        role = msg["role"].upper()
+        content = msg["content"]
+        # Truncate very long messages for readability
+        if len(content) > 2000:
+            content = content[:2000] + "... [truncated]"
+        lines.append(f"{role}: {content}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("Extract memories from above and call memorize() for each.")
+    lines.append(f"Then call mark_session_done('{session_path}') to mark as processed.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def mark_session_done(session_path: str) -> str:
+    """Mark a session as processed so it won't be ingested again.
+
+    Call this after extracting memories from ingest_session().
+
+    Args:
+        session_path: Absolute path to the .jsonl session file (same as passed to ingest_session).
+    """
+    path = Path(session_path)
+    session_id = path.stem
+
+    if db.is_session_processed(session_id):
+        return f"Session {session_id} was already marked as processed."
+
+    db.mark_session_processed(session_id, file_path=session_path)
+    total = db.get_processed_session_count()
+    return f"Session {session_id} marked as processed. Total processed sessions: {total}."
+
+
+@mcp.tool()
+def consolidate(min_cluster_size: int = 3, max_clusters: int = 10) -> str:
+    """Find clusters of similar tier-2 memories for consolidation.
+
+    Returns clusters of semantically similar memories for Claude Code to summarize
+    into higher-level tier-3 memories. Does not modify any data.
+
+    Args:
+        min_cluster_size: Minimum number of memories to form a cluster (default 3).
+        max_clusters: Maximum number of clusters to return (default 10).
+    """
+    # Get all active tier-2 items without consolidated_into
+    tier2_items = db.get_items_by_tier(2)
+    unconsolidated = [item for item in tier2_items if item.consolidated_into is None]
+
+    if not unconsolidated:
+        return "No unconsolidated tier-2 memories found."
+
+    if len(unconsolidated) < min_cluster_size:
+        return (
+            f"Only {len(unconsolidated)} unconsolidated memories "
+            f"— need at least {min_cluster_size} to form a cluster."
+        )
+
+    # Find clusters using vector similarity
+    clusters: list[list[dict]] = []
+    used_ids: set[str] = set()
+
+    for item in unconsolidated:
+        if item.id in used_ids:
+            continue
+
+        # Search for similar memories
+        similar = vector.search(item.summary, top_k=min_cluster_size * 3)
+        cluster_ids = []
+        for mem_id, sim in similar:
+            if sim >= 0.7 and mem_id not in used_ids:
+                candidate = db.get_item(mem_id)
+                is_eligible = (
+                    candidate
+                    and candidate.status == "active"
+                    and candidate.tier == 2
+                    and candidate.consolidated_into is None
+                )
+                if is_eligible:
+                    cluster_ids.append((mem_id, sim))
+
+        if len(cluster_ids) >= min_cluster_size:
+            cluster = []
+            for mem_id, sim in cluster_ids:
+                candidate = db.get_item(mem_id)
+                if candidate:
+                    cluster.append({"id": candidate.id, "summary": candidate.summary, "similarity": sim})
+                    used_ids.add(mem_id)
+            clusters.append(cluster)
+
+        if len(clusters) >= max_clusters:
+            break
+
+    if not clusters:
+        return f"No clusters of size >= {min_cluster_size} found among {len(unconsolidated)} memories."
+
+    lines = [f"Found {len(clusters)} cluster(s) for consolidation:"]
+    for i, cluster in enumerate(clusters, 1):
+        lines.append(f"\nCluster {i} ({len(cluster)} memories):")
+        for mem in cluster:
+            sim_str = f"sim={mem['similarity']:.2f}"
+            lines.append(f"  [{mem['id']}] {mem['summary']} ({sim_str})")
+    lines.append("\nSummarize each cluster and call memorize() with tier=3 for the summary.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def status() -> str:
+    """Get system health and memory statistics."""
+    stats = engine.status()
+    processed_count = db.get_processed_session_count()
+
+    lines = [
+        "Phileas Memory System Status",
+        "=" * 30,
+        f"Total memories:     {stats.get('total', 0)}",
+        f"  Active tier-2:    {stats.get('tier2', 0)}",
+        f"  Active tier-3:    {stats.get('tier3', 0)}",
+        f"  Archived:         {stats.get('archived', 0)}",
+        f"Vector embeddings:  {stats.get('vector_count', 0)}",
+        f"Graph nodes:        {stats.get('graph_nodes', 0)}",
+        f"Graph edges:        {stats.get('graph_edges', 0)}",
+        f"Sessions processed: {processed_count}",
+    ]
     return "\n".join(lines)
