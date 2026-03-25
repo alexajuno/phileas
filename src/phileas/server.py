@@ -283,8 +283,7 @@ def consolidate(min_cluster_size: int = 3, max_clusters: int = 10) -> str:
 
     if len(unconsolidated) < min_cluster_size:
         return (
-            f"Only {len(unconsolidated)} unconsolidated memories "
-            f"— need at least {min_cluster_size} to form a cluster."
+            f"Only {len(unconsolidated)} unconsolidated memories — need at least {min_cluster_size} to form a cluster."
         )
 
     # Find clusters using vector similarity

@@ -112,9 +112,7 @@ class Database:
             return self.get_active_items()[:top_k]
 
         conditions = " OR ".join(["LOWER(summary) LIKE ?" for _ in words])
-        score_expr = " + ".join(
-            ["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words]
-        )
+        score_expr = " + ".join(["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words])
         params = [f"%{w}%" for w in words]
 
         rows = self.conn.execute(
@@ -156,9 +154,7 @@ class Database:
     # --- Processed Sessions ---
 
     def is_session_processed(self, session_id: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM processed_sessions WHERE session_id = ?", (session_id,)
-        ).fetchone()
+        row = self.conn.execute("SELECT 1 FROM processed_sessions WHERE session_id = ?", (session_id,)).fetchone()
         return row is not None
 
     def mark_session_processed(self, session_id: str, file_path: str) -> None:

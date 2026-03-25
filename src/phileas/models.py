@@ -12,10 +12,10 @@ from datetime import datetime, timezone
 from typing import Literal
 
 MemoryType = Literal[
-    "profile",     # who the user is
-    "event",       # things that happened
-    "knowledge",   # things the user knows or cares about
-    "behavior",    # patterns and preferences
+    "profile",  # who the user is
+    "event",  # things that happened
+    "knowledge",  # things the user knows or cares about
+    "behavior",  # patterns and preferences
     "reflection",  # higher-level inferences
 ]
 
