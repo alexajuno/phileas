@@ -1,0 +1,264 @@
+<!--
+  LAYOUT GRID — Phileas v2 Architecture
+  ======================================
+  COLUMNS (x-axis)
+    left-margin:     0 ── 40
+    trigger-col:    40 ── 200    center=120   w=160
+    arrow-gap1:    200 ── 240
+    tier1-col:     240 ── 440    center=340   w=200
+    arrow-gap2:    440 ── 480
+    tier2-col:     480 ── 680    center=580   w=200
+    arrow-gap3:    680 ── 720
+    tier3-col:     720 ── 920    center=820   w=200
+    right-margin:  920 ── 960
+
+  ROWS (y-axis)
+    title-row:       0 ── 60     center=35    h=60
+    subtitle-row:   60 ── 90     center=75    h=30
+    gap0:           90 ── 120                  h=30
+    triggers-row:  120 ── 320    center=220   h=200
+    gap1:          320 ── 360                  h=40
+    storage-label: 360 ── 390    center=375   h=30
+    gap2:          390 ── 410                  h=20
+    db-row:        410 ── 560    center=485   h=150
+    gap3:          560 ── 590                  h=30
+    retrieval-row: 590 ── 740    center=665   h=150
+    gap4:          740 ── 770                  h=30
+    legend-row:    770 ── 860    center=815   h=90
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 870" font-family="'Inter', 'SF Pro Display', -apple-system, sans-serif">
+  <defs>
+    <marker id="arrow-white" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#60a5fa" stroke-width="1.2"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#4ade80" stroke-width="1.2"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#fbbf24" stroke-width="1.2"/>
+    </marker>
+    <linearGradient id="bg-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="870" rx="12" fill="url(#bg-grad)"/>
+
+  <!-- Title -->
+  <text x="480" y="38" text-anchor="middle" fill="#f1f5f9" font-size="22" font-weight="700">Phileas v2 — Memory Architecture</text>
+  <text x="480" y="75" text-anchor="middle" fill="#64748b" font-size="13">Graph + Vector + Relational | Hook-Driven | Three-Tier Lifecycle</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TRIGGERS COLUMN                         -->
+  <!-- ═══════════════════════════════════════ -->
+  <text x="120" y="140" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1.5">TRIGGERS</text>
+
+  <!-- SessionStart Hook -->
+  <rect x="40" y="158" width="160" height="44" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="120" y="176" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="600">SessionStart</text>
+  <text x="120" y="192" text-anchor="middle" fill="#94a3b8" font-size="10">scan JSONL backlog</text>
+
+  <!-- Phileas Skill (mid-conversation) -->
+  <rect x="40" y="214" width="160" height="44" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="120" y="232" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="600">Phileas Skill</text>
+  <text x="120" y="248" text-anchor="middle" fill="#94a3b8" font-size="10">live extraction</text>
+
+  <!-- Consolidation (scheduled/manual) -->
+  <rect x="40" y="270" width="160" height="44" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="120" y="288" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="600">Consolidation</text>
+  <text x="120" y="304" text-anchor="middle" fill="#94a3b8" font-size="10">weekly / manual</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TIER 1: RAW TRANSCRIPTS                 -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="240" y="120" width="200" height="200" rx="10" fill="#1e293b" stroke="#f97316" stroke-width="1.5" stroke-opacity="0.5"/>
+  <text x="340" y="148" text-anchor="middle" fill="#f97316" font-size="13" font-weight="700">Tier 1</text>
+  <text x="340" y="166" text-anchor="middle" fill="#cbd5e1" font-size="11">Working Memory</text>
+
+  <rect x="260" y="182" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="340" y="200" text-anchor="middle" fill="#a1a1aa" font-size="10">~/.claude/**/*.jsonl</text>
+
+  <rect x="260" y="218" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="340" y="236" text-anchor="middle" fill="#a1a1aa" font-size="10">Pointers, not copies</text>
+
+  <rect x="260" y="254" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="340" y="272" text-anchor="middle" fill="#a1a1aa" font-size="10">Processed session index</text>
+
+  <rect x="260" y="290" width="160" height="20" rx="4" fill="#451a03" stroke="#f97316" stroke-width="0.5" stroke-opacity="0.3"/>
+  <text x="340" y="304" text-anchor="middle" fill="#fb923c" font-size="9">SQLite only</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TIER 2: EXTRACTED MEMORIES              -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="480" y="120" width="200" height="200" rx="10" fill="#1e293b" stroke="#60a5fa" stroke-width="1.5" stroke-opacity="0.5"/>
+  <text x="580" y="148" text-anchor="middle" fill="#60a5fa" font-size="13" font-weight="700">Tier 2</text>
+  <text x="580" y="166" text-anchor="middle" fill="#cbd5e1" font-size="11">Long-term Memory</text>
+
+  <rect x="500" y="182" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="580" y="200" text-anchor="middle" fill="#a1a1aa" font-size="10">Facts, events, preferences</text>
+
+  <rect x="500" y="218" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="580" y="236" text-anchor="middle" fill="#a1a1aa" font-size="10">Entities + relationships</text>
+
+  <rect x="500" y="254" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="580" y="272" text-anchor="middle" fill="#a1a1aa" font-size="10">Importance + decay scoring</text>
+
+  <rect x="500" y="290" width="160" height="20" rx="4" fill="#172554" stroke="#60a5fa" stroke-width="0.5" stroke-opacity="0.3"/>
+  <text x="580" y="304" text-anchor="middle" fill="#93c5fd" font-size="9">SQLite + ChromaDB + KuzuDB</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- TIER 3: CONSOLIDATED KNOWLEDGE          -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="720" y="120" width="200" height="200" rx="10" fill="#1e293b" stroke="#4ade80" stroke-width="1.5" stroke-opacity="0.5"/>
+  <text x="820" y="148" text-anchor="middle" fill="#4ade80" font-size="13" font-weight="700">Tier 3</text>
+  <text x="820" y="166" text-anchor="middle" fill="#cbd5e1" font-size="11">Core Memory</text>
+
+  <rect x="740" y="182" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="820" y="200" text-anchor="middle" fill="#a1a1aa" font-size="10">Merged knowledge clusters</text>
+
+  <rect x="740" y="218" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="820" y="236" text-anchor="middle" fill="#a1a1aa" font-size="10">Stable identity facts</text>
+
+  <rect x="740" y="254" width="160" height="28" rx="6" fill="#27272a" stroke="#3f3f46" stroke-width="0.5"/>
+  <text x="820" y="272" text-anchor="middle" fill="#a1a1aa" font-size="10">Long-running patterns</text>
+
+  <rect x="740" y="290" width="160" height="20" rx="4" fill="#052e16" stroke="#4ade80" stroke-width="0.5" stroke-opacity="0.3"/>
+  <text x="820" y="304" text-anchor="middle" fill="#86efac" font-size="9">SQLite + ChromaDB + KuzuDB</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- ARROWS: Triggers → Tiers               -->
+  <!-- ═══════════════════════════════════════ -->
+
+  <!-- SessionStart → reads Tier 1 (JSONL files) -->
+  <line x1="200" y1="180" x2="240" y2="180" stroke="#60a5fa" stroke-width="1.5" marker-end="url(#arrow-blue)" stroke-dasharray="4,3"/>
+
+  <!-- Tier 1 → Tier 2 (extraction by SessionStart) -->
+  <line x1="440" y1="220" x2="480" y2="220" stroke="#60a5fa" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <text x="460" y="212" text-anchor="middle" fill="#60a5fa" font-size="8" transform="rotate(-90, 460, 212)">extract</text>
+
+  <!-- Phileas Skill → Tier 2 (direct, mid-conversation) -->
+  <path d="M200,236 L230,236 L230,340 L580,340 L580,320" stroke="#4ade80" stroke-width="1.5" fill="none" marker-end="url(#arrow-green)" stroke-dasharray="4,3"/>
+
+  <!-- Consolidation → Tier 2 to Tier 3 -->
+  <path d="M200,292 L230,292 L230,350 L700,350 L700,260" stroke="#fbbf24" stroke-width="1.5" fill="none" marker-end="url(#arrow-amber)" stroke-dasharray="4,3"/>
+  <!-- Tier 2 → Tier 3 (data flow) -->
+  <line x1="680" y1="220" x2="720" y2="220" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+  <text x="700" y="212" text-anchor="middle" fill="#fbbf24" font-size="8" transform="rotate(-90, 700, 212)">consolidate</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- STORAGE LAYER LABEL                     -->
+  <!-- ═══════════════════════════════════════ -->
+  <text x="480" y="378" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1.5">STORAGE BACKENDS</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- DATABASE BOXES                          -->
+  <!-- ═══════════════════════════════════════ -->
+
+  <!-- SQLite -->
+  <rect x="120" y="410" width="200" height="140" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1.5" stroke-opacity="0.6"/>
+  <rect x="140" y="422" width="60" height="22" rx="4" fill="#451a03"/>
+  <text x="170" y="437" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="600">SQLite</text>
+  <text x="220" y="460" text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="600">Relational Store</text>
+
+  <text x="140" y="482" fill="#94a3b8" font-size="10">Memory metadata</text>
+  <text x="140" y="498" fill="#94a3b8" font-size="10">Importance scores</text>
+  <text x="140" y="514" fill="#94a3b8" font-size="10">Access tracking</text>
+  <text x="140" y="530" fill="#94a3b8" font-size="10">Processed session index</text>
+  <text x="140" y="546" fill="#94a3b8" font-size="10">Audit log</text>
+
+  <!-- ChromaDB -->
+  <rect x="380" y="410" width="200" height="140" rx="10" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5" stroke-opacity="0.6"/>
+  <rect x="400" y="422" width="76" height="22" rx="4" fill="#2e1065"/>
+  <text x="438" y="437" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">ChromaDB</text>
+  <text x="480" y="460" text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="600">Vector Store</text>
+
+  <text x="400" y="482" fill="#94a3b8" font-size="10">Semantic embeddings</text>
+  <text x="400" y="498" fill="#94a3b8" font-size="10">Similarity search</text>
+  <text x="400" y="514" fill="#94a3b8" font-size="10">HNSW indexing</text>
+  <text x="400" y="530" fill="#94a3b8" font-size="10">Fuzzy matching</text>
+
+  <!-- KuzuDB -->
+  <rect x="640" y="410" width="200" height="140" rx="10" fill="#1e293b" stroke="#2dd4bf" stroke-width="1.5" stroke-opacity="0.6"/>
+  <rect x="660" y="422" width="66" height="22" rx="4" fill="#042f2e"/>
+  <text x="693" y="437" text-anchor="middle" fill="#2dd4bf" font-size="10" font-weight="600">KuzuDB</text>
+  <text x="740" y="460" text-anchor="middle" fill="#cbd5e1" font-size="11" font-weight="600">Graph Store</text>
+
+  <text x="660" y="482" fill="#94a3b8" font-size="10">Entities (people, projects)</text>
+  <text x="660" y="498" fill="#94a3b8" font-size="10">Relationships (edges)</text>
+  <text x="660" y="514" fill="#94a3b8" font-size="10">Multi-hop queries</text>
+  <text x="660" y="530" fill="#94a3b8" font-size="10">Neighborhood traversal</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- RETRIEVAL LAYER                         -->
+  <!-- ═══════════════════════════════════════ -->
+  <text x="480" y="608" text-anchor="middle" fill="#94a3b8" font-size="11" font-weight="600" letter-spacing="1.5">RETRIEVAL (RECALL)</text>
+
+  <!-- Retrieval pipeline box -->
+  <rect x="120" y="620" width="720" height="110" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+
+  <!-- Step 1 -->
+  <circle cx="170" cy="660" r="13" fill="#3b82f6"/>
+  <text x="170" y="664" text-anchor="middle" fill="white" font-size="10" font-weight="700">1</text>
+  <text x="194" y="656" fill="#cbd5e1" font-size="10" font-weight="600">Query Parse</text>
+  <text x="194" y="670" fill="#94a3b8" font-size="9">Intent + entities</text>
+
+  <!-- Step 2 -->
+  <circle cx="330" cy="660" r="13" fill="#a855f7"/>
+  <text x="330" y="664" text-anchor="middle" fill="white" font-size="10" font-weight="700">2</text>
+  <text x="354" y="656" fill="#cbd5e1" font-size="10" font-weight="600">Multi-path Search</text>
+  <text x="354" y="670" fill="#94a3b8" font-size="9">Keyword + Semantic + Graph</text>
+
+  <!-- Step 3 -->
+  <circle cx="520" cy="660" r="13" fill="#f59e0b"/>
+  <text x="520" y="664" text-anchor="middle" fill="white" font-size="10" font-weight="700">3</text>
+  <text x="544" y="656" fill="#cbd5e1" font-size="10" font-weight="600">Score + Rank</text>
+  <text x="544" y="670" fill="#94a3b8" font-size="9">Importance x Recency x Relevance</text>
+
+  <!-- Step 4 -->
+  <circle cx="700" cy="660" r="13" fill="#10b981"/>
+  <text x="700" y="664" text-anchor="middle" fill="white" font-size="10" font-weight="700">4</text>
+  <text x="724" y="656" fill="#cbd5e1" font-size="10" font-weight="600">Dedupe + Return</text>
+  <text x="724" y="670" fill="#94a3b8" font-size="9">Top-k unique results</text>
+
+  <!-- Arrows between steps -->
+  <line x1="190" y1="660" x2="317" y2="660" stroke="#475569" stroke-width="1" marker-end="url(#arrow-white)"/>
+  <line x1="380" y1="660" x2="507" y2="660" stroke="#475569" stroke-width="1" marker-end="url(#arrow-white)"/>
+  <line x1="560" y1="660" x2="687" y2="660" stroke="#475569" stroke-width="1" marker-end="url(#arrow-white)"/>
+
+  <!-- Scoring formula -->
+  <text x="480" y="710" text-anchor="middle" fill="#64748b" font-size="10" font-style="italic">score = (similarity x 0.4) + (importance x 0.3) + (recency_decay x 0.2) + (access_freq x 0.1)</text>
+
+  <!-- ═══════════════════════════════════════ -->
+  <!-- LEGEND                                  -->
+  <!-- ═══════════════════════════════════════ -->
+  <rect x="120" y="770" width="720" height="80" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+
+  <circle cx="160" cy="800" r="6" fill="#60a5fa"/>
+  <text x="174" y="804" fill="#94a3b8" font-size="10">SessionStart (extract backlog)</text>
+
+  <circle cx="390" cy="800" r="6" fill="#4ade80"/>
+  <text x="404" y="804" fill="#94a3b8" font-size="10">Phileas Skill (live)</text>
+
+  <circle cx="570" cy="800" r="6" fill="#fbbf24"/>
+  <text x="584" y="804" fill="#94a3b8" font-size="10">Consolidation (weekly)</text>
+
+  <circle cx="160" cy="830" r="6" fill="#fbbf24"/>
+  <text x="174" y="834" fill="#94a3b8" font-size="10">SQLite (relational)</text>
+
+  <circle cx="340" cy="830" r="6" fill="#a78bfa"/>
+  <text x="354" y="834" fill="#94a3b8" font-size="10">ChromaDB (vector)</text>
+
+  <circle cx="520" cy="830" r="6" fill="#2dd4bf"/>
+  <text x="534" y="834" fill="#94a3b8" font-size="10">KuzuDB (graph)</text>
+
+  <line x1="480" y1="830" x2="510" y2="830" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="520" y="834" fill="#94a3b8" font-size="10">Hook trigger</text>
+
+  <line x1="640" y1="830" x2="670" y2="830" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="680" y="834" fill="#94a3b8" font-size="10">Data flow</text>
+</svg>
