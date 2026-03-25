@@ -48,8 +48,8 @@ def memorize(
     memory_type: str = "knowledge",
     importance: int = 5,
     daily_ref: str | None = None,
-    entities: str | None = None,
-    relationships: str | None = None,
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -60,11 +60,11 @@ def memorize(
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
         importance: Importance score 1-10 (10 = most important).
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
-        entities: JSON array of {"name": str, "type": str} objects to link in the graph.
-        relationships: JSON array of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
+        entities: List or JSON string of {"name": str, "type": str} objects to link in the graph.
+        relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
     """
-    parsed_entities = json.loads(entities) if entities else None
-    parsed_relationships = json.loads(relationships) if relationships else None
+    parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
+    parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
 
     result = engine.memorize(
         summary=summary,
