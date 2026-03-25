@@ -20,7 +20,11 @@ from phileas.engine import MemoryEngine
 
 mcp = FastMCP(
     "phileas",
-    instructions="Phileas is a long-term memory companion. Use 'memorize' to store important information about the user, and 'recall' to retrieve relevant memories.",
+    instructions=(
+        "Phileas is a long-term memory companion. "
+        "Use 'memorize' to store important information about the user, "
+        "and 'recall' to retrieve relevant memories."
+    ),
 )
 
 use_embeddings = os.environ.get("PHILEAS_EMBEDDINGS", "true").lower() == "true"
@@ -33,6 +37,7 @@ def memorize(
     summary: str,
     memory_type: str = "knowledge",
     category: str | None = None,
+    daily_ref: str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -42,11 +47,18 @@ def memorize(
         summary: What to remember (1-2 sentences).
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
         category: Topic label (e.g., "career", "relationships", "hobbies").
+        daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
     """
+    from datetime import date
+
+    if daily_ref is None:
+        daily_ref = date.today().isoformat()
+
     item = engine.store_memory(
         summary=summary,
         memory_type=memory_type,
         category_name=category,
+        daily_ref=daily_ref,
     )
     return f"Stored [{item.memory_type}] {item.summary}"
 
@@ -64,7 +76,6 @@ def digest(summary: str, topics: str = "", date: str = "") -> str:
         topics: Comma-separated topic labels (e.g., "career, phileas, architecture").
         date: Date of the conversation (YYYY-MM-DD). Defaults to today.
     """
-    from datetime import date as date_type, datetime, timezone
 
     content = summary
     if topics:
@@ -73,7 +84,7 @@ def digest(summary: str, topics: str = "", date: str = "") -> str:
     resource = engine.store_resource(content, modality="digest")
 
     # Also store as a memory item for searchability
-    item = engine.store_memory(
+    engine.store_memory(
         summary=summary,
         memory_type="event",
         category_name="conversations",

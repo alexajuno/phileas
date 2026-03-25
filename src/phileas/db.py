@@ -9,8 +9,7 @@ import math
 import sqlite3
 from pathlib import Path
 
-from phileas.models import Category, CategoryItem, MemoryItem, Resource
-
+from phileas.models import Category, MemoryItem, Resource
 
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
@@ -29,6 +28,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     summary TEXT NOT NULL,
     embedding TEXT,
     happened_at TEXT,
+    daily_ref TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -57,6 +57,15 @@ class Database:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        """Run schema migrations for existing databases."""
+        cursor = self.conn.execute("PRAGMA table_info(memory_items)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "daily_ref" not in columns:
+            self.conn.execute("ALTER TABLE memory_items ADD COLUMN daily_ref TEXT")
+            self.conn.commit()
 
     def close(self):
         self.conn.close()
@@ -85,8 +94,8 @@ class Database:
     def save_item(self, item: MemoryItem) -> None:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
-               (id, resource_id, memory_type, summary, embedding, happened_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, resource_id, memory_type, summary, embedding, happened_at, daily_ref, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.resource_id,
@@ -94,6 +103,7 @@ class Database:
                 item.summary,
                 json.dumps(item.embedding) if item.embedding else None,
                 item.happened_at.isoformat() if item.happened_at else None,
+                item.daily_ref,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
@@ -134,7 +144,7 @@ class Database:
 
         rows = self.conn.execute(
             f"""SELECT *, (
-                {' + '.join([f"(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words])}
+                {" + ".join(["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words])}
             ) as match_count
             FROM memory_items
             WHERE {conditions}
@@ -151,6 +161,7 @@ class Database:
             memory_type=row["memory_type"],
             summary=row["summary"],
             embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+            daily_ref=row["daily_ref"] if "daily_ref" in row.keys() else None,
         )
 
     # --- Categories ---

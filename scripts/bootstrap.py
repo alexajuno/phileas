@@ -171,6 +171,7 @@ def index_context():
 
 # --- Helpers ---
 
+
 def _extract_section(content: str, heading: str) -> str | None:
     """Extract content under a ## heading."""
     pattern = rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=^##\s|\Z)"
@@ -203,7 +204,7 @@ def _strip_frontmatter(content: str) -> str:
     end = content.find("---", 3)
     if end == -1:
         return content
-    return content[end + 3:].strip()
+    return content[end + 3 :].strip()
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ class MemoryEngine:
         memory_type: str = "knowledge",
         category_name: str | None = None,
         resource_id: str | None = None,
+        daily_ref: str | None = None,
     ) -> MemoryItem:
         """L2: Store a pre-extracted memory. Claude Code decides what to store."""
         embedding = self._embed(summary) if self._embedder else None
@@ -40,6 +41,7 @@ class MemoryEngine:
             memory_type=memory_type,
             summary=summary,
             embedding=embedding,
+            daily_ref=daily_ref,
         )
         self.db.save_item(item)
 
@@ -102,12 +104,14 @@ class MemoryEngine:
         result = []
         for cat in categories:
             items = self.db.get_items_in_category(cat.id)
-            result.append({
-                "name": cat.name,
-                "description": cat.description,
-                "summary": cat.summary,
-                "item_count": len(items),
-            })
+            result.append(
+                {
+                    "name": cat.name,
+                    "description": cat.description,
+                    "summary": cat.summary,
+                    "item_count": len(items),
+                }
+            )
         return result
 
     def _get_embedder(self):
@@ -127,6 +131,7 @@ def _load_embedder():
     """Load sentence-transformers model. Fails gracefully if not installed."""
     try:
         from sentence_transformers import SentenceTransformer
+
         return SentenceTransformer("all-MiniLM-L6-v2")
     except ImportError:
         return None
