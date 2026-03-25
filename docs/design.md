@@ -1,4 +1,4 @@
-# Phileas v2 — Design Document
+# Phileas — Design Document
 
 ## Vision
 
@@ -6,7 +6,7 @@ Phileas becomes the **centralized memory layer** for Claude Code. Not just a pas
 
 ## Architecture Overview
 
-See `architecture-v2.svg` for the visual diagram.
+See `architecture.svg` for the visual diagram.
 
 ### Storage: Three Embedded Databases
 
@@ -86,7 +86,7 @@ Fires when a new Claude Code session begins:
 4. Mark sessions as processed
 
 ### Phileas Skill (Mid-conversation)
-Upgraded from v1 to be more proactive:
+Upgraded to be more proactive:
 1. Invoked for any conversation touching personal topics, decisions, preferences
 2. Stores directly to Tier 2
 3. Detects contradictions before storing
@@ -105,42 +105,73 @@ Upgraded from v1 to be more proactive:
 
 ### Core Memory Tools
 
-| Tool | Purpose | Used by |
-|------|---------|---------|
-| `memorize` | Store a fact/event/preference with entity extraction | Phileas skill, SessionStart |
-| `recall` | Multi-path retrieval (keyword + semantic + graph) | Any skill needing context |
-| `forget` | Mark memory as superseded/archived (soft delete) | Conflict resolution |
-| `relate` | Create/update entity relationships in graph | Entity extraction |
+| Tool | Signature | Purpose |
+|------|-----------|---------|
+| `memorize` | `(summary, memory_type, importance, category?, daily_ref?, entities?, relationships?)` | Store a fact with optional entity/relationship data. If `entities`/`relationships` provided, writes to KuzuDB in the same call. Otherwise Claude Code calls `relate` separately. |
+| `recall` | `(query, top_k=5, memory_type?, min_importance?)` | Multi-path retrieval with scoring. See pipeline below. |
+| `forget` | `(memory_id, reason?)` | Sets `status='archived'` + `archived_at` timestamp. `recall` filters these out. Graph edges preserved for audit. |
+| `relate` | `(from_name, from_type, edge_type, to_name, to_type, memory_id?)` | Upsert nodes + create edge in KuzuDB. Auto-creates nodes if they don't exist. Idempotent — duplicate edges are no-ops. |
 
 ### Lifecycle Tools
 
-| Tool | Purpose | Used by |
-|------|---------|---------|
-| `ingest_session` | Read a JSONL file, extract and store memories | SessionStart hook |
-| `consolidate` | Cluster and merge Tier 2 → Tier 3 | Weekly schedule / manual |
-| `status` | Memory stats: counts per tier, unprocessed sessions, graph size | Debugging |
+| Tool | Signature | Purpose |
+|------|-----------|---------|
+| `ingest_session` | `(session_path, max_tokens=50000)` | Read a JSONL file, return extracted user/assistant messages as text for Claude Code to process. Marks session as processed only after Claude Code calls `memorize` with the results. Max N=3 sessions per SessionStart to avoid blocking. |
+| `consolidate` | `(min_cluster_size=3, max_clusters=10)` | Find clusters of related Tier 2 memories. Returns clusters for Claude Code to summarize, then Claude calls `memorize` with tier=3. Triggered opportunistically when >50 unconsolidated Tier 2 memories exist. |
+| `status` | `()` | Memory stats: counts per tier, unprocessed sessions, graph node/edge counts, oldest unaccessed memory. |
 
 ### Query Tools
 
-| Tool | Purpose | Replaces |
-|------|---------|----------|
-| `about` | Everything known about a person/project/topic (graph neighborhood) | /butler, people lookups |
-| `timeline` | Temporal query — events in a date range | /secretary schedule queries |
-| `profile` | User's identity facts | Self-awareness |
+| Tool | Signature | Purpose |
+|------|-----------|---------|
+| `about` | `(name, entity_type?=None)` | Query KuzuDB for entity + 1-hop neighborhood, return connected memories from SQLite. If `entity_type` omitted, searches all node types. |
+| `timeline` | `(start_date, end_date?=None)` | Query memories by `daily_ref` and `happened_at` in date range. Returns chronologically sorted. |
+| `profile` | `()` | All memories where memory_type="profile" (kept from current). |
 
 ### Retrieval Pipeline (inside `recall`)
 
 ```
-1. Query Parse     → extract intent + entities from query
-2. Multi-path Search → keyword (SQLite) + semantic (ChromaDB) + graph (KuzuDB)
-3. Score + Rank    → importance × recency × relevance × access_freq
-4. Dedupe + Return → top-k unique results
+1. Query Parse     → extract intent + entity names from query text
+2. Multi-path Search:
+   a. Keyword search (SQLite LIKE) → match on summary text
+   b. Semantic search (ChromaDB) → cosine similarity on embeddings
+   c. Graph search (KuzuDB) → extract entity names from query,
+      find matching nodes, follow ABOUT edges to Memory nodes
+3. Score + Rank    → weighted combination (see formula)
+4. Dedupe          → merge results by memory ID, keep highest score
+5. Filter          → exclude status='archived', apply min_importance
+6. Return          → top-k results with scores
 ```
 
 **Scoring formula:**
 ```
-score = (similarity × 0.4) + (importance × 0.3) + (recency_decay × 0.2) + (access_freq × 0.1)
+final_score = (similarity × 0.4) + (importance/10 × 0.3) + (recency_score × 0.2) + (log(access_count+1)/5 × 0.1)
 ```
+
+### Deduplication
+
+Before storing via `memorize`, check ChromaDB for existing memories with cosine similarity > 0.95. If found, return existing memory ID instead of creating a duplicate. This prevents double-storage from live capture + JSONL ingestion of the same conversation.
+
+### Source of Truth
+
+**SQLite is canonical.** ChromaDB and KuzuDB are derived indexes that can be rebuilt from SQLite data. If they get corrupted or out of sync, a `rebuild_indexes` command re-embeds all memories into ChromaDB and re-extracts entities into KuzuDB.
+
+### Contradiction Detection
+
+Contradictions are detected by **Claude Code, not the MCP server** (no LLM inside the server). The workflow:
+1. Claude Code calls `recall` before `memorize` to check for conflicting facts
+2. If a contradiction is found, Claude Code calls `relate(memory_A, "Memory", "CONTRADICTS", memory_B, "Memory")`
+3. Optionally calls `forget(old_memory_id, reason="superseded by newer info")`
+
+### V1 Tool Changes
+
+| V1 Tool | V2 Status |
+|---------|-----------|
+| `memorize` | Upgraded (new params) |
+| `recall` | Upgraded (multi-path + scoring) |
+| `profile` | Kept as-is |
+| `digest` | Removed — replaced by `ingest_session` |
+| `categories` | Removed — replaced by `about` + graph queries |
 
 ---
 
@@ -258,7 +289,7 @@ A 6-month-old identity fact (importance=10, accessed often) still beats a 1-day-
 
 ---
 
-## Migration from v1
+## Migration from Current
 
 ### What carries over
 - SQLite database structure (extended, not replaced)
