@@ -1,53 +1,44 @@
 """SQLite storage backend for Phileas.
 
-Simple, local-first. No external database server needed.
-Embeddings stored as JSON arrays (brute-force cosine similarity for now).
+Canonical data store. ChromaDB and KuzuDB are derived indexes
+that can be rebuilt from this database.
 """
 
-import json
-import math
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
-from phileas.models import Category, MemoryItem, Resource
+from phileas.models import MemoryItem
 
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS resources (
-    id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    modality TEXT NOT NULL DEFAULT 'conversation',
-    created_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS memory_items (
     id TEXT PRIMARY KEY,
-    resource_id TEXT REFERENCES resources(id),
-    memory_type TEXT NOT NULL,
     summary TEXT NOT NULL,
-    embedding TEXT,
-    happened_at TEXT,
+    memory_type TEXT NOT NULL,
+    importance INTEGER NOT NULL DEFAULT 5,
+    tier INTEGER NOT NULL DEFAULT 2,
+    status TEXT NOT NULL DEFAULT 'active',
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed TEXT,
     daily_ref TEXT,
+    source_session_id TEXT,
+    consolidated_into TEXT REFERENCES memory_items(id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS categories (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT NOT NULL DEFAULT '',
-    summary TEXT,
-    embedding TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS processed_sessions (
+    session_id TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL,
+    processed_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS category_items (
-    item_id TEXT NOT NULL REFERENCES memory_items(id),
-    category_id TEXT NOT NULL REFERENCES categories(id),
-    PRIMARY KEY (item_id, category_id)
-);
+CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
+CREATE INDEX IF NOT EXISTS idx_items_tier ON memory_items(tier);
+CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
+CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 """
 
 
@@ -57,166 +48,167 @@ class Database:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
-        self._migrate()
-
-    def _migrate(self):
-        """Run schema migrations for existing databases."""
-        cursor = self.conn.execute("PRAGMA table_info(memory_items)")
-        columns = {row["name"] for row in cursor.fetchall()}
-        if "daily_ref" not in columns:
-            self.conn.execute("ALTER TABLE memory_items ADD COLUMN daily_ref TEXT")
-            self.conn.commit()
 
     def close(self):
         self.conn.close()
-
-    # --- Resources ---
-
-    def save_resource(self, r: Resource) -> None:
-        self.conn.execute(
-            "INSERT INTO resources (id, content, modality, created_at) VALUES (?, ?, ?, ?)",
-            (r.id, r.content, r.modality, r.created_at.isoformat()),
-        )
-        self.conn.commit()
-
-    def get_resource(self, id: str) -> Resource | None:
-        row = self.conn.execute("SELECT * FROM resources WHERE id = ?", (id,)).fetchone()
-        if not row:
-            return None
-        return Resource(
-            id=row["id"],
-            content=row["content"],
-            modality=row["modality"],
-        )
 
     # --- Memory Items ---
 
     def save_item(self, item: MemoryItem) -> None:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
-               (id, resource_id, memory_type, summary, embedding, happened_at, daily_ref, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, summary, memory_type, importance, tier, status,
+                access_count, last_accessed, daily_ref, source_session_id,
+                consolidated_into, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
-                item.resource_id,
-                item.memory_type,
                 item.summary,
-                json.dumps(item.embedding) if item.embedding else None,
-                item.happened_at.isoformat() if item.happened_at else None,
+                item.memory_type,
+                item.importance,
+                item.tier,
+                item.status,
+                item.access_count,
+                item.last_accessed.isoformat() if item.last_accessed else None,
                 item.daily_ref,
+                item.source_session_id,
+                item.consolidated_into,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
         )
         self.conn.commit()
 
-    def get_all_items(self) -> list[MemoryItem]:
-        rows = self.conn.execute("SELECT * FROM memory_items ORDER BY created_at DESC").fetchall()
+    def get_item(self, item_id: str) -> MemoryItem | None:
+        row = self.conn.execute("SELECT * FROM memory_items WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_item(row)
+
+    def get_active_items(self) -> list[MemoryItem]:
+        rows = self.conn.execute(
+            "SELECT * FROM memory_items WHERE status = 'active' ORDER BY created_at DESC"
+        ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
     def get_items_by_type(self, memory_type: str) -> list[MemoryItem]:
         rows = self.conn.execute(
-            "SELECT * FROM memory_items WHERE memory_type = ? ORDER BY created_at DESC",
+            "SELECT * FROM memory_items WHERE memory_type = ? AND status = 'active' ORDER BY created_at DESC",
             (memory_type,),
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
-    def search_items_by_embedding(self, query_embedding: list[float], top_k: int = 10) -> list[MemoryItem]:
-        """Brute-force cosine similarity search. Fine for <10k items."""
-        items = self.get_all_items()
-        scored = []
-        for item in items:
-            if item.embedding:
-                score = _cosine_similarity(query_embedding, item.embedding)
-                scored.append((score, item))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [item for _, item in scored[:top_k]]
+    def get_items_by_tier(self, tier: int) -> list[MemoryItem]:
+        rows = self.conn.execute(
+            "SELECT * FROM memory_items WHERE tier = ? AND status = 'active' ORDER BY created_at DESC",
+            (tier,),
+        ).fetchall()
+        return [self._row_to_item(row) for row in rows]
 
-    def search_items_by_keyword(self, query: str, top_k: int = 10) -> list[MemoryItem]:
-        """Simple keyword search using SQLite LIKE. Splits query into words."""
+    def search_by_keyword(self, query: str, top_k: int = 10) -> list[MemoryItem]:
+        """Keyword search using SQLite LIKE. Splits query into words, scores by match count."""
         words = query.lower().split()
         if not words:
-            return self.get_all_items()[:top_k]
+            return self.get_active_items()[:top_k]
 
-        # Match items containing ANY of the query words
         conditions = " OR ".join(["LOWER(summary) LIKE ?" for _ in words])
+        score_expr = " + ".join(
+            ["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words]
+        )
         params = [f"%{w}%" for w in words]
 
         rows = self.conn.execute(
-            f"""SELECT *, (
-                {" + ".join(["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words])}
-            ) as match_count
+            f"""SELECT *, ({score_expr}) as match_count
             FROM memory_items
-            WHERE {conditions}
+            WHERE status = 'active' AND ({conditions})
             ORDER BY match_count DESC, created_at DESC
             LIMIT ?""",
             params + params + [top_k],
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
-    def _row_to_item(self, row: sqlite3.Row) -> MemoryItem:
-        return MemoryItem(
-            id=row["id"],
-            resource_id=row["resource_id"],
-            memory_type=row["memory_type"],
-            summary=row["summary"],
-            embedding=json.loads(row["embedding"]) if row["embedding"] else None,
-            daily_ref=row["daily_ref"] if "daily_ref" in row.keys() else None,
-        )
-
-    # --- Categories ---
-
-    def save_category(self, cat: Category) -> None:
+    def archive_item(self, item_id: str, reason: str | None = None) -> None:
         self.conn.execute(
-            """INSERT OR REPLACE INTO categories
-               (id, name, description, summary, embedding, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                cat.id,
-                cat.name,
-                cat.description,
-                cat.summary,
-                json.dumps(cat.embedding) if cat.embedding else None,
-                cat.created_at.isoformat(),
-                cat.updated_at.isoformat(),
-            ),
+            "UPDATE memory_items SET status = 'archived', updated_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), item_id),
         )
         self.conn.commit()
 
-    def get_category_by_name(self, name: str) -> Category | None:
-        row = self.conn.execute("SELECT * FROM categories WHERE name = ?", (name,)).fetchone()
-        if not row:
-            return None
-        return Category(id=row["id"], name=row["name"], description=row["description"], summary=row["summary"])
-
-    def get_all_categories(self) -> list[Category]:
-        rows = self.conn.execute("SELECT * FROM categories ORDER BY name").fetchall()
-        return [Category(id=r["id"], name=r["name"], description=r["description"], summary=r["summary"]) for r in rows]
-
-    # --- Category-Item links ---
-
-    def link_item_to_category(self, item_id: str, category_id: str) -> None:
+    def bump_access(self, item_id: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
-            "INSERT OR IGNORE INTO category_items (item_id, category_id) VALUES (?, ?)",
-            (item_id, category_id),
+            "UPDATE memory_items SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+            (now, item_id),
         )
         self.conn.commit()
 
-    def get_items_in_category(self, category_id: str) -> list[MemoryItem]:
-        rows = self.conn.execute(
-            """SELECT mi.* FROM memory_items mi
-               JOIN category_items ci ON mi.id = ci.item_id
-               WHERE ci.category_id = ?
-               ORDER BY mi.created_at DESC""",
-            (category_id,),
-        ).fetchall()
+    def get_counts(self) -> dict:
+        row = self.conn.execute(
+            """SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN tier = 2 AND status = 'active' THEN 1 ELSE 0 END) as tier2,
+                SUM(CASE WHEN tier = 3 AND status = 'active' THEN 1 ELSE 0 END) as tier3,
+                SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END) as archived
+            FROM memory_items"""
+        ).fetchone()
+        return {"total": row["total"], "tier2": row["tier2"], "tier3": row["tier3"], "archived": row["archived"]}
+
+    # --- Processed Sessions ---
+
+    def is_session_processed(self, session_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM processed_sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        return row is not None
+
+    def mark_session_processed(self, session_id: str, file_path: str) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO processed_sessions (session_id, file_path, processed_at) VALUES (?, ?, ?)",
+            (session_id, file_path, datetime.now(timezone.utc).isoformat()),
+        )
+        self.conn.commit()
+
+    def get_processed_session_count(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) as cnt FROM processed_sessions").fetchone()
+        return row["cnt"]
+
+    # --- Timeline ---
+
+    def get_items_by_date_range(self, start_date: str, end_date: str | None = None) -> list[MemoryItem]:
+        if end_date:
+            rows = self.conn.execute(
+                """SELECT * FROM memory_items
+                WHERE status = 'active' AND daily_ref >= ? AND daily_ref <= ?
+                ORDER BY daily_ref ASC, created_at ASC""",
+                (start_date, end_date),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """SELECT * FROM memory_items
+                WHERE status = 'active' AND daily_ref = ?
+                ORDER BY created_at ASC""",
+                (start_date,),
+            ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    # --- Internal ---
 
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
+    def _row_to_item(self, row: sqlite3.Row) -> MemoryItem:
+        last_accessed = None
+        if row["last_accessed"]:
+            last_accessed = datetime.fromisoformat(row["last_accessed"])
+        return MemoryItem(
+            id=row["id"],
+            summary=row["summary"],
+            memory_type=row["memory_type"],
+            importance=row["importance"],
+            tier=row["tier"],
+            status=row["status"],
+            access_count=row["access_count"],
+            last_accessed=last_accessed,
+            daily_ref=row["daily_ref"],
+            source_session_id=row["source_session_id"],
+            consolidated_into=row["consolidated_into"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
