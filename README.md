@@ -1,18 +1,53 @@
 # Phileas
 
-A local-first AI companion — the infrastructure layer for long-term memory, context retrieval, and real-time adaptation that sits above any model.
+Local-first long-term memory for AI companions. Named after Phileas Fogg — a steadfast partner for the journey.
 
-Named after Phileas Fogg: a steadfast partner for the journey.
+Phileas is the persistent layer that lets an AI actually *know you* over time — remembering, forgetting naturally, and adapting as you change. It runs as an [MCP server](https://modelcontextprotocol.io/) that any compatible AI client (Claude Code, etc.) can connect to.
 
-## What this is
+## Architecture
 
-It's the persistent layer that lets an AI actually *know you* over time — remembering, forgetting naturally, and adapting as you change.
+Triple-store backend — each store handles what it's good at:
 
-The goal: an open-source infrastructure anyone can run locally to give their AI companion genuine continuity.
+| Store | Tech | Role |
+|-------|------|------|
+| **Relational** | SQLite | Memories, metadata, importance scoring, tiers, session tracking |
+| **Vector** | ChromaDB | Semantic search via sentence-transformers embeddings |
+| **Graph** | KuzuDB | Entity relationships and knowledge graph traversal |
+
+The `MemoryEngine` orchestrates all three, so tools interact with a single interface.
+
+## Setup
+
+Requires Python 3.14+.
+
+```bash
+# Install
+pip install -e .
+
+# Or with uv
+uv pip install -e .
+```
+
+Add to your MCP client config (e.g. `~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "phileas": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/phileas", "mcp", "run", "src/phileas/server.py"]
+    }
+  }
+}
+```
 
 ## Status
 
-Early research and design phase. See [doc/](doc/) for research and vision.
+Core engine is built and running. Active areas:
+
+- Memory consolidation (tier-2 clustering into tier-3 summaries)
+- Decay and natural forgetting
+- Richer graph queries
 
 ## License
 
