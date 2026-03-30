@@ -51,6 +51,15 @@ class VectorStore:
             return results["ids"][0][0]
         return None
 
+    def get_embeddings(self, memory_ids: list[str]) -> dict[str, list[float]]:
+        """Get stored embeddings for given memory IDs. Returns {id: embedding}."""
+        if not memory_ids:
+            return {}
+        result = self._collection.get(ids=memory_ids, include=["embeddings"])
+        ids = result["ids"]
+        embeddings = result["embeddings"] if result["embeddings"] is not None else []
+        return {mid: list(emb) for mid, emb in zip(ids, embeddings) if emb is not None}
+
     def delete(self, memory_id: str) -> None:
         self._collection.delete(ids=[memory_id])
 

@@ -14,13 +14,19 @@ from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.logging import OpTimer, get_logger
 from phileas.models import MemoryItem
-from phileas.scoring import compute_score
+from phileas.scoring import compute_score, mmr_select
 from phileas.vector import VectorStore
 
 log = get_logger()
 
 # Graph-path similarity boost for candidates found via entity match
 _GRAPH_BOOST = 0.5
+
+# Similarity floor — candidates below this are noise
+_SIM_FLOOR = 0.5
+
+# Memory types for bucketed retrieval
+_MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
 
 
 def _days_since(dt: datetime | None) -> float:
@@ -137,7 +143,11 @@ class MemoryEngine:
         memory_type: str | None = None,
         min_importance: int | None = None,
     ) -> list[dict]:
-        """Multi-path retrieval: keyword + semantic + graph.
+        """Three-stage retrieval: gather → rerank → MMR select.
+
+        Stage 1: Bucketed vector search + keyword + graph (gather candidates)
+        Stage 2: Cross-encoder reranking (semantic relevance)
+        Stage 3: MMR diversity selection + final scoring
 
         Returns list of dicts with id, summary, type, importance, score.
         """
@@ -145,24 +155,31 @@ class MemoryEngine:
             log, "recall", query=query, top_k=top_k,
             memory_type=memory_type, min_importance=min_importance,
         ) as timer:
-            candidates: dict[str, tuple[MemoryItem, float]] = {}  # id -> (item, similarity)
+            # ----------------------------------------------------------
+            # Stage 1: Gather candidates from multiple paths
+            # ----------------------------------------------------------
+            candidates: dict[str, MemoryItem] = {}  # id -> item
 
             # Path 1: keyword search (SQLite)
-            keyword_hits = self.db.search_by_keyword(query, top_k=top_k * 2)
+            keyword_hits = self.db.search_by_keyword(query, top_k=top_k * 3)
             for item in keyword_hits:
-                candidates[item.id] = (item, 0.6)  # keyword match similarity proxy
+                candidates[item.id] = item
 
-            # Path 2: semantic search (ChromaDB)
-            semantic_hits = self.vector.search(query, top_k=top_k * 2)
-            for mem_id, sim in semantic_hits:
-                item = self.db.get_item(mem_id)
-                if item:
-                    # Take max similarity if already seen
-                    if mem_id in candidates:
-                        prev_sim = candidates[mem_id][1]
-                        candidates[mem_id] = (item, max(prev_sim, sim))
-                    else:
-                        candidates[mem_id] = (item, sim)
+            # Path 2: semantic search (ChromaDB) — bucketed by type
+            search_types = [memory_type] if memory_type else _MEMORY_TYPES
+            for mtype in search_types:
+                type_items = self.db.get_items_by_type(mtype)
+                type_ids = {item.id for item in type_items if item.status == "active"}
+                if not type_ids:
+                    continue
+                # Search broadly, then filter to this type
+                semantic_hits = self.vector.search(query, top_k=top_k * 3)
+                for mem_id, sim in semantic_hits:
+                    if mem_id in type_ids and sim >= _SIM_FLOOR:
+                        if mem_id not in candidates:
+                            item = self.db.get_item(mem_id)
+                            if item:
+                                candidates[mem_id] = item
 
             # Path 3: graph search (KuzuDB)
             words = query.split()
@@ -183,39 +200,91 @@ class MemoryEngine:
                         if mem_id not in candidates:
                             item = self.db.get_item(mem_id)
                             if item:
-                                candidates[mem_id] = (item, _GRAPH_BOOST)
-                        # Don't lower existing similarity scores
+                                candidates[mem_id] = item
 
-            # Score, filter, rank
-            results = []
-            for mem_id, (item, similarity) in candidates.items():
-                # Filter archived
+            # Apply filters
+            filtered: dict[str, MemoryItem] = {}
+            for mem_id, item in candidates.items():
                 if item.status != "active":
                     continue
-                # Filter by memory_type
                 if memory_type and item.memory_type != memory_type:
                     continue
-                # Filter by min_importance
                 if min_importance is not None and item.importance < min_importance:
                     continue
+                filtered[mem_id] = item
 
+            timer.extra["candidates"] = len(filtered)
+
+            if not filtered:
+                timer.extra["results"] = 0
+                return []
+
+            # ----------------------------------------------------------
+            # Stage 2: Cross-encoder reranking
+            # ----------------------------------------------------------
+            from phileas.reranker import rerank
+
+            rerank_input = [(mem_id, item.summary) for mem_id, item in filtered.items()]
+            reranked = rerank(query, rerank_input)
+            relevance_map = {mem_id: score for mem_id, score in reranked}
+
+            # ----------------------------------------------------------
+            # Stage 3: MMR diversity selection + final scoring
+            # ----------------------------------------------------------
+
+            # Build similarity matrix from embeddings for MMR
+            candidate_ids = list(filtered.keys())
+            embeddings = self.vector.get_embeddings(candidate_ids)
+
+            sim_matrix: dict[str, dict[str, float]] = {}
+            for id_a in candidate_ids:
+                sim_matrix[id_a] = {}
+                emb_a = embeddings.get(id_a)
+                if emb_a is None:
+                    continue
+                for id_b in candidate_ids:
+                    if id_a == id_b:
+                        sim_matrix[id_a][id_b] = 1.0
+                        continue
+                    emb_b = embeddings.get(id_b)
+                    if emb_b is None:
+                        sim_matrix[id_a][id_b] = 0.0
+                        continue
+                    # Cosine similarity
+                    dot = sum(a * b for a, b in zip(emb_a, emb_b))
+                    norm_a = sum(a * a for a in emb_a) ** 0.5
+                    norm_b = sum(b * b for b in emb_b) ** 0.5
+                    sim_matrix[id_a][id_b] = dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+            # Build MMR candidates with relevance scores
+            mmr_candidates = [
+                {"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)}
+                for mem_id in candidate_ids
+            ]
+
+            # Select diverse subset via MMR
+            selected = mmr_select(mmr_candidates, sim_matrix, top_k=top_k, lambda_param=0.7)
+
+            # Final scoring with importance/recency as tiebreakers
+            results = []
+            for sel in selected:
+                item = filtered[sel["id"]]
+                relevance = sel["relevance"]
                 days = _days_since(item.last_accessed)
-                score = compute_score(similarity, item.importance, days, item.access_count, item.tier)
+                score = compute_score(relevance, item.importance, days, item.access_count, item.tier)
                 results.append(_item_to_dict(item, score))
 
             results.sort(key=lambda r: r["score"], reverse=True)
-            top_results = results[:top_k]
 
             # Bump access counts
-            for r in top_results:
+            for r in results:
                 self.db.bump_access(r["id"])
 
-            timer.extra["candidates"] = len(candidates)
-            timer.extra["results"] = len(top_results)
-            if top_results:
-                timer.extra["top_score"] = round(top_results[0]["score"], 3)
+            timer.extra["results"] = len(results)
+            if results:
+                timer.extra["top_score"] = round(results[0]["score"], 3)
 
-            return top_results
+            return results
 
     # ------------------------------------------------------------------
     # forget
