@@ -12,9 +12,12 @@ from datetime import date, datetime, timezone
 
 from phileas.db import Database
 from phileas.graph import GraphStore
+from phileas.logging import OpTimer, get_logger
 from phileas.models import MemoryItem
 from phileas.scoring import compute_score
 from phileas.vector import VectorStore
+
+log = get_logger()
 
 # Graph-path similarity boost for candidates found via entity match
 _GRAPH_BOOST = 0.5
@@ -64,57 +67,64 @@ class MemoryEngine:
 
         Returns a dict with keys: id, summary, deduplicated.
         """
-        # 1. Deduplicate via ChromaDB
-        duplicate_id = self.vector.find_duplicate(summary, threshold=0.95)
-        if duplicate_id:
-            existing = self.db.get_item(duplicate_id)
-            if existing and existing.status == "active":
-                return {"id": existing.id, "summary": existing.summary, "deduplicated": True}
+        with OpTimer(
+            log, "memorize", memory_type=memory_type, importance=importance,
+            entity_count=len(entities or []), relationship_count=len(relationships or []),
+        ) as timer:
+            # 1. Deduplicate via ChromaDB
+            duplicate_id = self.vector.find_duplicate(summary, threshold=0.95)
+            if duplicate_id:
+                existing = self.db.get_item(duplicate_id)
+                if existing and existing.status == "active":
+                    timer.extra["dedup"] = True
+                    return {"id": existing.id, "summary": existing.summary, "deduplicated": True}
 
-        # 2. Default daily_ref to today
-        if daily_ref is None:
-            daily_ref = date.today().isoformat()
+            # 2. Default daily_ref to today
+            if daily_ref is None:
+                daily_ref = date.today().isoformat()
 
-        # 3. Create and persist MemoryItem
-        item = MemoryItem(
-            summary=summary,
-            memory_type=memory_type,
-            importance=importance,
-            tier=tier,
-            daily_ref=daily_ref,
-            source_session_id=source_session_id,
-        )
-        self.db.save_item(item)
+            # 3. Create and persist MemoryItem
+            item = MemoryItem(
+                summary=summary,
+                memory_type=memory_type,
+                importance=importance,
+                tier=tier,
+                daily_ref=daily_ref,
+                source_session_id=source_session_id,
+            )
+            self.db.save_item(item)
 
-        # 4. Add to ChromaDB
-        self.vector.add(item.id, summary)
+            # 4. Add to ChromaDB
+            self.vector.add(item.id, summary)
 
-        # 5. Link entities and relationships in KuzuDB
-        if entities:
-            for entity in entities:
-                name = entity.get("name")
-                etype = entity.get("type")
-                if name and etype:
-                    self.graph.upsert_node(etype, name)
-                    self.graph.link_memory(item.id, etype, name)
+            # 5. Link entities and relationships in KuzuDB
+            if entities:
+                for entity in entities:
+                    name = entity.get("name")
+                    etype = entity.get("type")
+                    if name and etype:
+                        self.graph.upsert_node(etype, name)
+                        self.graph.link_memory(item.id, etype, name)
 
-        if relationships:
-            for rel in relationships:
-                from_name = rel.get("from_name")
-                from_type = rel.get("from_type")
-                edge = rel.get("edge")
-                to_name = rel.get("to_name")
-                to_type = rel.get("to_type")
-                if from_name and from_type and edge and to_name and to_type:
-                    self.graph.upsert_node(from_type, from_name)
-                    self.graph.upsert_node(to_type, to_name)
-                    try:
-                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                    except Exception:
-                        # Silently ignore unsupported edge types
-                        pass
+            if relationships:
+                for rel in relationships:
+                    from_name = rel.get("from_name")
+                    from_type = rel.get("from_type")
+                    edge = rel.get("edge")
+                    to_name = rel.get("to_name")
+                    to_type = rel.get("to_type")
+                    if from_name and from_type and edge and to_name and to_type:
+                        self.graph.upsert_node(from_type, from_name)
+                        self.graph.upsert_node(to_type, to_name)
+                        try:
+                            self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                        except Exception:
+                            # Silently ignore unsupported edge types
+                            pass
 
-        return {"id": item.id, "summary": item.summary, "deduplicated": False}
+            timer.extra["dedup"] = False
+            timer.extra["id"] = item.id
+            return {"id": item.id, "summary": item.summary, "deduplicated": False}
 
     # ------------------------------------------------------------------
     # recall
@@ -131,72 +141,81 @@ class MemoryEngine:
 
         Returns list of dicts with id, summary, type, importance, score.
         """
-        candidates: dict[str, tuple[MemoryItem, float]] = {}  # id -> (item, similarity)
+        with OpTimer(
+            log, "recall", query=query, top_k=top_k,
+            memory_type=memory_type, min_importance=min_importance,
+        ) as timer:
+            candidates: dict[str, tuple[MemoryItem, float]] = {}  # id -> (item, similarity)
 
-        # Path 1: keyword search (SQLite)
-        keyword_hits = self.db.search_by_keyword(query, top_k=top_k * 2)
-        for item in keyword_hits:
-            candidates[item.id] = (item, 0.6)  # keyword match similarity proxy
+            # Path 1: keyword search (SQLite)
+            keyword_hits = self.db.search_by_keyword(query, top_k=top_k * 2)
+            for item in keyword_hits:
+                candidates[item.id] = (item, 0.6)  # keyword match similarity proxy
 
-        # Path 2: semantic search (ChromaDB)
-        semantic_hits = self.vector.search(query, top_k=top_k * 2)
-        for mem_id, sim in semantic_hits:
-            item = self.db.get_item(mem_id)
-            if item:
-                # Take max similarity if already seen
-                if mem_id in candidates:
-                    prev_sim = candidates[mem_id][1]
-                    candidates[mem_id] = (item, max(prev_sim, sim))
-                else:
-                    candidates[mem_id] = (item, sim)
+            # Path 2: semantic search (ChromaDB)
+            semantic_hits = self.vector.search(query, top_k=top_k * 2)
+            for mem_id, sim in semantic_hits:
+                item = self.db.get_item(mem_id)
+                if item:
+                    # Take max similarity if already seen
+                    if mem_id in candidates:
+                        prev_sim = candidates[mem_id][1]
+                        candidates[mem_id] = (item, max(prev_sim, sim))
+                    else:
+                        candidates[mem_id] = (item, sim)
 
-        # Path 3: graph search (KuzuDB)
-        words = query.split()
-        for word in words:
-            if len(word) < 2:
-                continue
-            graph_nodes = self.graph.search_nodes(word)
-            for node in graph_nodes:
-                entity_name = node.get("name")
-                entity_type = node.get("type")
-                if not entity_name or not entity_type:
+            # Path 3: graph search (KuzuDB)
+            words = query.split()
+            for word in words:
+                if len(word) < 2:
                     continue
-                try:
-                    memory_ids = self.graph.get_memories_about(entity_type, entity_name)
-                except Exception:
+                graph_nodes = self.graph.search_nodes(word)
+                for node in graph_nodes:
+                    entity_name = node.get("name")
+                    entity_type = node.get("type")
+                    if not entity_name or not entity_type:
+                        continue
+                    try:
+                        memory_ids = self.graph.get_memories_about(entity_type, entity_name)
+                    except Exception:
+                        continue
+                    for mem_id in memory_ids:
+                        if mem_id not in candidates:
+                            item = self.db.get_item(mem_id)
+                            if item:
+                                candidates[mem_id] = (item, _GRAPH_BOOST)
+                        # Don't lower existing similarity scores
+
+            # Score, filter, rank
+            results = []
+            for mem_id, (item, similarity) in candidates.items():
+                # Filter archived
+                if item.status != "active":
                     continue
-                for mem_id in memory_ids:
-                    if mem_id not in candidates:
-                        item = self.db.get_item(mem_id)
-                        if item:
-                            candidates[mem_id] = (item, _GRAPH_BOOST)
-                    # Don't lower existing similarity scores
+                # Filter by memory_type
+                if memory_type and item.memory_type != memory_type:
+                    continue
+                # Filter by min_importance
+                if min_importance is not None and item.importance < min_importance:
+                    continue
 
-        # Score, filter, rank
-        results = []
-        for mem_id, (item, similarity) in candidates.items():
-            # Filter archived
-            if item.status != "active":
-                continue
-            # Filter by memory_type
-            if memory_type and item.memory_type != memory_type:
-                continue
-            # Filter by min_importance
-            if min_importance is not None and item.importance < min_importance:
-                continue
+                days = _days_since(item.last_accessed)
+                score = compute_score(similarity, item.importance, days, item.access_count, item.tier)
+                results.append(_item_to_dict(item, score))
 
-            days = _days_since(item.last_accessed)
-            score = compute_score(similarity, item.importance, days, item.access_count, item.tier)
-            results.append(_item_to_dict(item, score))
+            results.sort(key=lambda r: r["score"], reverse=True)
+            top_results = results[:top_k]
 
-        results.sort(key=lambda r: r["score"], reverse=True)
-        top_results = results[:top_k]
+            # Bump access counts
+            for r in top_results:
+                self.db.bump_access(r["id"])
 
-        # Bump access counts
-        for r in top_results:
-            self.db.bump_access(r["id"])
+            timer.extra["candidates"] = len(candidates)
+            timer.extra["results"] = len(top_results)
+            if top_results:
+                timer.extra["top_score"] = round(top_results[0]["score"], 3)
 
-        return top_results
+            return top_results
 
     # ------------------------------------------------------------------
     # forget
@@ -204,11 +223,12 @@ class MemoryEngine:
 
     def forget(self, memory_id: str, reason: str | None = None) -> str:
         """Archive a memory in SQLite and delete it from ChromaDB."""
-        self.db.archive_item(memory_id, reason)
-        try:
-            self.vector.delete(memory_id)
-        except Exception:
-            pass
+        with OpTimer(log, "forget", memory_id=memory_id, reason=reason):
+            self.db.archive_item(memory_id, reason)
+            try:
+                self.vector.delete(memory_id)
+            except Exception:
+                pass
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------
@@ -225,11 +245,14 @@ class MemoryEngine:
         memory_id: str | None = None,
     ) -> str:
         """Create an edge in the graph, optionally linking a memory."""
-        self.graph.upsert_node(from_type, from_name)
-        self.graph.upsert_node(to_type, to_name)
-        self.graph.create_edge(from_type, from_name, edge_type, to_type, to_name)
-        if memory_id:
-            self.graph.link_memory(memory_id, from_type, from_name)
+        with OpTimer(
+            log, "relate", edge=f"{from_name}({from_type})-[{edge_type}]->{to_name}({to_type})",
+        ):
+            self.graph.upsert_node(from_type, from_name)
+            self.graph.upsert_node(to_type, to_name)
+            self.graph.create_edge(from_type, from_name, edge_type, to_type, to_name)
+            if memory_id:
+                self.graph.link_memory(memory_id, from_type, from_name)
         return f"Edge {from_name} -[{edge_type}]-> {to_name} created."
 
     # ------------------------------------------------------------------
@@ -238,31 +261,33 @@ class MemoryEngine:
 
     def about(self, name: str, entity_type: str | None = None) -> list[dict]:
         """Return memories connected to an entity node in the graph."""
-        # Search graph for the entity
-        node_hits = self.graph.search_nodes(name)
-        if entity_type:
-            node_hits = [n for n in node_hits if n.get("type") == entity_type]
+        with OpTimer(log, "about", entity=name, entity_type=entity_type) as timer:
+            # Search graph for the entity
+            node_hits = self.graph.search_nodes(name)
+            if entity_type:
+                node_hits = [n for n in node_hits if n.get("type") == entity_type]
 
-        results = []
-        seen_ids: set[str] = set()
-        for node in node_hits:
-            etype = node.get("type")
-            ename = node.get("name")
-            if not etype or not ename:
-                continue
-            try:
-                memory_ids = self.graph.get_memories_about(etype, ename)
-            except Exception:
-                continue
-            for mem_id in memory_ids:
-                if mem_id in seen_ids:
+            results = []
+            seen_ids: set[str] = set()
+            for node in node_hits:
+                etype = node.get("type")
+                ename = node.get("name")
+                if not etype or not ename:
                     continue
-                seen_ids.add(mem_id)
-                item = self.db.get_item(mem_id)
-                if item and item.status == "active":
-                    results.append(_item_to_dict(item))
+                try:
+                    memory_ids = self.graph.get_memories_about(etype, ename)
+                except Exception:
+                    continue
+                for mem_id in memory_ids:
+                    if mem_id in seen_ids:
+                        continue
+                    seen_ids.add(mem_id)
+                    item = self.db.get_item(mem_id)
+                    if item and item.status == "active":
+                        results.append(_item_to_dict(item))
 
-        return results
+            timer.extra["results"] = len(results)
+            return results
 
     # ------------------------------------------------------------------
     # timeline
