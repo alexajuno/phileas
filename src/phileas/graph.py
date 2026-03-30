@@ -83,6 +83,12 @@ class GraphStore:
                 f"CREATE NODE TABLE IF NOT EXISTS {node_type} "
                 f"(name STRING, props STRING DEFAULT '', PRIMARY KEY (name))"
             )
+            # Add aliases column if it doesn't exist (migration for existing DBs)
+            try:
+                self._conn.execute(f"ALTER TABLE {node_type} ADD aliases STRING DEFAULT '[]'")
+            except RuntimeError:
+                pass  # Column already exists
+
         # Memory nodes (id only)
         self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
 
@@ -262,25 +268,61 @@ class GraphStore:
             ids.append(row[0])
         return ids
 
+    def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
+        """Set aliases for an entity node (e.g., "mom", "mẹ" for a Person)."""
+        if not self._ensure_connected():
+            return
+        if node_type not in ENTITY_NODE_TYPES:
+            raise ValueError(f"Unknown node type: {node_type!r}")
+        aliases_str = json.dumps(aliases)
+        self._conn.execute(
+            f"MATCH (n:{node_type} {{name: $name}}) SET n.aliases = $aliases",
+            parameters={"name": name, "aliases": aliases_str},
+        )
+
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
-        """Search entity nodes by name using CONTAINS match.
+        """Search entity nodes by name or alias using CONTAINS match.
 
         Parameters
         ----------
         name_query:
-            Substring to match against node names.
+            Substring to match against node names and aliases.
         """
         if not self._ensure_connected():
             return []
         parts = []
         for node_type in ENTITY_NODE_TYPES:
-            parts.append(f"MATCH (n:{node_type}) WHERE n.name CONTAINS $q RETURN n.name AS name, '{node_type}' AS type")
+            parts.append(
+                f"MATCH (n:{node_type}) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q "
+                f"RETURN n.name AS name, '{node_type}' AS type"
+            )
         union_query = " UNION ".join(parts)
         result = self._conn.execute(union_query, parameters={"q": name_query})
         results = []
         while result.has_next():
             row = result.get_next()
             results.append({"name": row[0], "type": row[1]})
+        return results
+
+    def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
+        """Find all entities linked to a memory via ABOUT_* edges.
+
+        Returns [{"name": str, "type": str}].
+        """
+        if not self._ensure_connected():
+            return []
+        results = []
+        for entity_type, edge_type in ABOUT_EDGE.items():
+            try:
+                result = self._conn.execute(
+                    f"MATCH (m:Memory {{id: $mid}})-[:{edge_type}]->(e:{entity_type}) RETURN e.name",
+                    parameters={"mid": memory_id},
+                )
+                while result.has_next():
+                    row = result.get_next()
+                    results.append({"name": row[0], "type": entity_type})
+            except Exception:
+                continue
         return results
 
     def get_stats(self) -> dict[str, int]:

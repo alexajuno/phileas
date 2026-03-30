@@ -181,7 +181,7 @@ class MemoryEngine:
                             if item:
                                 candidates[mem_id] = item
 
-            # Path 3: graph search (KuzuDB)
+            # Path 3: graph search (KuzuDB) — word-based entity lookup
             words = query.split()
             for word in words:
                 if len(word) < 2:
@@ -201,6 +201,29 @@ class MemoryEngine:
                             item = self.db.get_item(mem_id)
                             if item:
                                 candidates[mem_id] = item
+
+            # Path 4: semantic-to-graph bridge
+            # Use top semantic hits to discover entities, then follow graph
+            # edges to find additional connected memories.
+            seen_entities: set[tuple[str, str]] = set()
+            bridge_source_ids = list(candidates.keys())[:top_k]
+            for mem_id in bridge_source_ids:
+                entities = self.graph.get_entities_for_memory(mem_id)
+                for entity in entities:
+                    ename = entity["name"]
+                    etype = entity["type"]
+                    if (ename, etype) in seen_entities:
+                        continue
+                    seen_entities.add((ename, etype))
+                    try:
+                        connected_ids = self.graph.get_memories_about(etype, ename)
+                    except Exception:
+                        continue
+                    for connected_id in connected_ids:
+                        if connected_id not in candidates:
+                            item = self.db.get_item(connected_id)
+                            if item:
+                                candidates[connected_id] = item
 
             # Apply filters
             filtered: dict[str, MemoryItem] = {}
