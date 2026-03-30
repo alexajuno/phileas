@@ -46,14 +46,34 @@ ABOUT_EDGE = {
 
 
 class GraphStore:
-    """Graph store backed by KuzuDB for entity relationship storage."""
+    """Graph store backed by KuzuDB for entity relationship storage.
+
+    Lazily connects to KuzuDB on first use. If the database is locked by
+    another process, graph operations gracefully degrade to no-ops so the
+    rest of the MCP server still works.
+    """
 
     def __init__(self, path: Path = DEFAULT_GRAPH_PATH) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = kuzu.Database(str(path))
-        self._conn = kuzu.Connection(self._db)
-        self._init_schema()
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._db: kuzu.Database | None = None
+        self._conn: kuzu.Connection | None = None
+        self._available = True
+
+    def _ensure_connected(self) -> bool:
+        """Lazily open KuzuDB. Returns True if connected, False if unavailable."""
+        if self._conn is not None:
+            return True
+        if not self._available:
+            return False
+        try:
+            self._db = kuzu.Database(str(self._path))
+            self._conn = kuzu.Connection(self._db)
+            self._init_schema()
+            return True
+        except RuntimeError:
+            self._available = False
+            return False
 
     def _init_schema(self) -> None:
         """Create all node and relationship tables if they don't exist."""
@@ -85,6 +105,8 @@ class GraphStore:
         props:
             Optional dict of additional properties, serialised to JSON.
         """
+        if not self._ensure_connected():
+            return
         if node_type not in ENTITY_NODE_TYPES:
             raise ValueError(f"Unknown node type: {node_type!r}. Must be one of {ENTITY_NODE_TYPES}")
         props_str = json.dumps(props) if props else ""
@@ -103,6 +125,8 @@ class GraphStore:
         name:
             Exact name to look up.
         """
+        if not self._ensure_connected():
+            return []
         result = self._conn.execute(
             f"MATCH (n:{node_type} {{name: $name}}) RETURN n.name AS name, n.props AS props",
             parameters={"name": name},
@@ -125,6 +149,8 @@ class GraphStore:
 
         If the edge already exists, this is a no-op.
         """
+        if not self._ensure_connected():
+            return
         # Check existence first
         check_q = (
             f"MATCH (a:{from_type} {{name: $from_name}})-[r:{edge_type}]->"
@@ -148,6 +174,8 @@ class GraphStore:
 
         Creates the Memory node if it does not exist.
         """
+        if not self._ensure_connected():
+            return
         if entity_type not in ABOUT_EDGE:
             raise ValueError(f"Cannot link memory to unknown entity type: {entity_type!r}")
         edge_type = ABOUT_EDGE[entity_type]
@@ -172,6 +200,8 @@ class GraphStore:
         Only direct neighbours (depth=1) are currently returned as KuzuDB
         variable-length traversal syntax differs from Neo4j.
         """
+        if not self._ensure_connected():
+            return []
         # Query outgoing edges
         out_result = self._conn.execute(
             f"MATCH (n:{node_type} {{name: $name}})-[r]->(m) RETURN m, label(m) AS lbl",
@@ -217,6 +247,8 @@ class GraphStore:
         entity_name:
             Name of the entity node.
         """
+        if not self._ensure_connected():
+            return []
         if entity_type not in ABOUT_EDGE:
             raise ValueError(f"Unknown entity type: {entity_type!r}")
         edge_type = ABOUT_EDGE[entity_type]
@@ -238,6 +270,8 @@ class GraphStore:
         name_query:
             Substring to match against node names.
         """
+        if not self._ensure_connected():
+            return []
         parts = []
         for node_type in ENTITY_NODE_TYPES:
             parts.append(f"MATCH (n:{node_type}) WHERE n.name CONTAINS $q RETURN n.name AS name, '{node_type}' AS type")
@@ -251,6 +285,8 @@ class GraphStore:
 
     def get_stats(self) -> dict[str, int]:
         """Return total node and edge counts across all tables."""
+        if not self._ensure_connected():
+            return {"nodes": 0, "edges": 0}
         total_nodes = 0
         for node_type in ALL_NODE_TYPES:
             result = self._conn.execute(f"MATCH (n:{node_type}) RETURN COUNT(*) AS cnt")
