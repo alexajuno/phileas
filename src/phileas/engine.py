@@ -22,8 +22,11 @@ log = get_logger()
 # Graph-path similarity boost for candidates found via entity match
 _GRAPH_BOOST = 0.5
 
-# Similarity floor — candidates below this are noise
+# Similarity floor for vector search candidates
 _SIM_FLOOR = 0.5
+
+# Reranker relevance floor — after reranking, discard below this
+_RELEVANCE_FLOOR = 0.15
 
 # Memory types for bucketed retrieval
 _MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
@@ -249,7 +252,31 @@ class MemoryEngine:
 
             rerank_input = [(mem_id, item.summary) for mem_id, item in filtered.items()]
             reranked = rerank(query, rerank_input)
-            relevance_map = {mem_id: score for mem_id, score in reranked}
+            raw_relevance = {mem_id: score for mem_id, score in reranked}
+
+            # Normalize reranker scores to 0-1 range relative to this query
+            # so a 0.45 in a weak-match query still means "best available"
+            scores = list(raw_relevance.values())
+            min_score = min(scores) if scores else 0
+            max_score = max(scores) if scores else 1
+            score_range = max_score - min_score
+            if score_range > 0.01:
+                relevance_map = {
+                    mid: (s - min_score) / score_range
+                    for mid, s in raw_relevance.items()
+                }
+            else:
+                # All scores nearly equal — treat as uniform
+                relevance_map = {mid: 0.5 for mid in raw_relevance}
+
+            # Post-rerank filter: discard bottom of normalized scores
+            for mem_id in list(filtered.keys()):
+                if relevance_map.get(mem_id, 0.0) < _RELEVANCE_FLOOR:
+                    del filtered[mem_id]
+
+            if not filtered:
+                timer.extra["results"] = 0
+                return []
 
             # ----------------------------------------------------------
             # Stage 3: MMR diversity selection + final scoring
