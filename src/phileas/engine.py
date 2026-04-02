@@ -337,6 +337,49 @@ class MemoryEngine:
             return results
 
     # ------------------------------------------------------------------
+    # update
+    # ------------------------------------------------------------------
+
+    def update(self, memory_id: str, summary: str) -> dict:
+        """Update a memory in place: snapshot old version, update summary, re-embed, link via graph.
+
+        Preserves created_at and daily_ref. The old version becomes an archived
+        snapshot linked by a SUPERSEDES edge.
+        """
+        with OpTimer(log, "update", memory_id=memory_id) as timer:
+            item = self.db.get_item(memory_id)
+            if not item:
+                return {"error": f"Memory {memory_id} not found."}
+            if item.status != "active":
+                return {"error": f"Memory {memory_id} is not active (status={item.status})."}
+
+            # 1. Snapshot old version as archived copy
+            snapshot_id = self.db.snapshot_item(item)
+
+            # 2. Update active memory in place
+            updated = self.db.update_item(memory_id, summary)
+
+            # 3. Re-embed in ChromaDB
+            try:
+                self.vector.delete(memory_id)
+            except Exception:
+                pass
+            self.vector.add(memory_id, summary)
+
+            # 4. Link active → snapshot via SUPERSEDES in graph
+            try:
+                self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
+            except Exception:
+                pass
+
+            timer.extra["snapshot_id"] = snapshot_id
+            return {
+                "id": memory_id,
+                "snapshot_id": snapshot_id,
+                "summary": updated.summary if updated else summary,
+            }
+
+    # ------------------------------------------------------------------
     # forget
     # ------------------------------------------------------------------
 

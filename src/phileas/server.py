@@ -110,6 +110,26 @@ def recall(
 
 
 @mcp.tool()
+def update(memory_id: str, summary: str) -> str:
+    """Update a memory's content in place, preserving its original date and identity.
+
+    Creates an archived snapshot of the old version linked via SUPERSEDES edge
+    in the knowledge graph, so the correction trail is preserved.
+
+    Args:
+        memory_id: The UUID of the memory to update.
+        summary: The new summary text to replace the old one.
+    """
+    result = engine.update(memory_id, summary)
+    if "error" in result:
+        return result["error"]
+    return (
+        f"Updated [{result['id']}] {result['summary']}\n"
+        f"Old version archived as [{result['snapshot_id']}]"
+    )
+
+
+@mcp.tool()
 def forget(memory_id: str, reason: str | None = None) -> str:
     """Archive a memory so it is no longer retrieved.
 

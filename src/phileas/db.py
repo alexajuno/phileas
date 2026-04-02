@@ -132,6 +132,37 @@ class Database:
         )
         self.conn.commit()
 
+    def update_item(self, item_id: str, summary: str) -> MemoryItem | None:
+        """Update a memory's summary in place, preserving created_at and daily_ref."""
+        item = self.get_item(item_id)
+        if not item:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE memory_items SET summary = ?, updated_at = ? WHERE id = ?",
+            (summary, now, item_id),
+        )
+        self.conn.commit()
+        return self.get_item(item_id)
+
+    def snapshot_item(self, item: MemoryItem) -> str:
+        """Create an archived copy of a memory, returning the snapshot's ID."""
+        snapshot = MemoryItem(
+            summary=item.summary,
+            memory_type=item.memory_type,
+            importance=item.importance,
+            tier=item.tier,
+            status="archived",
+            access_count=item.access_count,
+            last_accessed=item.last_accessed,
+            daily_ref=item.daily_ref,
+            source_session_id=item.source_session_id,
+            consolidated_into=item.consolidated_into,
+            created_at=item.created_at,
+        )
+        self.save_item(snapshot)
+        return snapshot.id
+
     def bump_access(self, item_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(

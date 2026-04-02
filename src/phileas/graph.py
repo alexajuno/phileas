@@ -33,6 +33,7 @@ REL_DEFINITIONS = [
     ("RELATES_TO", "Memory", "Memory"),
     ("CONTRADICTS", "Memory", "Memory"),
     ("CONSOLIDATED_INTO", "Memory", "Memory"),
+    ("SUPERSEDES", "Memory", "Memory"),
 ]
 
 # Map entity type -> ABOUT edge type
@@ -58,21 +59,23 @@ class GraphStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
-        self._available = True
 
     def _ensure_connected(self) -> bool:
-        """Lazily open KuzuDB. Returns True if connected, False if unavailable."""
+        """Lazily open KuzuDB. Returns True if connected, False if unavailable.
+
+        Retries on each call — a previous failure (e.g. database locked by
+        another process) does not permanently disable the graph layer.
+        """
         if self._conn is not None:
             return True
-        if not self._available:
-            return False
         try:
             self._db = kuzu.Database(str(self._path))
             self._conn = kuzu.Connection(self._db)
             self._init_schema()
             return True
         except RuntimeError:
-            self._available = False
+            self._db = None
+            self._conn = None
             return False
 
     def _init_schema(self) -> None:
@@ -198,6 +201,26 @@ class GraphStore:
         self._conn.execute(
             f"MATCH (m:Memory {{id: $mid}}), (e:{entity_type} {{name: $ename}}) CREATE (m)-[:{edge_type}]->(e)",
             parameters={"mid": memory_id, "ename": entity_name},
+        )
+
+    def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
+        """Create an edge between two Memory nodes, matched by id."""
+        if not self._ensure_connected():
+            return
+        # Ensure both Memory nodes exist
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": to_id})
+        # Check existence
+        count_result = self._conn.execute(
+            f"MATCH (a:Memory {{id: $fid}})-[:{edge_type}]->(b:Memory {{id: $tid}}) RETURN COUNT(*) AS cnt",
+            parameters={"fid": from_id, "tid": to_id},
+        )
+        row = count_result.get_next()
+        if row[0] > 0:
+            return
+        self._conn.execute(
+            f"MATCH (a:Memory {{id: $fid}}), (b:Memory {{id: $tid}}) CREATE (a)-[:{edge_type}]->(b)",
+            parameters={"fid": from_id, "tid": to_id},
         )
 
     def get_neighborhood(self, node_type: str, name: str, depth: int = 1) -> list[dict[str, Any]]:
