@@ -1,7 +1,7 @@
 [project]
-name = "phileas"
-version = "0.0.0"
-description = "Local-first AI companion memory infrastructure"
+name = "phileas-memory"
+version = "0.1.0"
+description = "Local-first long-term memory for AI companions"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -13,6 +13,9 @@ dependencies = [
     "click>=8.3.1",
     "rich>=14.3.3",
 ]
+
+[project.scripts]
+phileas = "phileas.cli:app"
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers"]
