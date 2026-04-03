@@ -44,6 +44,7 @@ class LLMConfig:
 
     provider: str | None = None
     model: str | None = None
+    api_key_env: str | None = None
     operations: LLMOperations = field(default_factory=LLMOperations)
 
     @property
@@ -122,7 +123,7 @@ class PhileasConfig:
 
     @property
     def db_path(self) -> Path:
-        return self.home / "phileas.db"
+        return self.home / "memory.db"
 
     @property
     def chroma_path(self) -> Path:

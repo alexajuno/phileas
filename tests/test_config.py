@@ -81,7 +81,7 @@ class TestDefaults:
     def test_derived_paths(self):
         cfg = load_config()
         home = Path.home() / ".phileas"
-        assert cfg.db_path == home / "phileas.db"
+        assert cfg.db_path == home / "memory.db"
         assert cfg.chroma_path == home / "chroma"
         assert cfg.graph_path == home / "graph"
         assert cfg.log_path == home / "phileas.log"
@@ -194,7 +194,7 @@ class TestTomlOverrides:
 
     def test_derived_paths_with_custom_home(self, tmp_path):
         cfg = load_config(home=tmp_path)
-        assert cfg.db_path == tmp_path / "phileas.db"
+        assert cfg.db_path == tmp_path / "memory.db"
         assert cfg.chroma_path == tmp_path / "chroma"
         assert cfg.graph_path == tmp_path / "graph"
         assert cfg.log_path == tmp_path / "phileas.log"
@@ -215,7 +215,7 @@ class TestEnvOverride:
         monkeypatch.setenv("PHILEAS_HOME", str(custom_home))
         cfg = load_config()
         assert cfg.home == custom_home
-        assert cfg.db_path == custom_home / "phileas.db"
+        assert cfg.db_path == custom_home / "memory.db"
 
     def test_phileas_home_env_with_config(self, tmp_path, monkeypatch):
         """TOML in the env-specified home dir should be loaded."""
