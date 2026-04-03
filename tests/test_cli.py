@@ -214,7 +214,8 @@ def test_cli_export_to_file(tmp_dir, monkeypatch):
 
 def test_cli_init(tmp_dir, monkeypatch):
     runner = _runner_with_home(tmp_dir, monkeypatch)
-    result = runner.invoke(app, ["init"])
+    # Provide input: default home path, skip LLM
+    result = runner.invoke(app, ["init"], input=f"{tmp_dir}\nskip\n")
     assert result.exit_code == 0
 
 

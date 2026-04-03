@@ -3,7 +3,14 @@ name = "phileas-memory"
 version = "0.1.0"
 description = "Local-first long-term memory for AI companions"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.14"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+]
 dependencies = [
     "mcp[cli]",
     "sentence-transformers>=5.3.0",
@@ -13,6 +20,9 @@ dependencies = [
     "click>=8.3.1",
     "rich>=14.3.3",
 ]
+
+[project.urls]
+Repository = "https://github.com/ajuno/phileas"
 
 [project.scripts]
 phileas = "phileas.cli:app"

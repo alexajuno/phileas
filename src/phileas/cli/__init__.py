@@ -8,6 +8,7 @@ Usage:
 
 import click
 
+from phileas import __version__
 from phileas.cli.commands import (
     consolidate,
     contradictions,
@@ -26,7 +27,7 @@ from phileas.cli.commands import (
 
 
 @click.group()
-@click.version_option(package_name="phileas")
+@click.version_option(version=__version__, prog_name="phileas")
 def app():
     """Phileas -- long-term memory for AI companions."""
 

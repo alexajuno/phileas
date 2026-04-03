@@ -485,6 +485,6 @@ def serve():
 
 @click.command("init")
 def init_cmd():
-    """Set up Phileas (placeholder -- full wizard coming in a future release)."""
-    print_success("Run phileas init to set up Phileas.")
-    console.print("[dim]Full setup wizard coming soon.[/dim]")
+    """Set up Phileas interactively."""
+    from phileas.cli.wizard import run_wizard
+    run_wizard()
