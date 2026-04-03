@@ -30,16 +30,24 @@ def compute_score(
     days_since_access: float,
     access_count: int,
     tier: int = 2,
+    *,
+    relevance_weight: float = 0.55,
+    importance_weight: float = 0.2,
+    recency_weight: float = 0.15,
+    access_weight: float = 0.1,
 ) -> float:
     """Combined scoring for retrieval ranking.
 
     Relevance-dominant: relevance (from reranker or cosine sim) gets 55%,
     importance is a tiebreaker at 20%, not a dominator.
+
+    Weight parameters can be overridden via keyword arguments; defaults
+    match the original hardcoded values.
     """
-    rel_component = relevance * 0.55
-    imp_component = (importance / 10.0) * 0.2
-    rec_component = recency_score(days_since_access, importance, tier) * 0.15
-    acc_component = (math.log(access_count + 1) / 5.0) * 0.1
+    rel_component = relevance * relevance_weight
+    imp_component = (importance / 10.0) * importance_weight
+    rec_component = recency_score(days_since_access, importance, tier) * recency_weight
+    acc_component = (math.log(access_count + 1) / 5.0) * access_weight
     return rel_component + imp_component + rec_component + acc_component
 
 

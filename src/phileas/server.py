@@ -22,6 +22,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
@@ -36,10 +37,11 @@ mcp = FastMCP(
     ),
 )
 
-db = Database()
-vector = VectorStore()
-graph = GraphStore()
-engine = MemoryEngine(db=db, vector=vector, graph=graph)
+_config = load_config()
+db = Database(path=_config.db_path)
+vector = VectorStore(path=_config.chroma_path)
+graph = GraphStore(path=_config.graph_path)
+engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 
 
 @mcp.tool()

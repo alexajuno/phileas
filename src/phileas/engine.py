@@ -8,8 +8,11 @@ Three retrieval paths:
 SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime, timezone
 
+from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.logging import OpTimer, get_logger
@@ -18,15 +21,6 @@ from phileas.scoring import compute_score, mmr_select
 from phileas.vector import VectorStore
 
 log = get_logger()
-
-# Graph-path similarity boost for candidates found via entity match
-_GRAPH_BOOST = 0.5
-
-# Similarity floor for vector search candidates
-_SIM_FLOOR = 0.5
-
-# Reranker relevance floor — after reranking, discard below this
-_RELEVANCE_FLOOR = 0.15
 
 # Memory types for bucketed retrieval
 _MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
@@ -52,10 +46,17 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
 
 
 class MemoryEngine:
-    def __init__(self, db: Database, vector: VectorStore, graph: GraphStore) -> None:
+    def __init__(
+        self,
+        db: Database,
+        vector: VectorStore,
+        graph: GraphStore,
+        config: PhileasConfig | None = None,
+    ) -> None:
         self.db = db
         self.vector = vector
         self.graph = graph
+        self.config = config if config is not None else load_config()
 
     # ------------------------------------------------------------------
     # memorize
@@ -178,7 +179,7 @@ class MemoryEngine:
                 # Search broadly, then filter to this type
                 semantic_hits = self.vector.search(query, top_k=top_k * 3)
                 for mem_id, sim in semantic_hits:
-                    if mem_id in type_ids and sim >= _SIM_FLOOR:
+                    if mem_id in type_ids and sim >= self.config.recall.similarity_floor:
                         if mem_id not in candidates:
                             item = self.db.get_item(mem_id)
                             if item:
@@ -271,7 +272,7 @@ class MemoryEngine:
 
             # Post-rerank filter: discard bottom of normalized scores
             for mem_id in list(filtered.keys()):
-                if relevance_map.get(mem_id, 0.0) < _RELEVANCE_FLOOR:
+                if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
                     del filtered[mem_id]
 
             if not filtered:
@@ -313,7 +314,10 @@ class MemoryEngine:
             ]
 
             # Select diverse subset via MMR
-            selected = mmr_select(mmr_candidates, sim_matrix, top_k=top_k, lambda_param=0.7)
+            selected = mmr_select(
+                mmr_candidates, sim_matrix, top_k=top_k,
+                lambda_param=self.config.recall.mmr_lambda,
+            )
 
             # Final scoring with importance/recency as tiebreakers
             results = []
@@ -321,7 +325,13 @@ class MemoryEngine:
                 item = filtered[sel["id"]]
                 relevance = sel["relevance"]
                 days = _days_since(item.last_accessed)
-                score = compute_score(relevance, item.importance, days, item.access_count, item.tier)
+                score = compute_score(
+                    relevance, item.importance, days, item.access_count, item.tier,
+                    relevance_weight=self.config.scoring.relevance_weight,
+                    importance_weight=self.config.scoring.importance_weight,
+                    recency_weight=self.config.scoring.recency_weight,
+                    access_weight=self.config.scoring.access_weight,
+                )
                 results.append(_item_to_dict(item, score))
 
             results.sort(key=lambda r: r["score"], reverse=True)

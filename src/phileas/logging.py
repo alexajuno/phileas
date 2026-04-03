@@ -6,12 +6,9 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from time import perf_counter
 
-LOG_DIR = Path.home() / ".phileas"
-LOG_FILE = LOG_DIR / "phileas.log"
-
-# 5 MB per file, keep 3 rotated files
-MAX_BYTES = 5 * 1024 * 1024
-BACKUP_COUNT = 3
+_DEFAULT_LOG_DIR = Path.home() / ".phileas"
+_DEFAULT_MAX_BYTES = 5 * 1024 * 1024
+_DEFAULT_BACKUP_COUNT = 3
 
 
 class JSONFormatter(logging.Formatter):
@@ -29,16 +26,36 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
-def get_logger() -> logging.Logger:
+def get_logger(
+    *,
+    log_dir: Path | None = None,
+    level: str | None = None,
+    max_bytes: int | None = None,
+    backup_count: int | None = None,
+) -> logging.Logger:
+    """Return the Phileas logger, creating it on first call.
+
+    All parameters are optional and default to the original hardcoded values:
+      log_dir     – directory for log files (default ``~/.phileas``)
+      level       – logging level name (default ``"INFO"``)
+      max_bytes   – max bytes per rotated log file (default 5 MB)
+      backup_count – number of rotated backup files (default 3)
+    """
     logger = logging.getLogger("phileas")
     if logger.handlers:
         return logger
 
-    logger.setLevel(logging.INFO)
+    resolved_dir = log_dir if log_dir is not None else _DEFAULT_LOG_DIR
+    resolved_level = level if level is not None else "INFO"
+    resolved_max_bytes = max_bytes if max_bytes is not None else _DEFAULT_MAX_BYTES
+    resolved_backup_count = backup_count if backup_count is not None else _DEFAULT_BACKUP_COUNT
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logger.setLevel(getattr(logging, resolved_level.upper(), logging.INFO))
+
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    log_file = resolved_dir / "phileas.log"
     handler = RotatingFileHandler(
-        LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT
+        log_file, maxBytes=resolved_max_bytes, backupCount=resolved_backup_count
     )
     handler.setFormatter(JSONFormatter())
     logger.addHandler(handler)
