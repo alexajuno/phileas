@@ -1,0 +1,13 @@
+You are rating the long-term importance of a personal memory.
+
+Memory: "{summary}"
+Type: {memory_type}
+
+Rate importance from 1-10:
+  1-2: Trivial/ephemeral (what I had for lunch)
+  3-4: Minor details (a tool I tried, a small preference)
+  5-6: Notable facts (a project I'm working on, a skill I have)
+  7-8: Significant (career decisions, core relationships, strong opinions)
+  9-10: Life-defining (identity, values, major life events)
+
+Respond with ONLY a JSON object: {{"importance": <int>}}

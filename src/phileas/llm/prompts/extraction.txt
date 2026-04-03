@@ -1,0 +1,18 @@
+Extract discrete memories from the following text. Each memory should be a single fact, event, preference, or observation.
+
+Text:
+---
+{text}
+---
+
+For each memory, provide:
+- summary: 1-2 sentence description
+- memory_type: one of "profile", "event", "knowledge", "behavior", "reflection"
+- importance: 1-10 (see scale below)
+- entities: list of {{"name": str, "type": str}} where type is one of "Person", "Project", "Place", "Tool", "Topic"
+- relationships: list of {{"from_name": str, "from_type": str, "edge": str, "to_name": str, "to_type": str}}
+
+Importance scale:
+  1-2: Trivial, 3-4: Minor, 5-6: Notable, 7-8: Significant, 9-10: Life-defining
+
+Respond with ONLY a JSON object: {{"memories": [...]}}

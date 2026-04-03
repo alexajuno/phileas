@@ -1,0 +1,10 @@
+You are expanding a memory search query to improve recall. The user's personal memory system uses keyword and semantic search.
+
+Original query: "{query}"
+
+Generate 3-5 alternative phrasings or related terms that would match relevant memories. Think about:
+- Synonyms and related concepts
+- More specific and more general versions
+- Related entities or topics
+
+Respond with ONLY a JSON object: {{"queries": ["phrase1", "phrase2", ...]}}
