@@ -1,12 +1,31 @@
-# Phileas
+# Phileas -- Long-term memory for AI companions
 
-Local-first long-term memory for AI companions. Named after Phileas Fogg — a steadfast partner for the journey.
+Your AI forgets you every session. Phileas fixes that.
 
-Phileas is the persistent layer that lets an AI actually *know you* over time — remembering, forgetting naturally, and adapting as you change. It runs as an [MCP server](https://modelcontextprotocol.io/) that any compatible AI client (Claude Code, etc.) can connect to.
+Phileas is a local-first memory system that gives AI companions persistent, intelligent memory. It runs on your machine, stores everything locally, and connects to any AI via [MCP](https://modelcontextprotocol.io/).
 
-## Architecture
+Named after Phileas Fogg -- a steadfast partner for the journey.
 
-Triple-store backend — each store handles what it's good at:
+## Quick start
+
+```bash
+pip install phileas-memory
+phileas init
+phileas remember "I'm a backend engineer who loves distributed systems"
+phileas recall "what do I work on"
+```
+
+## Features
+
+- **100% local** -- your memories never leave your machine
+- **Smart** -- auto-extracts facts, scores importance, and detects contradictions (with optional LLM)
+- **Connected** -- knowledge graph links people, projects, and concepts
+- **Works with any AI** -- Claude, GPT, Ollama, or any MCP-compatible client
+- **Fast** -- semantic search + graph traversal + cross-encoder reranking + MMR diversity
+
+## How it works
+
+Phileas uses a triple-store architecture -- each store handles what it's good at:
 
 | Store | Tech | Role |
 |-------|------|------|
@@ -14,40 +33,60 @@ Triple-store backend — each store handles what it's good at:
 | **Vector** | ChromaDB | Semantic search via sentence-transformers embeddings |
 | **Graph** | KuzuDB | Entity relationships and knowledge graph traversal |
 
-The `MemoryEngine` orchestrates all three, so tools interact with a single interface.
+The `MemoryEngine` orchestrates all three. When you store a memory, it gets persisted to SQLite, embedded in ChromaDB, and linked into the knowledge graph in KuzuDB. When you recall, candidates are gathered from all three paths, reranked by a cross-encoder, and diversity-selected via MMR.
 
-## Setup
+## CLI commands
 
-Requires Python 3.14+.
+| Command | Description |
+|---------|-------------|
+| `phileas init` | Interactive setup wizard |
+| `phileas remember "text"` | Store a memory |
+| `phileas recall "query"` | Search memories |
+| `phileas forget <id>` | Archive a memory |
+| `phileas update <id> "text"` | Update a memory's content |
+| `phileas list` | Browse all memories |
+| `phileas show <id>` | Show full detail of a memory |
+| `phileas ingest <source>` | Extract memories from text or a file (requires LLM) |
+| `phileas consolidate` | Merge similar memories into summaries (requires LLM) |
+| `phileas contradictions` | Find conflicting memories (requires LLM) |
+| `phileas export` | Export memories as JSON |
+| `phileas serve` | Start MCP server |
+| `phileas status` | Show system health and stats |
+
+## Connect to an AI
+
+Start the MCP server, then point your AI client at it:
 
 ```bash
-# Install
-pip install -e .
-
-# Or with uv
-uv pip install -e .
+phileas serve
 ```
 
-Add to your MCP client config (e.g. `~/.claude/settings.json`):
+Add to Claude Code (`~/.claude/settings.json`):
 
 ```json
 {
   "mcpServers": {
     "phileas": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/phileas", "mcp", "run", "src/phileas/server.py"]
+      "command": "phileas",
+      "args": ["serve"]
     }
   }
 }
 ```
 
-## Status
+See [MCP Integration](docs/mcp-integration.md) for other clients and advanced configuration.
 
-Core engine is built and running. Active areas:
+## Documentation
 
-- Memory consolidation (tier-2 clustering into tier-3 summaries)
-- Decay and natural forgetting
-- Richer graph queries
+- [Quick Start](docs/quickstart.md) -- 5-minute guided tutorial
+- [Configuration](docs/configuration.md) -- Full config.toml reference
+- [CLI Reference](docs/cli-reference.md) -- All commands with options and examples
+- [LLM Setup](docs/llm-setup.md) -- Provider guides for Anthropic, OpenAI, Ollama
+- [MCP Integration](docs/mcp-integration.md) -- Connecting Phileas to AI clients
+
+## Requirements
+
+Python 3.14+
 
 ## License
 

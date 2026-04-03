@@ -280,3 +280,45 @@ def test_cli_help():
     assert "status" in result.output
     assert "remember" in result.output
     assert "recall" in result.output
+
+
+# ------------------------------------------------------------------
+# full end-to-end integration smoke test
+# ------------------------------------------------------------------
+
+
+def test_full_flow(tmp_dir, monkeypatch):
+    """End-to-end: init (skip LLM) -> remember -> recall -> list -> status -> export."""
+    monkeypatch.setenv("PHILEAS_HOME", str(tmp_dir))
+    runner = CliRunner()
+
+    # Init with skip LLM
+    result = runner.invoke(app, ["init"], input=f"{tmp_dir}\nskip\n")
+    assert result.exit_code == 0
+
+    # Remember
+    result = runner.invoke(app, ["remember", "I love building memory systems"])
+    assert result.exit_code == 0
+    assert "Stored" in result.output or "stored" in result.output.lower()
+
+    # Remember another
+    result = runner.invoke(app, ["remember", "Python is my favorite language", "--type", "behavior"])
+    assert result.exit_code == 0
+
+    # Recall
+    result = runner.invoke(app, ["recall", "memory systems"])
+    assert result.exit_code == 0
+    assert "memory" in result.output.lower()
+
+    # List
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+
+    # Status
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0
+
+    # Export
+    result = runner.invoke(app, ["export"])
+    assert result.exit_code == 0
+    assert "memory systems" in result.output.lower()
