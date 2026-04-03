@@ -10,11 +10,13 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
+from phileas.llm import LLMClient
 from phileas.logging import OpTimer, get_logger
 from phileas.models import MemoryItem
 from phileas.scoring import compute_score, mmr_select
@@ -57,6 +59,7 @@ class MemoryEngine:
         self.vector = vector
         self.graph = graph
         self.config = config if config is not None else load_config()
+        self.llm = LLMClient(self.config.llm)
 
     # ------------------------------------------------------------------
     # memorize
@@ -72,6 +75,7 @@ class MemoryEngine:
         tier: int = 2,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
+        auto_importance: bool = True,
     ) -> dict:
         """Store a memory across all three backends.
 
@@ -102,6 +106,18 @@ class MemoryEngine:
                 daily_ref=daily_ref,
                 source_session_id=source_session_id,
             )
+
+            # 3a. Auto-score importance via LLM (when caller didn't override)
+            if auto_importance and self.llm.available:
+                from phileas.llm.importance import score_importance
+
+                try:
+                    item.importance = asyncio.run(
+                        score_importance(self.llm, item.summary, item.memory_type)
+                    )
+                except Exception:
+                    pass  # Keep default importance on failure
+
             self.db.save_item(item)
 
             # 4. Add to ChromaDB
@@ -134,7 +150,28 @@ class MemoryEngine:
 
             timer.extra["dedup"] = False
             timer.extra["id"] = item.id
-            return {"id": item.id, "summary": item.summary, "deduplicated": False}
+
+            # 6. Check for contradictions with existing memories
+            result: dict = {"id": item.id, "summary": item.summary, "deduplicated": False}
+            if self.llm.available:
+                from phileas.llm.contradiction import detect_contradictions
+
+                related = self.recall(item.summary, top_k=5, _skip_llm=True)
+                if related:
+                    try:
+                        contradiction = asyncio.run(
+                            detect_contradictions(
+                                self.llm,
+                                new_memory=item.summary,
+                                existing_memories=related,
+                            )
+                        )
+                        if contradiction.get("contradicts"):
+                            result["contradiction"] = contradiction
+                    except Exception:
+                        pass
+
+            return result
 
     # ------------------------------------------------------------------
     # recall
@@ -146,6 +183,7 @@ class MemoryEngine:
         top_k: int = 10,
         memory_type: str | None = None,
         min_importance: int | None = None,
+        _skip_llm: bool = False,
     ) -> list[dict]:
         """Three-stage retrieval: gather → rerank → MMR select.
 
@@ -160,30 +198,46 @@ class MemoryEngine:
             memory_type=memory_type, min_importance=min_importance,
         ) as timer:
             # ----------------------------------------------------------
+            # Stage 0: Query expansion via LLM
+            # ----------------------------------------------------------
+            if not _skip_llm and self.llm.available:
+                from phileas.llm.query_rewrite import rewrite_query
+
+                try:
+                    queries = asyncio.run(rewrite_query(self.llm, query))
+                except Exception:
+                    queries = [query]
+            else:
+                queries = [query]
+
+            # ----------------------------------------------------------
             # Stage 1: Gather candidates from multiple paths
             # ----------------------------------------------------------
             candidates: dict[str, MemoryItem] = {}  # id -> item
 
-            # Path 1: keyword search (SQLite)
-            keyword_hits = self.db.search_by_keyword(query, top_k=top_k * 3)
-            for item in keyword_hits:
-                candidates[item.id] = item
+            # Path 1: keyword search (SQLite) — run for each query variant
+            for q in queries:
+                keyword_hits = self.db.search_by_keyword(q, top_k=top_k * 3)
+                for item in keyword_hits:
+                    candidates[item.id] = item
 
-            # Path 2: semantic search (ChromaDB) — bucketed by type
+            # Path 2: semantic search (ChromaDB) — bucketed by type,
+            # run for each query variant
             search_types = [memory_type] if memory_type else _MEMORY_TYPES
-            for mtype in search_types:
-                type_items = self.db.get_items_by_type(mtype)
-                type_ids = {item.id for item in type_items if item.status == "active"}
-                if not type_ids:
-                    continue
-                # Search broadly, then filter to this type
-                semantic_hits = self.vector.search(query, top_k=top_k * 3)
-                for mem_id, sim in semantic_hits:
-                    if mem_id in type_ids and sim >= self.config.recall.similarity_floor:
-                        if mem_id not in candidates:
-                            item = self.db.get_item(mem_id)
-                            if item:
-                                candidates[mem_id] = item
+            for q in queries:
+                for mtype in search_types:
+                    type_items = self.db.get_items_by_type(mtype)
+                    type_ids = {item.id for item in type_items if item.status == "active"}
+                    if not type_ids:
+                        continue
+                    # Search broadly, then filter to this type
+                    semantic_hits = self.vector.search(q, top_k=top_k * 3)
+                    for mem_id, sim in semantic_hits:
+                        if mem_id in type_ids and sim >= self.config.recall.similarity_floor:
+                            if mem_id not in candidates:
+                                item = self.db.get_item(mem_id)
+                                if item:
+                                    candidates[mem_id] = item
 
             # Path 3: graph search (KuzuDB) — word-based entity lookup
             words = query.split()
