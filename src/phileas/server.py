@@ -85,6 +85,55 @@ def memorize(
 
 
 @mcp.tool()
+def memorize_batch(memories: list | str) -> str:
+    """Store multiple memories in one call. Use when catching up on a conversation or saving several related memories at once.
+
+    Args:
+        memories: List or JSON string of memory objects. Each object has:
+            - summary (required): What to remember (1-2 sentences).
+            - memory_type: One of "profile", "event", "knowledge", "behavior", "reflection". Default "knowledge".
+            - importance: 1-10. Default 5.
+            - daily_ref: YYYY-MM-DD. Defaults to today.
+            - entities: List of {"name": str, "type": str}.
+            - relationships: List of {"from_name", "from_type", "edge", "to_name", "to_type"}.
+    """
+    items = json.loads(memories) if isinstance(memories, str) else memories
+    if not items:
+        return "No memories provided."
+
+    results = []
+    for mem in items:
+        summary = mem.get("summary")
+        if not summary:
+            results.append("Skipped — no summary provided")
+            continue
+
+        parsed_entities = mem.get("entities")
+        if isinstance(parsed_entities, str):
+            parsed_entities = json.loads(parsed_entities)
+        parsed_relationships = mem.get("relationships")
+        if isinstance(parsed_relationships, str):
+            parsed_relationships = json.loads(parsed_relationships)
+
+        result = engine.memorize(
+            summary=summary,
+            memory_type=mem.get("memory_type", "knowledge"),
+            importance=mem.get("importance", 5),
+            daily_ref=mem.get("daily_ref"),
+            entities=parsed_entities,
+            relationships=parsed_relationships,
+            auto_importance=False,
+        )
+
+        if result.get("deduplicated"):
+            results.append(f"Duplicate: [{result['id']}] {result['summary']}")
+        else:
+            results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
+
+    return f"Batch complete ({len(results)} items):\n" + "\n".join(f"  {r}" for r in results)
+
+
+@mcp.tool()
 def recall(
     query: str,
     top_k: int = 5,
@@ -191,14 +240,15 @@ def about(name: str, entity_type: str | None = None) -> str:
 
 
 @mcp.tool()
-def timeline(start_date: str, end_date: str | None = None) -> str:
+def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> str:
     """Get memories anchored to a date or date range.
 
     Args:
         start_date: Start date in YYYY-MM-DD format.
         end_date: End date in YYYY-MM-DD format (optional; if omitted, returns only start_date).
+        window: Days to expand search in both directions (default 1). Helps catch events that span midnight or were tagged to adjacent days.
     """
-    items = engine.timeline(start_date, end_date=end_date)
+    items = engine.timeline(start_date, end_date=end_date, window=window)
     if not items:
         if end_date:
             return f"No memories found between {start_date} and {end_date}."

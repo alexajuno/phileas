@@ -379,6 +379,34 @@ class MemoryEngine:
                 lambda_param=self.config.recall.mmr_lambda,
             )
 
+            # ----------------------------------------------------------
+            # Person-aware boost: if the query matches a Person entity,
+            # boost profile memories and recent events about that person.
+            # ----------------------------------------------------------
+            person_memory_ids: set[str] = set()
+            person_profile_ids: set[str] = set()
+            query_person_nodes = []
+            for word in words:
+                if len(word) < 2:
+                    continue
+                for node in self.graph.search_nodes(word):
+                    if node.get("type") == "Person":
+                        query_person_nodes.append(node)
+            for node in query_person_nodes:
+                ename = node.get("name")
+                if ename:
+                    try:
+                        mem_ids = self.graph.get_memories_about("Person", ename)
+                        person_memory_ids.update(mem_ids)
+                    except Exception:
+                        pass
+
+            # Identify profile memories about the matched person
+            for mem_id in person_memory_ids:
+                item = filtered.get(mem_id) or candidates.get(mem_id)
+                if item and item.memory_type == "profile":
+                    person_profile_ids.add(mem_id)
+
             # Final scoring with importance/recency as tiebreakers
             results = []
             for sel in selected:
@@ -392,6 +420,14 @@ class MemoryEngine:
                     recency_weight=self.config.scoring.recency_weight,
                     access_weight=self.config.scoring.access_weight,
                 )
+                # Person-aware boosts
+                if sel["id"] in person_profile_ids:
+                    score += 0.3  # Profile memories about queried person
+                elif sel["id"] in person_memory_ids:
+                    # Recency boost for recent events about the person
+                    days_created = _days_since(item.created_at)
+                    if days_created <= 30:
+                        score += 0.1
                 results.append(_item_to_dict(item, score))
 
             results.sort(key=lambda r: r["score"], reverse=True)
@@ -525,9 +561,26 @@ class MemoryEngine:
     # timeline
     # ------------------------------------------------------------------
 
-    def timeline(self, start_date: str, end_date: str | None = None) -> list[dict]:
-        """Return memories in a date range, delegating to SQLite."""
-        items = self.db.get_items_by_date_range(start_date, end_date)
+    def timeline(self, start_date: str, end_date: str | None = None, window: int = 0) -> list[dict]:
+        """Return memories in a date range, delegating to SQLite.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD).
+            end_date: End date (optional).
+            window: Days to expand range in both directions (e.g. 1 = check day before and after).
+        """
+        if window > 0:
+            from datetime import timedelta
+            start_dt = date.fromisoformat(start_date)
+            expanded_start = (start_dt - timedelta(days=window)).isoformat()
+            if end_date:
+                end_dt = date.fromisoformat(end_date)
+                expanded_end = (end_dt + timedelta(days=window)).isoformat()
+            else:
+                expanded_end = (start_dt + timedelta(days=window)).isoformat()
+            items = self.db.get_items_by_date_range(expanded_start, expanded_end)
+        else:
+            items = self.db.get_items_by_date_range(start_date, end_date)
         return [_item_to_dict(item) for item in items]
 
     # ------------------------------------------------------------------
