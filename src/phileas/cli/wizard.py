@@ -1,17 +1,20 @@
 """Interactive setup wizard for `phileas init`.
 
 Walks the user through first-time configuration:
- 1. Choose data directory
- 2. Pick LLM provider + model + API key env var
- 3. Write config.toml
- 4. Download embedding model
- 5. Download reranker model
- 6. Test LLM connection (if configured)
+ 1. Choose usage mode (Claude Code / Standalone / Both)
+ 2. Choose data directory
+ 3. Pick LLM provider + model + API key env var (standalone/both)
+ 4. Write config.toml
+ 5. Wire Claude Code MCP config (claude-code/both)
+ 6. Download embedding + reranker models
+ 7. Test LLM connection (if configured)
 """
 
 from __future__ import annotations
 
+import json
 import os
+import sys
 from pathlib import Path
 
 import click
@@ -72,6 +75,53 @@ def _write_config(home: Path, provider: str | None, model: str | None, api_key_e
 
     config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return config_path
+
+
+def _wire_claude_code(home: Path) -> bool:
+    """Add Phileas MCP server to Claude Code's .mcp.json. Returns True on success."""
+    mcp_json_path = Path.home() / ".claude" / ".mcp.json"
+
+    # Determine the best command for the MCP server
+    phileas_exe = _find_phileas_command()
+
+    mcp_config: dict
+    if mcp_json_path.exists():
+        try:
+            mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            mcp_config = {}
+    else:
+        mcp_config = {}
+
+    mcp_config.setdefault("mcpServers", {})
+
+    if phileas_exe:
+        mcp_config["mcpServers"]["phileas"] = {
+            "type": "stdio",
+            "command": phileas_exe,
+            "args": ["serve"],
+        }
+    else:
+        # Fallback: use uv run
+        mcp_config["mcpServers"]["phileas"] = {
+            "type": "stdio",
+            "command": "uv",
+            "args": ["run", "--project", str(Path(__file__).resolve().parents[2].parent), "python", "-c",
+                      "from phileas.server import mcp; mcp.run()"],
+        }
+
+    try:
+        mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
+        mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n", encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+def _find_phileas_command() -> str | None:
+    """Find the phileas executable on PATH."""
+    import shutil
+    return shutil.which("phileas")
 
 
 def _download_embedding_model() -> bool:
@@ -136,71 +186,102 @@ def run_wizard() -> None:
     console.print("[bold cyan]Welcome to Phileas[/bold cyan] -- long-term memory for AI companions.")
     console.print()
 
-    # 1. Data directory
+    # 1. Usage mode
+    console.print("How will you use Phileas?")
+    console.print()
+    console.print("  [cyan]1[/cyan]  With Claude Code [dim](recommended)[/dim] -- Claude is the brain, Phileas stores memories")
+    console.print("  [cyan]2[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
+    console.print("  [cyan]3[/cyan]  Both -- Claude Code + standalone CLI access")
+    console.print()
+
+    mode = click.prompt("Choice", type=click.Choice(["1", "2", "3"]), default="1")
+    use_claude_code = mode in ("1", "3")
+    use_standalone = mode in ("2", "3")
+
+    # 2. Data directory
+    console.print()
     default_home = _resolve_default_home()
     home_str = click.prompt("Where should Phileas store data?", default=default_home)
     home = Path(home_str).expanduser().resolve()
 
-    # 2. LLM provider
-    console.print()
-    console.print("LLM provider (used for extraction, consolidation, contradiction detection):")
-    console.print("  [cyan]anthropic[/cyan]  -- Claude models via Anthropic API")
-    console.print("  [cyan]openai[/cyan]     -- GPT models via OpenAI API")
-    console.print("  [cyan]ollama[/cyan]     -- Local models via Ollama")
-    console.print("  [cyan]skip[/cyan]       -- Configure later")
-    console.print()
-
-    provider = click.prompt(
-        "LLM provider",
-        type=click.Choice(["anthropic", "openai", "ollama", "skip"], case_sensitive=False),
-        default="skip",
-    )
-
+    # 3. LLM provider (standalone or both)
+    provider: str | None = None
     model: str | None = None
     api_key_env: str | None = None
 
-    if provider != "skip":
-        defaults = PROVIDER_DEFAULTS[provider]
+    if use_standalone:
+        console.print()
+        console.print("[bold]LLM provider[/bold] (used for auto-importance, extraction, query rewriting):")
+        console.print("  [cyan]anthropic[/cyan]  -- Claude models via Anthropic API")
+        console.print("  [cyan]openai[/cyan]     -- GPT models via OpenAI API")
+        console.print("  [cyan]ollama[/cyan]     -- Local models via Ollama")
+        console.print()
 
-        # 3. Model name
+        provider = click.prompt(
+            "LLM provider",
+            type=click.Choice(["anthropic", "openai", "ollama"], case_sensitive=False),
+            default="openai",
+        )
+
+        defaults = PROVIDER_DEFAULTS[provider]
         model = click.prompt("Model name", default=defaults["model"])
 
-        # 4. API key env var
         default_env = defaults["api_key_env"]
         if default_env:
             api_key_env = click.prompt(
                 "Environment variable for API key (keys are NEVER stored in config)",
                 default=default_env,
             )
-        else:
-            api_key_env = None
-    else:
-        provider = None  # type: ignore[assignment]
 
-    # 5. Write config
+    # 4. Write config
     console.print()
     config_path = _write_config(home, provider, model, api_key_env)
     console.print(f"[green]Wrote[/green] {config_path}")
 
-    # 6. Download embedding model
-    console.print()
-    console.print("[bold]Downloading models ...[/bold]")
-    _download_embedding_model()
+    # 5. Wire Claude Code
+    if use_claude_code:
+        console.print()
+        console.print("[bold]Configuring Claude Code integration...[/bold]")
+        if _wire_claude_code(home):
+            mcp_path = Path.home() / ".claude" / ".mcp.json"
+            console.print(f"  [green]Done[/green] -- updated {mcp_path}")
+            console.print("  [dim]Restart Claude Code to pick up the change.[/dim]")
+        else:
+            console.print("  [yellow]Could not write MCP config automatically.[/yellow]")
+            console.print("  Add this to ~/.claude/.mcp.json manually:")
+            console.print()
+            console.print('  [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
 
-    # 7. Download reranker model
+    # 6. Download models
+    console.print()
+    console.print("[bold]Downloading models...[/bold]")
+    _download_embedding_model()
     _download_reranker_model()
 
-    # 8. Test LLM connection (if configured)
-    if provider:
+    # 7. Test LLM connection (standalone/both only)
+    if use_standalone and provider:
         console.print()
         _test_llm_connection(provider, model, api_key_env)  # type: ignore[arg-type]
 
-    # 9. Done
+    # 8. Done
     console.print()
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()
-    console.print("Suggested next steps:")
-    console.print('  [cyan]phileas remember "I prefer Python over JavaScript"[/cyan]')
-    console.print('  [cyan]phileas recall "programming languages"[/cyan]')
-    console.print("  [cyan]phileas status[/cyan]")
+
+    if use_claude_code and not use_standalone:
+        console.print("Next steps:")
+        console.print("  [cyan]1.[/cyan] Restart Claude Code")
+        console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
+        console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
+    elif use_standalone and not use_claude_code:
+        console.print("Try:")
+        console.print('  [cyan]phileas remember "something about yourself"[/cyan]')
+        console.print('  [cyan]phileas recall "what do you know about me"[/cyan]')
+        console.print("  [cyan]phileas status[/cyan]")
+    else:
+        console.print("Next steps:")
+        console.print("  [cyan]1.[/cyan] Restart Claude Code for MCP integration")
+        console.print("  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember \"I like Python\"[/cyan]")
+        console.print("  [cyan]3.[/cyan] Check usage: [cyan]phileas usage[/cyan]")
+
     console.print()

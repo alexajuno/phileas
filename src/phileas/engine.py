@@ -59,7 +59,13 @@ class MemoryEngine:
         self.vector = vector
         self.graph = graph
         self.config = config if config is not None else load_config()
-        self.llm = LLMClient(self.config.llm)
+
+        # Usage tracking
+        from phileas.llm.usage import UsageTracker
+        usage_db = self.config.home / "usage.db"
+        self._usage_tracker = UsageTracker(usage_db)
+
+        self.llm = LLMClient(self.config.llm, usage_tracker=self._usage_tracker)
 
     # ------------------------------------------------------------------
     # memorize

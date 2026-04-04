@@ -214,8 +214,8 @@ def test_cli_export_to_file(tmp_dir, monkeypatch):
 
 def test_cli_init(tmp_dir, monkeypatch):
     runner = _runner_with_home(tmp_dir, monkeypatch)
-    # Provide input: default home path, skip LLM
-    result = runner.invoke(app, ["init"], input=f"{tmp_dir}\nskip\n")
+    # Provide input: mode=1 (Claude Code), default home path
+    result = runner.invoke(app, ["init"], input=f"1\n{tmp_dir}\n")
     assert result.exit_code == 0
 
 
@@ -292,8 +292,8 @@ def test_full_flow(tmp_dir, monkeypatch):
     monkeypatch.setenv("PHILEAS_HOME", str(tmp_dir))
     runner = CliRunner()
 
-    # Init with skip LLM
-    result = runner.invoke(app, ["init"], input=f"{tmp_dir}\nskip\n")
+    # Init: mode=1 (Claude Code), default home
+    result = runner.invoke(app, ["init"], input=f"1\n{tmp_dir}\n")
     assert result.exit_code == 0
 
     # Remember

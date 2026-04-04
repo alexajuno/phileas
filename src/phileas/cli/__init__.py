@@ -23,6 +23,7 @@ from phileas.cli.commands import (
     show,
     status,
     update_cmd,
+    usage,
 )
 
 
@@ -45,3 +46,4 @@ app.add_command(contradictions)
 app.add_command(export_cmd)
 app.add_command(serve)
 app.add_command(init_cmd)
+app.add_command(usage)
