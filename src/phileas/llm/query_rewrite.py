@@ -29,7 +29,9 @@ async def rewrite_query(client: LLMClient, query: str) -> list[str]:
             max_tokens=256,
         )
 
-        data = json.loads(response)
+        from phileas.llm import parse_json_response
+
+        data = parse_json_response(response)
         queries = data.get("queries", [])
         if not queries:
             return [query]

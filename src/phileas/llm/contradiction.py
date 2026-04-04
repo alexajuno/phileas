@@ -40,7 +40,9 @@ async def detect_contradictions(
             max_tokens=256,
         )
 
-        data = json.loads(response)
+        from phileas.llm import parse_json_response
+
+        data = parse_json_response(response)
         return {
             "contradicts": bool(data["contradicts"]),
             "conflicting_ids": list(data["conflicting_ids"]),

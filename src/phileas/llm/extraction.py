@@ -52,7 +52,9 @@ async def extract_memories(client: LLMClient, text: str) -> list[dict]:
             max_tokens=2048,
         )
 
-        data = json.loads(response)
+        from phileas.llm import parse_json_response
+
+        data = parse_json_response(response)
         memories: list[dict] = data["memories"]
 
         for memory in memories:

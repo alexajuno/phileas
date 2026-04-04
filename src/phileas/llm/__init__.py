@@ -11,12 +11,22 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Any
 
 from litellm import acompletion
 
 from phileas.config import LLMConfig
+
+
+def parse_json_response(text: str) -> Any:
+    """Parse JSON from LLM response, stripping markdown code fences if present."""
+    # Strip ```json ... ``` or ``` ... ```
+    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
+    stripped = re.sub(r"\n?```\s*$", "", stripped)
+    return json.loads(stripped)
 
 
 class LLMClient:

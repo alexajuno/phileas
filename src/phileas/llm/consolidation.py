@@ -31,7 +31,9 @@ async def consolidate_memories(client: LLMClient, cluster: list[dict]) -> dict |
             max_tokens=512,
         )
 
-        data = json.loads(response)
+        from phileas.llm import parse_json_response
+
+        data = parse_json_response(response)
         summary = data["summary"]
         raw = int(data["importance"])
         importance = max(1, min(10, raw))

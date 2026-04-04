@@ -38,6 +38,22 @@ def _get_engine() -> MemoryEngine:
     return MemoryEngine(db=db, vector=vector, graph=graph, config=cfg)
 
 
+def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
+    """Resolve a short ID prefix to a full UUID. Returns None if no match or ambiguous."""
+    # Try exact match first
+    if engine.db.get_item(short_id):
+        return short_id
+    # Prefix match
+    items = engine.db.get_active_items() + [
+        i for i in (engine.db.get_items_by_tier(2) + engine.db.get_items_by_tier(3))
+        if i.status == "archived"
+    ]
+    matches = [i.id for i in items if i.id.startswith(short_id)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 # ------------------------------------------------------------------
 # status
 # ------------------------------------------------------------------
@@ -112,7 +128,11 @@ def forget(memory_id: str, reason: str | None):
     """Archive a memory by ID."""
     try:
         engine = _get_engine()
-        msg = engine.forget(memory_id, reason=reason)
+        resolved = _resolve_id(engine, memory_id)
+        if not resolved:
+            print_error(f"Memory {memory_id} not found.")
+            raise SystemExit(1)
+        msg = engine.forget(resolved, reason=reason)
         print_success(msg)
     except Exception as exc:
         print_error(str(exc))
@@ -131,7 +151,11 @@ def update_cmd(memory_id: str, summary: str):
     """Update a memory's summary."""
     try:
         engine = _get_engine()
-        result = engine.update(memory_id, summary)
+        resolved = _resolve_id(engine, memory_id)
+        if not resolved:
+            print_error(f"Memory {memory_id} not found.")
+            raise SystemExit(1)
+        result = engine.update(resolved, summary)
         if "error" in result:
             print_error(result["error"])
             raise SystemExit(1)
@@ -190,7 +214,11 @@ def show(memory_id: str):
     """Show full detail of a memory."""
     try:
         engine = _get_engine()
-        item = engine.db.get_item(memory_id)
+        resolved = _resolve_id(engine, memory_id)
+        if not resolved:
+            print_error(f"Memory {memory_id} not found.")
+            raise SystemExit(1)
+        item = engine.db.get_item(resolved)
         if not item:
             print_error(f"Memory {memory_id} not found.")
             raise SystemExit(1)

@@ -34,7 +34,9 @@ async def score_importance(
             max_tokens=64,
         )
 
-        data = json.loads(response)
+        from phileas.llm import parse_json_response
+
+        data = parse_json_response(response)
         raw = int(data["importance"])
         return max(1, min(10, raw))
 
