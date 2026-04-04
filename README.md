@@ -51,17 +51,39 @@ The `MemoryEngine` orchestrates all three. When you store a memory, it gets pers
 | `phileas contradictions` | Find conflicting memories (requires LLM) |
 | `phileas export` | Export memories as JSON |
 | `phileas serve` | Start MCP server |
+| `phileas start` | Start background daemon (keeps models loaded for fast CLI) |
+| `phileas stop` | Stop the daemon |
+| `phileas usage` | Show LLM token usage, cost, and request breakdown |
 | `phileas status` | Show system health and stats |
+
+## Setup modes
+
+`phileas init` offers three modes:
+
+1. **Claude Code** -- Claude is the brain, Phileas stores memories. Auto-configures `~/.claude/.mcp.json`.
+2. **Standalone CLI** -- Phileas uses an LLM API (OpenAI, Anthropic, Ollama) for smart features.
+3. **Both** -- Claude Code integration + standalone CLI access.
+
+## Performance
+
+For faster CLI commands, start the daemon to keep models loaded in memory:
+
+```bash
+phileas start    # Models load once, CLI commands become instant
+phileas stop     # When you're done
+```
+
+Without the daemon, each CLI command loads models from scratch (~1-2s overhead).
 
 ## Connect to an AI
 
-Start the MCP server, then point your AI client at it:
+`phileas init` (mode 1 or 3) auto-configures Claude Code. Or manually:
 
 ```bash
 phileas serve
 ```
 
-Add to Claude Code (`~/.claude/settings.json`):
+Add to `~/.claude/.mcp.json`:
 
 ```json
 {
@@ -74,7 +96,7 @@ Add to Claude Code (`~/.claude/settings.json`):
 }
 ```
 
-See [MCP Integration](docs/mcp-integration.md) for other clients and advanced configuration.
+See [MCP Integration](docs/mcp-integration.md) for other clients.
 
 ## Documentation
 

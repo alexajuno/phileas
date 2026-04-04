@@ -29,8 +29,19 @@ from phileas.graph import GraphStore
 from phileas.vector import VectorStore
 
 
+def _daemon_call(method: str, params: dict | None = None) -> dict | None:
+    """Try calling the daemon. Returns response or None if not running."""
+    from phileas.daemon import call
+    return call(method, params)
+
+
 def _get_engine() -> MemoryEngine:
-    """Create a MemoryEngine from the current config."""
+    """Create a MemoryEngine from the current config. Suppresses model loading noise."""
+    import logging
+    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
     cfg = load_config()
     db = Database(path=cfg.db_path)
     vector = VectorStore(path=cfg.chroma_path)
@@ -63,6 +74,11 @@ def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
 def status():
     """Show system health and memory statistics."""
     try:
+        resp = _daemon_call("status")
+        if resp and resp.get("ok"):
+            print_status(resp["result"])
+            return
+
         engine = _get_engine()
         stats = engine.status()
         print_status(stats)
@@ -83,6 +99,23 @@ def status():
 def remember(text: str, memory_type: str, importance: int | None):
     """Store a memory."""
     try:
+        resp = _daemon_call("memorize", {
+            "summary": text,
+            "memory_type": memory_type,
+            "importance": importance if importance is not None else 5,
+            "auto_importance": importance is None,
+        })
+        if resp and resp.get("ok"):
+            result = resp["result"]
+            if result.get("deduplicated"):
+                print_error(f"Duplicate detected -- existing memory: {result['summary']}")
+            else:
+                print_memory_stored(result)
+            if result.get("contradiction"):
+                c = result["contradiction"]
+                print_warning(f"Contradiction: {c.get('explanation', '')}")
+            return
+
         engine = _get_engine()
         result = engine.memorize(
             summary=text,
@@ -108,6 +141,11 @@ def remember(text: str, memory_type: str, importance: int | None):
 def recall(query: str, top_k: int, memory_type: str | None):
     """Search memories by query."""
     try:
+        resp = _daemon_call("recall", {"query": query, "top_k": top_k, "memory_type": memory_type})
+        if resp and resp.get("ok"):
+            print_memories(resp["result"], title=f"Results for '{query}'")
+            return
+
         engine = _get_engine()
         results = engine.recall(query, top_k=top_k, memory_type=memory_type)
         print_memories(results, title=f"Results for '{query}'")
@@ -516,6 +554,42 @@ def init_cmd():
     """Set up Phileas interactively."""
     from phileas.cli.wizard import run_wizard
     run_wizard()
+
+
+# ------------------------------------------------------------------
+# start / stop (daemon)
+# ------------------------------------------------------------------
+
+
+@click.command()
+def start():
+    """Start the Phileas daemon (keeps models loaded for fast CLI)."""
+    from phileas.daemon import is_running, start as daemon_start
+
+    port = is_running()
+    if port:
+        console.print(f"Daemon already running on port {port}.")
+        return
+
+    try:
+        console.print("Starting Phileas daemon...")
+        port = daemon_start()
+        console.print(f"[green]Daemon started[/green] on port {port}.")
+        console.print("[dim]Models are loaded. CLI commands will be fast now.[/dim]")
+    except Exception as exc:
+        print_error(f"Failed to start daemon: {exc}")
+        raise SystemExit(1)
+
+
+@click.command()
+def stop_cmd():
+    """Stop the Phileas daemon."""
+    from phileas.daemon import stop as daemon_stop
+
+    if daemon_stop():
+        print_success("Daemon stopped.")
+    else:
+        console.print("Daemon is not running.")
 
 
 # ------------------------------------------------------------------
