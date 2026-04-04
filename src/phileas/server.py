@@ -75,6 +75,7 @@ def memorize(
         daily_ref=daily_ref,
         entities=parsed_entities,
         relationships=parsed_relationships,
+        auto_importance=False,  # MCP caller (Claude Code) provides importance
     )
 
     if result.get("deduplicated"):
@@ -98,7 +99,7 @@ def recall(
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
         min_importance: Only return memories with importance >= this value.
     """
-    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance)
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance, _skip_llm=True)
     if not items:
         return "No relevant memories found."
 
