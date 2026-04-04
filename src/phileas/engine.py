@@ -115,8 +115,8 @@ class MemoryEngine:
                     item.importance = asyncio.run(
                         score_importance(self.llm, item.summary, item.memory_type)
                     )
-                except Exception:
-                    pass  # Keep default importance on failure
+                except Exception as e:
+                    log.warning("auto-importance failed", extra={"op": "importance", "data": {"error": str(e)}})
 
             self.db.save_item(item)
 

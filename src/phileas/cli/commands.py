@@ -63,16 +63,16 @@ def status():
 @click.command()
 @click.argument("text")
 @click.option("--type", "memory_type", default="knowledge", help="Memory type (profile, event, knowledge, behavior, reflection).")
-@click.option("--importance", default=5, type=int, help="Importance score 1-10.")
-def remember(text: str, memory_type: str, importance: int):
+@click.option("--importance", default=None, type=int, help="Importance score 1-10 (auto-scored by LLM if omitted).")
+def remember(text: str, memory_type: str, importance: int | None):
     """Store a memory."""
     try:
         engine = _get_engine()
         result = engine.memorize(
             summary=text,
             memory_type=memory_type,
-            importance=importance,
-            auto_importance=False,
+            importance=importance if importance is not None else 5,
+            auto_importance=importance is None,
         )
         print_memory_stored(result)
     except Exception as exc:
