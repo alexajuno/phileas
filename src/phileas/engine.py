@@ -220,12 +220,14 @@ class MemoryEngine:
             # Stage 1: Gather candidates from multiple paths
             # ----------------------------------------------------------
             candidates: dict[str, MemoryItem] = {}  # id -> item
+            keyword_ids: set[str] = set()  # track keyword-matched candidates
 
             # Path 1: keyword search (SQLite) — run for each query variant
             for q in queries:
                 keyword_hits = self.db.search_by_keyword(q, top_k=top_k * 3)
                 for item in keyword_hits:
                     candidates[item.id] = item
+                    keyword_ids.add(item.id)
 
             # Path 2: semantic search (ChromaDB) — bucketed by type,
             # run for each query variant
@@ -307,33 +309,58 @@ class MemoryEngine:
                 return []
 
             # ----------------------------------------------------------
-            # Stage 2: Cross-encoder reranking
+            # Stage 2: Hybrid relevance scoring
+            #
+            # Keyword hits use cosine similarity (embedding distance) as
+            # their relevance signal — the cross-encoder (MS MARCO) is
+            # trained for search-style queries and scores personal/
+            # emotional memories near zero, drowning them out.
+            # Non-keyword hits still go through cross-encoder reranking.
             # ----------------------------------------------------------
             from phileas.reranker import rerank
 
-            rerank_input = [(mem_id, item.summary) for mem_id, item in filtered.items()]
-            reranked = rerank(query, rerank_input)
-            raw_relevance = {mem_id: score for mem_id, score in reranked}
+            # Cosine similarity for keyword-matched candidates
+            cosine_hits = self.vector.search(query, top_k=top_k * 5)
+            cosine_map = {mid: sim for mid, sim in cosine_hits}
 
-            # Normalize reranker scores to 0-1 range relative to this query
-            # so a 0.45 in a weak-match query still means "best available"
-            scores = list(raw_relevance.values())
-            min_score = min(scores) if scores else 0
-            max_score = max(scores) if scores else 1
-            score_range = max_score - min_score
-            if score_range > 0.01:
-                relevance_map = {
-                    mid: (s - min_score) / score_range
-                    for mid, s in raw_relevance.items()
-                }
+            # Cross-encoder for non-keyword candidates only
+            ce_candidates = [
+                (mem_id, item.summary)
+                for mem_id, item in filtered.items()
+                if mem_id not in keyword_ids
+            ]
+            if ce_candidates:
+                reranked = rerank(query, ce_candidates)
+                raw_ce = {mem_id: score for mem_id, score in reranked}
+                ce_scores = list(raw_ce.values())
+                min_score = min(ce_scores) if ce_scores else 0
+                max_score = max(ce_scores) if ce_scores else 1
+                score_range = max_score - min_score
+                if score_range > 0.01:
+                    norm_ce = {
+                        mid: (s - min_score) / score_range
+                        for mid, s in raw_ce.items()
+                    }
+                else:
+                    norm_ce = {mid: 0.5 for mid in raw_ce}
             else:
-                # All scores nearly equal — treat as uniform
-                relevance_map = {mid: 0.5 for mid in raw_relevance}
+                norm_ce = {}
 
-            # Post-rerank filter: discard bottom of normalized scores
+            # Build unified relevance map
+            relevance_map: dict[str, float] = {}
+            for mem_id in filtered:
+                if mem_id in keyword_ids:
+                    relevance_map[mem_id] = cosine_map.get(mem_id, 0.0)
+                else:
+                    relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
+
+            # Post-rerank filter: only apply relevance_floor to
+            # cross-encoder scored items (keyword hits already passed
+            # keyword matching, so they earned their place)
             for mem_id in list(filtered.keys()):
-                if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
-                    del filtered[mem_id]
+                if mem_id not in keyword_ids:
+                    if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
+                        del filtered[mem_id]
 
             if not filtered:
                 timer.extra["results"] = 0
