@@ -53,7 +53,7 @@ class TestLLMClientModelFor:
 
 class TestLLMClientComplete:
     @pytest.mark.asyncio
-    @patch("phileas.llm.acompletion", new_callable=AsyncMock)
+    @patch("litellm.acompletion", new_callable=AsyncMock)
     async def test_llm_client_complete(self, mock_acompletion):
         """Mocked acompletion returns expected content through the client."""
         # Arrange: build a mock response matching litellm's shape

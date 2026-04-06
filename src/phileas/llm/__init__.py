@@ -1,4 +1,4 @@
-"""LLM client wrapping litellm for provider-agnostic completions.
+"""LLM client with pluggable providers: litellm or claude-cli.
 
 Usage:
     from phileas.config import LLMConfig
@@ -14,10 +14,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+from shutil import which
 from time import perf_counter
 from typing import Any
-
-from litellm import acompletion
 
 from phileas.config import LLMConfig
 
@@ -30,8 +30,50 @@ def parse_json_response(text: str) -> Any:
     return json.loads(stripped)
 
 
+def _claude_cli_complete(
+    model: str | None,
+    messages: list[dict[str, Any]],
+    max_tokens: int = 1024,
+) -> dict:
+    """Run a completion via `claude -p --bare`.
+
+    Returns {"text": str, "prompt_tokens": int, "completion_tokens": int,
+             "total_tokens": int}.
+    """
+    # Build prompt from messages (flatten to single string)
+    parts = []
+    for msg in messages:
+        role = msg.get("role", "user").upper()
+        content = msg.get("content", "")
+        if role == "USER":
+            parts.append(content)
+        elif role == "SYSTEM":
+            parts.append(f"[System: {content}]")
+        else:
+            parts.append(f"[{role}: {content}]")
+    prompt = "\n\n".join(parts)
+
+    cmd = ["claude", "-p"]
+    if model:
+        cmd.extend(["--model", model])
+
+    result = subprocess.run(
+        cmd,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    text = result.stdout.strip()
+    if result.returncode != 0 and not text:
+        raise RuntimeError(f"claude-cli failed (exit {result.returncode}): {result.stderr[:300]}")
+
+    return {"text": text, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
 class LLMClient:
-    """Provider-agnostic LLM client backed by litellm."""
+    """LLM client supporting litellm and claude-cli providers."""
 
     def __init__(self, config: LLMConfig, usage_tracker: Any | None = None) -> None:
         self._config = config
@@ -39,7 +81,9 @@ class LLMClient:
 
     @property
     def available(self) -> bool:
-        """True when the underlying LLM config has provider and model set."""
+        """True when the underlying LLM config has a usable provider."""
+        if self._config.provider == "claude-cli":
+            return which("claude") is not None
         return self._config.available
 
     def model_for(self, operation: str) -> str | None:
@@ -53,9 +97,8 @@ class LLMClient:
         temperature: float = 0.0,
         max_tokens: int = 1024,
     ) -> str:
-        """Run a chat completion via litellm and return the response text."""
+        """Run a chat completion and return the response text."""
         model = self._config.model_for(operation)
-        api_key = os.environ.get(self._config.api_key_env) if self._config.api_key_env else None
 
         start = perf_counter()
         error_msg = None
@@ -66,6 +109,15 @@ class LLMClient:
         cost = 0.0
 
         try:
+            if self._config.provider == "claude-cli":
+                result = _claude_cli_complete(model, messages, max_tokens)
+                return result["text"]
+
+            # Default: litellm
+            from litellm import acompletion
+
+            api_key = os.environ.get(self._config.api_key_env) if self._config.api_key_env else None
+
             response = await acompletion(
                 model=model,
                 messages=messages,

@@ -63,6 +63,7 @@ class GraphStore:
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
         self._read_only: bool = False
+        self._warned_locked: bool = False
 
     def _ensure_connected(self) -> bool:
         """Lazily open KuzuDB. Returns True if connected, False if unavailable.
@@ -92,11 +93,13 @@ class GraphStore:
         except RuntimeError:
             self._db = None
             self._conn = None
-            log.warning(
-                "KuzuDB unavailable — another process holds the lock on %s. "
-                "Graph features (about, entity search, person-aware boost) disabled.",
-                self._path,
-            )
+            if not self._warned_locked:
+                log.warning(
+                    "KuzuDB unavailable — another process holds the lock on %s. "
+                    "Graph features (about, entity search, person-aware boost) disabled.",
+                    self._path,
+                )
+                self._warned_locked = True
             return False
 
     def _init_schema(self) -> None:
