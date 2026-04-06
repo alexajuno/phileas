@@ -6,8 +6,11 @@ Edge types: BUILDS, KNOWS, WORKS_AT, USES, ABOUT_PERSON, ABOUT_PROJECT, ABOUT_PL
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("phileas.graph")
 
 import kuzu
 
@@ -59,23 +62,41 @@ class GraphStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
+        self._read_only: bool = False
 
     def _ensure_connected(self) -> bool:
         """Lazily open KuzuDB. Returns True if connected, False if unavailable.
 
-        Retries on each call — a previous failure (e.g. database locked by
-        another process) does not permanently disable the graph layer.
+        Tries read-write first. If the database is locked by another process,
+        falls back to read-only mode. If that also fails (KuzuDB exclusive lock
+        blocks shared locks in current versions), logs a warning.
         """
         if self._conn is not None:
             return True
+        # Try read-write first
         try:
             self._db = kuzu.Database(str(self._path))
             self._conn = kuzu.Connection(self._db)
+            self._read_only = False
             self._init_schema()
+            return True
+        except RuntimeError:
+            pass
+        # Fall back to read-only
+        try:
+            self._db = kuzu.Database(str(self._path), read_only=True)
+            self._conn = kuzu.Connection(self._db)
+            self._read_only = True
+            log.warning("KuzuDB opened in read-only mode — graph writes will be skipped")
             return True
         except RuntimeError:
             self._db = None
             self._conn = None
+            log.warning(
+                "KuzuDB unavailable — another process holds the lock on %s. "
+                "Graph features (about, entity search, person-aware boost) disabled.",
+                self._path,
+            )
             return False
 
     def _init_schema(self) -> None:
@@ -99,6 +120,10 @@ class GraphStore:
         for edge_type, from_type, to_type in REL_DEFINITIONS:
             self._conn.execute(f"CREATE REL TABLE IF NOT EXISTS {edge_type} (FROM {from_type} TO {to_type})")
 
+    def _ensure_writable(self) -> bool:
+        """Return True if connected in read-write mode."""
+        return self._ensure_connected() and not self._read_only
+
     def close(self) -> None:
         """No-op — KuzuDB connections close automatically on GC."""
 
@@ -114,7 +139,7 @@ class GraphStore:
         props:
             Optional dict of additional properties, serialised to JSON.
         """
-        if not self._ensure_connected():
+        if not self._ensure_writable():
             return
         if node_type not in ENTITY_NODE_TYPES:
             raise ValueError(f"Unknown node type: {node_type!r}. Must be one of {ENTITY_NODE_TYPES}")
@@ -158,7 +183,7 @@ class GraphStore:
 
         If the edge already exists, this is a no-op.
         """
-        if not self._ensure_connected():
+        if not self._ensure_writable():
             return
         # Check existence first
         check_q = (
@@ -183,7 +208,7 @@ class GraphStore:
 
         Creates the Memory node if it does not exist.
         """
-        if not self._ensure_connected():
+        if not self._ensure_writable():
             return
         if entity_type not in ABOUT_EDGE:
             raise ValueError(f"Cannot link memory to unknown entity type: {entity_type!r}")
@@ -205,7 +230,7 @@ class GraphStore:
 
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
         """Create an edge between two Memory nodes, matched by id."""
-        if not self._ensure_connected():
+        if not self._ensure_writable():
             return
         # Ensure both Memory nodes exist
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
@@ -293,7 +318,7 @@ class GraphStore:
 
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         """Set aliases for an entity node (e.g., "mom", "mẹ" for a Person)."""
-        if not self._ensure_connected():
+        if not self._ensure_writable():
             return
         if node_type not in ENTITY_NODE_TYPES:
             raise ValueError(f"Unknown node type: {node_type!r}")
@@ -351,7 +376,7 @@ class GraphStore:
     def get_stats(self) -> dict[str, int]:
         """Return total node and edge counts across all tables."""
         if not self._ensure_connected():
-            return {"nodes": 0, "edges": 0}
+            return {"nodes": -1, "edges": -1}  # -1 = unavailable (locked)
         total_nodes = 0
         for node_type in ALL_NODE_TYPES:
             result = self._conn.execute(f"MATCH (n:{node_type}) RETURN COUNT(*) AS cnt")

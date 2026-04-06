@@ -413,6 +413,10 @@ def status() -> str:
     stats = engine.status()
     processed_count = db.get_processed_session_count()
 
+    graph_nodes = stats.get("graph_nodes", 0)
+    graph_edges = stats.get("graph_edges", 0)
+    graph_locked = graph_nodes < 0 or graph_edges < 0
+
     lines = [
         "Phileas Memory System Status",
         "=" * 30,
@@ -421,8 +425,11 @@ def status() -> str:
         f"  Active tier-3:    {stats.get('tier3', 0)}",
         f"  Archived:         {stats.get('archived', 0)}",
         f"Vector embeddings:  {stats.get('vector_count', 0)}",
-        f"Graph nodes:        {stats.get('graph_nodes', 0)}",
-        f"Graph edges:        {stats.get('graph_edges', 0)}",
-        f"Sessions processed: {processed_count}",
     ]
+    if graph_locked:
+        lines.append("Graph:              LOCKED (another process holds the KuzuDB lock)")
+    else:
+        lines.append(f"Graph nodes:        {graph_nodes}")
+        lines.append(f"Graph edges:        {graph_edges}")
+    lines.append(f"Sessions processed: {processed_count}")
     return "\n".join(lines)

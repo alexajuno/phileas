@@ -58,3 +58,51 @@ def test_get_stats(kuzu_path):
     assert stats["nodes"] >= 2
     assert stats["edges"] >= 1
     gs.close()
+
+
+def test_locked_graph_degrades_gracefully(kuzu_path):
+    """When another process holds the KuzuDB lock, graph ops degrade to no-ops."""
+    import subprocess
+    import sys
+    import time
+
+    # First: populate some data
+    gs_writer = GraphStore(path=kuzu_path)
+    gs_writer.upsert_node("Person", "Alice")
+    gs_writer.link_memory("mem-lock-test", "Person", "Alice")
+    # Release the writer
+    gs_writer._conn = None
+    gs_writer._db = None
+
+    # Spawn a subprocess that holds the exclusive lock
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         f"import kuzu, time; db = kuzu.Database('{kuzu_path}'); "
+         f"conn = kuzu.Connection(db); time.sleep(30)"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    time.sleep(0.3)  # let the subprocess grab the lock
+
+    try:
+        gs = GraphStore(path=kuzu_path)
+        connected = gs._ensure_connected()
+        # Connection should fail (KuzuDB exclusive lock blocks everything)
+        assert not connected, "Should not connect when lock is held"
+
+        # All ops degrade gracefully — no exceptions
+        stats = gs.get_stats()
+        assert stats["nodes"] == -1, "Should report -1 (unavailable)"
+        assert stats["edges"] == -1
+
+        nodes = gs.search_nodes("Alice")
+        assert nodes == []
+
+        mems = gs.get_memories_about("Person", "Alice")
+        assert mems == []
+
+        # Write ops are silently skipped
+        gs.upsert_node("Person", "ShouldNotExist")  # no error
+        gs.close()
+    finally:
+        holder.terminate()
+        holder.wait()
