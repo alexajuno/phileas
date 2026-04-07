@@ -53,7 +53,7 @@ def _claude_cli_complete(
             parts.append(f"[{role}: {content}]")
     prompt = "\n\n".join(parts)
 
-    cmd = ["claude", "-p"]
+    cmd = ["claude", "-p", "--output-format", "json"]
     if model:
         cmd.extend(["--model", model])
 
@@ -65,11 +65,28 @@ def _claude_cli_complete(
         timeout=60,
     )
 
-    text = result.stdout.strip()
-    if result.returncode != 0 and not text:
+    if result.returncode != 0 and not result.stdout.strip():
         raise RuntimeError(f"claude-cli failed (exit {result.returncode}): {result.stderr[:300]}")
 
-    return {"text": text, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError, ValueError:
+        # Fallback: treat stdout as plain text (old behavior)
+        return {"text": result.stdout.strip(), "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    text = data.get("result", "")
+    usage = data.get("usage", {})
+    prompt_tokens = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
+    completion_tokens = usage.get("output_tokens", 0)
+    cost = data.get("total_cost_usd", 0.0)
+
+    return {
+        "text": text,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "cost_usd": cost,
+    }
 
 
 class LLMClient:
@@ -111,6 +128,10 @@ class LLMClient:
         try:
             if self._config.provider == "claude-cli":
                 result = _claude_cli_complete(model, messages, max_tokens)
+                prompt_tokens = result.get("prompt_tokens", 0)
+                completion_tokens = result.get("completion_tokens", 0)
+                total_tokens = result.get("total_tokens", 0)
+                cost = result.get("cost_usd", 0.0)
                 return result["text"]
 
             # Default: litellm
