@@ -703,6 +703,76 @@ class MemoryEngine:
         return [_item_to_dict(item) for item in items]
 
     # ------------------------------------------------------------------
+    # reflect
+    # ------------------------------------------------------------------
+
+    def reflect(self, target_date: str | None = None) -> list[dict]:
+        """Reflect on a day's memories and store insights.
+
+        Idempotent: checks for existing reflection marker before running.
+        Returns list of stored insight dicts, or [] if skipped.
+        """
+        from phileas.llm.reflection import reflect_on_day
+
+        target_date = target_date or date.today().isoformat()
+
+        with OpTimer(log, "reflect", date=target_date) as timer:
+            # Check idempotency: look for a reflection marker
+            marker_summary = f"[Daily reflection {target_date}]"
+            existing = self.vector.search(marker_summary, top_k=1)
+            for mem_id, score in existing:
+                if score > 0.95:
+                    item = self.db.get_item(mem_id)
+                    if item and item.summary.startswith("[Daily reflection"):
+                        timer.extra["skipped"] = True
+                        return []
+
+            # Gather the day's memories
+            day_memories = self.timeline(target_date, window=0)
+            if not day_memories:
+                timer.extra["no_memories"] = True
+                return []
+
+            # Run LLM reflection
+            insights = asyncio.run(reflect_on_day(self.llm, target_date, day_memories))
+            if not insights:
+                timer.extra["no_insights"] = True
+                return []
+
+            # Store each insight as a memory
+            stored = []
+            source_ids = [m["id"] for m in day_memories]
+            for ins in insights:
+                result = self.memorize(
+                    summary=ins["summary"],
+                    memory_type=ins.get("type", "reflection"),
+                    importance=ins["importance"],
+                    auto_importance=False,
+                    daily_ref=target_date,
+                )
+                if not result.get("deduplicated"):
+                    stored.append(result)
+                    # Link insight to source memories in graph
+                    for src_id in source_ids[:10]:
+                        try:
+                            self.graph.link_memory_to_memory(result["id"], "DERIVED_FROM", src_id)
+                        except Exception:
+                            pass
+
+            # Store marker to prevent duplicate reflection
+            self.memorize(
+                summary=f"[Daily reflection {target_date}] Processed {len(day_memories)} memories, produced {len(stored)} insights.",
+                memory_type="knowledge",
+                importance=1,
+                auto_importance=False,
+                daily_ref=target_date,
+            )
+
+            timer.extra["insights"] = len(stored)
+            timer.extra["source_memories"] = len(day_memories)
+            return stored
+
+    # ------------------------------------------------------------------
     # status
     # ------------------------------------------------------------------
 

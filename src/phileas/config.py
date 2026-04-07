@@ -37,6 +37,7 @@ class LLMOperations:
     consolidation: str | None = None
     contradiction: str | None = None
     query_rewrite: str | None = None
+    reflection: str | None = None
 
 
 @dataclass

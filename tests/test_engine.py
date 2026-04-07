@@ -1,5 +1,7 @@
 """Tests for the memory engine (integration across all backends)."""
 
+from datetime import date
+
 from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
@@ -72,3 +74,43 @@ def test_status(tmp_dir):
     stats = engine.status()
     assert stats["tier2"] == 2
     assert stats["vector_count"] == 2
+
+
+def test_reflect_returns_insights(tmp_dir, monkeypatch):
+    """reflect() gathers today's memories and stores insights."""
+    engine = _make_engine(tmp_dir)
+    today = date.today().isoformat()
+    engine.memorize("Set up CI/CD for project", memory_type="event", importance=7, auto_importance=False, daily_ref=today)
+    engine.memorize("Fixed all lint errors", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
+    engine.memorize("Discovered token tracking bug", memory_type="event", importance=6, auto_importance=False, daily_ref=today)
+
+    async def fake_reflect(client, d, memories):
+        return [{"summary": "CI/CD pipeline completed and lint cleaned up", "importance": 7, "type": "reflection"}]
+
+    monkeypatch.setattr("phileas.llm.reflection.reflect_on_day", fake_reflect)
+
+    results = engine.reflect()
+    assert len(results) == 1
+    assert "CI/CD" in results[0]["summary"]
+    # Verify it was stored as a memory
+    recalled = engine.recall("CI/CD pipeline completed")
+    assert any("CI/CD pipeline completed" in r["summary"] for r in recalled)
+
+
+def test_reflect_skips_if_already_reflected(tmp_dir, monkeypatch):
+    """reflect() is idempotent — won't reflect twice on the same day."""
+    engine = _make_engine(tmp_dir)
+    today = date.today().isoformat()
+    engine.memorize("Something happened", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
+    engine.memorize("Another thing", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
+    engine.memorize("Third thing", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
+
+    async def fake_reflect(client, d, memories):
+        return [{"summary": "Daily insight", "importance": 6, "type": "reflection"}]
+
+    monkeypatch.setattr("phileas.llm.reflection.reflect_on_day", fake_reflect)
+
+    results1 = engine.reflect()
+    assert len(results1) == 1
+    results2 = engine.reflect()
+    assert len(results2) == 0  # Already reflected today
