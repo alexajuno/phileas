@@ -26,7 +26,7 @@
     gap4:          740 ── 770                  h=30
     legend-row:    770 ── 860    center=815   h=90
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 870" font-family="'Inter', 'SF Pro Display', -apple-system, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 900" font-family="'Inter', 'SF Pro Display', -apple-system, sans-serif">
   <defs>
     <marker id="arrow-white" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
@@ -47,7 +47,7 @@
   </defs>
 
   <!-- Background -->
-  <rect width="960" height="870" rx="12" fill="url(#bg-grad)"/>
+  <rect width="960" height="900" rx="12" fill="url(#bg-grad)"/>
 
   <!-- Title -->
   <text x="480" y="38" text-anchor="middle" fill="#f1f5f9" font-size="22" font-weight="700">Phileas v2 — Memory Architecture</text>
@@ -231,34 +231,37 @@
   <line x1="560" y1="660" x2="687" y2="660" stroke="#475569" stroke-width="1" marker-end="url(#arrow-white)"/>
 
   <!-- Scoring formula -->
-  <text x="480" y="710" text-anchor="middle" fill="#64748b" font-size="10" font-style="italic">score = (similarity x 0.4) + (importance x 0.3) + (recency_decay x 0.2) + (access_freq x 0.1)</text>
+  <text x="480" y="710" text-anchor="middle" fill="#8b9bb3" font-size="10" font-style="italic">score = (similarity x 0.4) + (importance x 0.3) + (recency_decay x 0.2) + (access_freq x 0.1)</text>
 
   <!-- ═══════════════════════════════════════ -->
   <!-- LEGEND                                  -->
   <!-- ═══════════════════════════════════════ -->
-  <rect x="120" y="770" width="720" height="80" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+  <rect x="120" y="770" width="720" height="105" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
 
-  <circle cx="160" cy="800" r="6" fill="#60a5fa"/>
-  <text x="174" y="804" fill="#94a3b8" font-size="10">SessionStart (extract backlog)</text>
+  <!-- Row 1: Triggers -->
+  <circle cx="160" cy="797" r="6" fill="#60a5fa"/>
+  <text x="174" y="801" fill="#94a3b8" font-size="10">SessionStart (extract backlog)</text>
 
-  <circle cx="390" cy="800" r="6" fill="#4ade80"/>
-  <text x="404" y="804" fill="#94a3b8" font-size="10">Phileas Skill (live)</text>
+  <circle cx="390" cy="797" r="6" fill="#4ade80"/>
+  <text x="404" y="801" fill="#94a3b8" font-size="10">Phileas Skill (live)</text>
 
-  <circle cx="570" cy="800" r="6" fill="#fbbf24"/>
-  <text x="584" y="804" fill="#94a3b8" font-size="10">Consolidation (weekly)</text>
+  <circle cx="570" cy="797" r="6" fill="#fbbf24"/>
+  <text x="584" y="801" fill="#94a3b8" font-size="10">Consolidation (weekly)</text>
 
-  <circle cx="160" cy="830" r="6" fill="#fbbf24"/>
-  <text x="174" y="834" fill="#94a3b8" font-size="10">SQLite (relational)</text>
+  <!-- Row 2: Storage backends -->
+  <circle cx="160" cy="822" r="6" fill="#fbbf24"/>
+  <text x="174" y="826" fill="#94a3b8" font-size="10">SQLite (relational)</text>
 
-  <circle cx="340" cy="830" r="6" fill="#a78bfa"/>
-  <text x="354" y="834" fill="#94a3b8" font-size="10">ChromaDB (vector)</text>
+  <circle cx="340" cy="822" r="6" fill="#a78bfa"/>
+  <text x="354" y="826" fill="#94a3b8" font-size="10">ChromaDB (vector)</text>
 
-  <circle cx="520" cy="830" r="6" fill="#2dd4bf"/>
-  <text x="534" y="834" fill="#94a3b8" font-size="10">KuzuDB (graph)</text>
+  <circle cx="520" cy="822" r="6" fill="#2dd4bf"/>
+  <text x="534" y="826" fill="#94a3b8" font-size="10">KuzuDB (graph)</text>
 
-  <line x1="480" y1="830" x2="510" y2="830" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
-  <text x="520" y="834" fill="#94a3b8" font-size="10">Hook trigger</text>
+  <!-- Row 3: Line types -->
+  <line x1="150" y1="847" x2="180" y2="847" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="190" y="851" fill="#94a3b8" font-size="10">Hook trigger</text>
 
-  <line x1="640" y1="830" x2="670" y2="830" stroke="#94a3b8" stroke-width="1.5"/>
-  <text x="680" y="834" fill="#94a3b8" font-size="10">Data flow</text>
+  <line x1="340" y1="847" x2="370" y2="847" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="380" y="851" fill="#94a3b8" font-size="10">Data flow</text>
 </svg>

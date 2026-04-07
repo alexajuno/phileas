@@ -1,0 +1,296 @@
+<!--
+  PHILEAS DAEMON-AS-GRAPH-BROKER ARCHITECTURE
+  ============================================
+
+  LAYOUT GRID
+  ===========
+  COLUMNS (x-axis)
+    col-session1:   40 ── 220    center=130   w=180
+    col-session2:   260 ── 440   center=350   w=180
+    col-daemon:     520 ── 740   center=630   w=220
+    col-haiku:      800 ── 960   center=880   w=160
+
+  ROWS (y-axis)
+    row-title:       20 ── 50                 h=30    (title zone)
+    row-clients:     70 ── 130   center=100   h=60    (Claude Code sessions)
+    gap-spawn:      130 ── 160                h=30    (annotation zone)
+    row-mcp:        160 ── 240   center=200   h=80    (MCP Servers + Engine)
+    gap-proxy:      240 ── 270                h=30    (annotation zone)
+    row-daemon:     270 ── 370   center=320   h=100   (Daemon)
+    gap-db:         370 ── 400                h=30    (annotation zone)
+    row-db:         400 ── 470   center=435   h=70    (Databases)
+    row-legend:     490 ── 570                h=80    (Legend)
+
+  COMPONENT PATTERNS
+    box:   rect(rx=8) → title at center-10 → subtitle at center+10
+    db:    rect(rx=12) → name centered
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" font-family="system-ui, -apple-system, sans-serif">
+
+  <!-- Background -->
+  <rect width="1000" height="580" rx="8" fill="#2C2C2A"/>
+
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#C2C0B6"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#85B7EB"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#EF9F27"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#5DCAA5"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#E87B7B"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#B89AE8"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- TITLE                                       -->
+  <!-- ═══════════════════════════════════════════ -->
+  <text x="500" y="38" text-anchor="middle" font-size="18" font-weight="700" fill="#D3D1C7">
+    Phileas — Daemon-as-Graph-Broker Architecture
+  </text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- ROW: CLAUDE CODE SESSIONS (row-clients)     -->
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- Session 1 -->
+  <rect x="40" y="70" width="180" height="60" rx="8"
+        fill="#444441" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="130" y="93" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">Claude Code</text>
+  <text x="130" y="113" text-anchor="middle" font-size="11" fill="#B4B2A9">Session 1</text>
+
+  <!-- Session 2 -->
+  <rect x="260" y="70" width="180" height="60" rx="8"
+        fill="#444441" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="350" y="93" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">Claude Code</text>
+  <text x="350" y="113" text-anchor="middle" font-size="11" fill="#B4B2A9">Session 2</text>
+
+  <!-- Session N (faded) -->
+  <rect x="462" y="78" width="40" height="44" rx="6"
+        fill="#444441" stroke="#B4B2A9" stroke-width="0.3" opacity="0.4"/>
+  <text x="482" y="103" text-anchor="middle" font-size="10" fill="#B4B2A9" opacity="0.5">…N</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- ARROWS: Sessions → MCP Servers (spawns)     -->
+  <!-- ═══════════════════════════════════════════ -->
+  <line x1="130" y1="130" x2="130" y2="160"
+        stroke="#C2C0B6" stroke-width="1.2" marker-end="url(#arrow-gray)"/>
+  <line x1="350" y1="130" x2="350" y2="160"
+        stroke="#C2C0B6" stroke-width="1.2" marker-end="url(#arrow-gray)"/>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- ROW: MCP SERVERS (row-mcp)                  -->
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- MCP Server 1 -->
+  <rect x="40" y="160" width="180" height="80" rx="8"
+        fill="#444441" stroke="#85B7EB" stroke-width="0.8"/>
+  <text x="130" y="190" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">MCP Server</text>
+  <text x="130" y="210" text-anchor="middle" font-size="11" fill="#85B7EB">MemoryEngine</text>
+  <text x="130" y="228" text-anchor="middle" font-size="9" fill="#B4B2A9">GraphStore (read-only / proxy)</text>
+
+  <!-- MCP Server 2 -->
+  <rect x="260" y="160" width="180" height="80" rx="8"
+        fill="#444441" stroke="#85B7EB" stroke-width="0.8"/>
+  <text x="350" y="190" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">MCP Server</text>
+  <text x="350" y="210" text-anchor="middle" font-size="11" fill="#85B7EB">MemoryEngine</text>
+  <text x="350" y="228" text-anchor="middle" font-size="9" fill="#B4B2A9">GraphStore (read-only / proxy)</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- DAEMON (row-daemon) — emphasized             -->
+  <!-- ═══════════════════════════════════════════ -->
+  <rect x="520" y="270" width="220" height="100" rx="10"
+        fill="#444441" stroke="#EF9F27" stroke-width="1.4"/>
+  <!-- Lock icon badge -->
+  <rect x="528" y="278" width="50" height="20" rx="4" fill="#633806"/>
+  <text x="553" y="290" text-anchor="middle" font-size="9" font-weight="700" fill="#EF9F27">🔒 LOCK</text>
+
+  <text x="630" y="308" text-anchor="middle" font-size="17" font-weight="600" fill="#D3D1C7">Daemon</text>
+  <text x="630" y="328" text-anchor="middle" font-size="12" fill="#F5AD35">Graph Write Broker</text>
+  <text x="630" y="348" text-anchor="middle" font-size="10" fill="#B4B2A9">HTTP :port • graph_write / graph_read</text>
+  <text x="630" y="362" text-anchor="middle" font-size="10" fill="#B4B2A9">proxy_writes=False</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- ARROWS: MCP → Daemon (graph proxy)          -->
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- MCP1 → Daemon: L-shaped path -->
+  <path d="M 220 210 L 470 210 L 470 320 L 520 320"
+        fill="none" stroke="#85B7EB" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+
+  <!-- MCP2 → Daemon: L-shaped path -->
+  <path d="M 440 200 L 490 200 L 490 300 L 520 300"
+        fill="none" stroke="#85B7EB" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+
+  <!-- Badge: graph proxy -->
+  <circle cx="478" cy="260" r="13" fill="#85B7EB"/>
+  <text x="478" y="260" text-anchor="middle" dy="0.35em"
+        font-size="11" font-weight="700" fill="#0C447C">1</text>
+  <text x="500" y="253" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#85B7EB">Graph proxy</text>
+  <text x="500" y="267" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#85B7EB">via HTTP</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- ARROW: MCP → Daemon (auto-start)            -->
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- Dashed arrow from MCP1 bottom to Daemon -->
+  <path d="M 180 240 L 180 320 L 520 320"
+        fill="none" stroke="#5DCAA5" stroke-width="1" stroke-dasharray="5 3" marker-end="url(#arrow-green)"/>
+  <!-- Badge: auto-start -->
+  <circle cx="260" cy="320" r="13" fill="#5DCAA5"/>
+  <text x="260" y="320" text-anchor="middle" dy="0.35em"
+        font-size="11" font-weight="700" fill="#085041">2</text>
+  <text x="282" y="313" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#5DCAA5">Auto-start on</text>
+  <text x="282" y="327" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#5DCAA5">MCP server init</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- DATABASES (row-db)                          -->
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- SQLite -->
+  <rect x="40" y="400" width="140" height="70" rx="12"
+        fill="#444441" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="110" y="428" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">SQLite</text>
+  <text x="110" y="448" text-anchor="middle" font-size="10" fill="#B4B2A9">memories, snapshots</text>
+
+  <!-- ChromaDB -->
+  <rect x="210" y="400" width="140" height="70" rx="12"
+        fill="#444441" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text x="280" y="428" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">ChromaDB</text>
+  <text x="280" y="448" text-anchor="middle" font-size="10" fill="#B4B2A9">vector embeddings</text>
+
+  <!-- KuzuDB — highlighted -->
+  <rect x="560" y="400" width="140" height="70" rx="12"
+        fill="#444441" stroke="#EF9F27" stroke-width="1.2"/>
+  <text x="630" y="428" text-anchor="middle" font-size="14" font-weight="600" fill="#F5AD35">KuzuDB</text>
+  <text x="630" y="448" text-anchor="middle" font-size="10" fill="#B4B2A9">entities, relationships</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- ARROWS: MCP → SQLite/ChromaDB (direct)      -->
+  <!-- ═══════════════════════════════════════════ -->
+  <line x1="110" y1="240" x2="110" y2="400"
+        stroke="#C2C0B6" stroke-width="1" marker-end="url(#arrow-gray)"/>
+  <text x="118" y="375" text-anchor="start" font-size="9" fill="#B4B2A9">direct</text>
+
+  <path d="M 310 240 L 310 350 L 280 350 L 280 400"
+        fill="none" stroke="#C2C0B6" stroke-width="1" marker-end="url(#arrow-gray)"/>
+  <text x="288" y="375" text-anchor="start" font-size="9" fill="#B4B2A9">direct</text>
+
+  <!-- ARROW: Daemon → KuzuDB (exclusive lock) -->
+  <line x1="630" y1="370" x2="630" y2="400"
+        stroke="#EF9F27" stroke-width="1.8" marker-end="url(#arrow-orange)"/>
+  <!-- Badge: exclusive lock -->
+  <circle cx="700" cy="385" r="13" fill="#EF9F27"/>
+  <text x="700" y="385" text-anchor="middle" dy="0.35em"
+        font-size="11" font-weight="700" fill="#633806">3</text>
+  <text x="722" y="378" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#EF9F27">Exclusive</text>
+  <text x="722" y="392" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#EF9F27">write lock</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- HAIKU / BG EXTRACTION (col-haiku)           -->
+  <!-- ═══════════════════════════════════════════ -->
+  <rect x="800" y="140" width="160" height="60" rx="8"
+        fill="#444441" stroke="#B89AE8" stroke-width="0.8"/>
+  <text x="880" y="163" text-anchor="middle" font-size="14" font-weight="500" fill="#D3D1C7">Claude Haiku</text>
+  <text x="880" y="183" text-anchor="middle" font-size="11" fill="#CBAFF2">entity extraction</text>
+
+  <!-- BG Thread box (inside MCP conceptually) -->
+  <rect x="800" y="230" width="160" height="50" rx="8"
+        fill="none" stroke="#B89AE8" stroke-width="0.8" stroke-dasharray="5 3"/>
+  <text x="880" y="250" text-anchor="middle" font-size="12" font-weight="500" fill="#B89AE8">bg thread</text>
+  <text x="880" y="266" text-anchor="middle" font-size="10" fill="#B4B2A9">_bg_extract_entities()</text>
+
+  <!-- Arrow: bg thread → Haiku (up) -->
+  <line x1="880" y1="230" x2="880" y2="200"
+        stroke="#B89AE8" stroke-width="1.2" marker-end="url(#arrow-purple)"/>
+
+  <!-- Arrow: bg thread → Daemon (graph update) -->
+  <path d="M 800 260 L 760 260 L 760 340 L 740 340"
+        fill="none" stroke="#E87B7B" stroke-width="1.2" marker-end="url(#arrow-red)"/>
+
+  <!-- Badge: bg extraction -->
+  <circle cx="932" cy="215" r="13" fill="#B89AE8"/>
+  <text x="932" y="215" text-anchor="middle" dy="0.35em"
+        font-size="11" font-weight="700" fill="#3A2566">4</text>
+  <text x="954" y="208" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#B89AE8">Extract</text>
+  <text x="954" y="222" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#B89AE8">entities</text>
+
+  <!-- Badge: update graph -->
+  <circle cx="768" cy="290" r="13" fill="#E87B7B"/>
+  <text x="768" y="290" text-anchor="middle" dy="0.35em"
+        font-size="11" font-weight="700" fill="#5C1A1A">5</text>
+  <text x="790" y="283" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#E87B7B">Update graph</text>
+  <text x="790" y="297" text-anchor="start" dy="0.35em"
+        font-size="10" fill="#E87B7B">via daemon</text>
+
+  <!-- Arrow: memorize triggers bg thread (from MCP2 area) -->
+  <path d="M 440 220 L 800 255"
+        fill="none" stroke="#B89AE8" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arrow-purple)"/>
+  <text x="590" y="225" text-anchor="middle" font-size="9" fill="#B89AE8">memorize() → no entities?</text>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- LEGEND (row-legend)                         -->
+  <!-- ═══════════════════════════════════════════ -->
+  <rect x="40" y="495" width="920" height="72" rx="8"
+        fill="#333330" stroke="#B4B2A9" stroke-width="0.3"/>
+
+  <!-- Legend items -->
+  <text x="60" y="520" font-size="11" font-weight="600" fill="#D3D1C7">Flow Legend:</text>
+
+  <!-- 1 -->
+  <circle cx="170" cy="517" r="8" fill="#85B7EB"/>
+  <text x="170" y="517" text-anchor="middle" dy="0.35em" font-size="9" font-weight="700" fill="#0C447C">1</text>
+  <text x="184" y="517" text-anchor="start" dy="0.35em" font-size="10" fill="#85B7EB">Graph proxy via HTTP</text>
+
+  <!-- 2 -->
+  <circle cx="340" cy="517" r="8" fill="#5DCAA5"/>
+  <text x="340" y="517" text-anchor="middle" dy="0.35em" font-size="9" font-weight="700" fill="#085041">2</text>
+  <text x="354" y="517" text-anchor="start" dy="0.35em" font-size="10" fill="#5DCAA5">Auto-start daemon</text>
+
+  <!-- 3 -->
+  <circle cx="498" cy="517" r="8" fill="#EF9F27"/>
+  <text x="498" y="517" text-anchor="middle" dy="0.35em" font-size="9" font-weight="700" fill="#633806">3</text>
+  <text x="512" y="517" text-anchor="start" dy="0.35em" font-size="10" fill="#F5AD35">Exclusive KuzuDB lock</text>
+
+  <!-- 4 -->
+  <circle cx="664" cy="517" r="8" fill="#B89AE8"/>
+  <text x="664" y="517" text-anchor="middle" dy="0.35em" font-size="9" font-weight="700" fill="#3A2566">4</text>
+  <text x="678" y="517" text-anchor="start" dy="0.35em" font-size="10" fill="#CBAFF2">Entity extraction (Haiku)</text>
+
+  <!-- 5 -->
+  <circle cx="820" cy="517" r="8" fill="#E87B7B"/>
+  <text x="820" y="517" text-anchor="middle" dy="0.35em" font-size="9" font-weight="700" fill="#5C1A1A">5</text>
+  <text x="834" y="517" text-anchor="start" dy="0.35em" font-size="10" fill="#E87B7B">Graph update via daemon</text>
+
+  <!-- Subtitle -->
+  <text x="500" y="550" text-anchor="middle" font-size="10" fill="#B4B2A9">
+    KuzuDB 0.11.3 exclusive locking — daemon is the single writer, all other processes proxy through it
+  </text>
+
+</svg>
