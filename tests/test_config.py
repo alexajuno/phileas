@@ -32,13 +32,13 @@ class TestDefaults:
         cfg = load_config()
         assert cfg.home == Path.home() / ".phileas"
 
-    def test_default_llm(self):
-        cfg = load_config()
+    def test_default_llm(self, tmp_path):
+        cfg = load_config(home=tmp_path)
         assert cfg.llm.provider is None
         assert cfg.llm.model is None
 
-    def test_default_llm_operations(self):
-        cfg = load_config()
+    def test_default_llm_operations(self, tmp_path):
+        cfg = load_config(home=tmp_path)
         assert cfg.llm.operations.extraction is None
         assert cfg.llm.operations.importance is None
         assert cfg.llm.operations.consolidation is None

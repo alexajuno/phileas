@@ -1,5 +1,6 @@
 """Tests for the memory engine (integration across all backends)."""
 
+from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
@@ -10,7 +11,8 @@ def _make_engine(tmp_dir):
     db = Database(path=tmp_dir / "test.db")
     vs = VectorStore(path=tmp_dir / "chroma")
     gs = GraphStore(path=tmp_dir / "graph")
-    return MemoryEngine(db=db, vector=vs, graph=gs)
+    cfg = load_config(home=tmp_dir)
+    return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
 def test_store_and_recall(tmp_dir):

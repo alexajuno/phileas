@@ -211,6 +211,10 @@ class MemoryEngine:
 
                 try:
                     queries = asyncio.run(rewrite_query(self.llm, query))
+                    # Always include the original query so keyword/semantic
+                    # search can match it even if the LLM rewrites diverge.
+                    if query not in queries:
+                        queries.insert(0, query)
                 except Exception:
                     queries = [query]
             else:
