@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import sys
+from datetime import date as date_cls, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -69,6 +70,64 @@ def stop(config: PhileasConfig | None = None) -> bool:
     pid_file.unlink(missing_ok=True)
     _port_path(config).unlink(missing_ok=True)
     return True
+
+
+def _should_reflect(now: datetime, last_reflected: str | None) -> bool:
+    """Decide whether to run daily reflection.
+
+    Strategy:
+    - After 11pm: reflect on today (end-of-day summary)
+    - Any time: catch up on yesterday if we missed it
+    - First run with no history: wait until 11pm
+    """
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    if last_reflected is None:
+        # First time: only reflect after 11pm
+        return now.hour >= 23
+
+    last_date = date_cls.fromisoformat(last_reflected)
+
+    # Already reflected on today or later
+    if last_date >= today:
+        return False
+
+    # Missed yesterday — always catch up
+    if last_date < yesterday:
+        return True
+
+    # last_date == yesterday: reflect on today after 11pm
+    return now.hour >= 23
+
+
+def _cron_tick(engine, last_reflected: str | None) -> str | None:
+    """Run one cron cycle. Returns the date reflected on, or None if skipped."""
+    now = datetime.now(timezone.utc)
+    if not _should_reflect(now, last_reflected):
+        return None
+
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    # Determine which date to reflect on
+    if last_reflected is None:
+        target = today
+    else:
+        last_date = date_cls.fromisoformat(last_reflected)
+        if last_date < yesterday:
+            target = yesterday  # Catch up on yesterday first
+        else:
+            target = today
+
+    try:
+        results = engine.reflect(target_date=target.isoformat())
+        if results is not None:
+            return target.isoformat()
+    except Exception:
+        pass
+
+    return None
 
 
 def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
@@ -176,6 +235,25 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     if foreground:
         print(f"Phileas daemon running on port {port} (PID {os.getpid()})")
+
+    # -- Cron thread: periodic reflection ---
+    import threading
+
+    def _cron_loop():
+        import time
+
+        last_reflected = None
+        while True:
+            time.sleep(3600)  # Check every hour
+            try:
+                result = _cron_tick(engine, last_reflected)
+                if result:
+                    last_reflected = result
+            except Exception:
+                pass
+
+    cron_thread = threading.Thread(target=_cron_loop, daemon=True)
+    cron_thread.start()
 
     server.serve_forever()
     return port
