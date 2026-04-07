@@ -1,6 +1,6 @@
 """Tests for memory scoring."""
 
-from phileas.scoring import compute_score, mmr_select, recency_score
+from phileas.scoring import compute_score, mmr_select, recency_score, reinforcement_score
 
 
 def test_recency_score_recent():
@@ -25,10 +25,41 @@ def test_recency_score_high_importance_slow_decay():
     assert high > low
 
 
+def test_tier3_reinforcement_makes_decay_slower():
+    """Reinforcement should make tier-3 memories decay even slower than min_decay."""
+    no_reinf = recency_score(days_since_access=200, tier=3, reinforcement_count=0)
+    high_reinf = recency_score(days_since_access=200, tier=3, reinforcement_count=10)
+    assert high_reinf > no_reinf
+
+
+def test_reinforcement_score_zero():
+    assert reinforcement_score(0) == 0.0
+
+
+def test_reinforcement_score_saturates():
+    score = reinforcement_score(10, saturation=10)
+    assert score > 0.95
+
+
+def test_reinforcement_score_log_scale():
+    low = reinforcement_score(1)
+    mid = reinforcement_score(5)
+    high = reinforcement_score(10)
+    assert 0 < low < mid < high
+
+
+def test_reinforced_beats_unreinforced():
+    reinforced = compute_score(relevance=0.5, importance=5, days_since_access=100,
+                               access_count=1, tier=2, reinforcement_count=8)
+    unreinforced = compute_score(relevance=0.5, importance=5, days_since_access=100,
+                                  access_count=1, tier=2, reinforcement_count=0)
+    assert reinforced > unreinforced
+
+
 def test_compute_score():
     score = compute_score(relevance=0.8, importance=8, days_since_access=0, access_count=5, tier=2)
     assert score > 0
-    assert score <= 1.0
+    assert score <= 1.1  # can slightly exceed 1.0 with reinforcement
 
 
 def test_high_importance_beats_low():

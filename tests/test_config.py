@@ -137,9 +137,10 @@ class TestTomlOverrides:
         cfg = load_config(home=tmp_path)
         assert cfg.scoring.relevance_weight == 0.6
         assert cfg.scoring.importance_weight == 0.15
-        # Unchanged
-        assert cfg.scoring.recency_weight == 0.15
-        assert cfg.scoring.access_weight == 0.1
+        # Unchanged (defaults)
+        assert cfg.scoring.recency_weight == 0.10
+        assert cfg.scoring.access_weight == 0.05
+        assert cfg.scoring.reinforcement_weight == 0.15
 
     def test_logging_override(self, tmp_path):
         config_file = tmp_path / "config.toml"

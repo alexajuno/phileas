@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS memory_items (
     daily_ref TEXT,
     source_session_id TEXT,
     consolidated_into TEXT REFERENCES memory_items(id),
+    reinforcement_count INTEGER NOT NULL DEFAULT 0,
+    last_reinforced TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -42,12 +44,28 @@ CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 """
 
 
+MIGRATIONS = [
+    "ALTER TABLE memory_items ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE memory_items ADD COLUMN last_reinforced TEXT",
+]
+
+
 class Database:
     def __init__(self, path: Path = DEFAULT_DB_PATH):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        """Apply schema migrations idempotently."""
+        for sql in MIGRATIONS:
+            try:
+                self.conn.execute(sql)
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     def close(self):
         self.conn.close()
@@ -59,8 +77,9 @@ class Database:
             """INSERT OR REPLACE INTO memory_items
                (id, summary, memory_type, importance, tier, status,
                 access_count, last_accessed, daily_ref, source_session_id,
-                consolidated_into, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                consolidated_into, reinforcement_count, last_reinforced,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -73,6 +92,8 @@ class Database:
                 item.daily_ref,
                 item.source_session_id,
                 item.consolidated_into,
+                item.reinforcement_count,
+                item.last_reinforced.isoformat() if item.last_reinforced else None,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
@@ -220,10 +241,22 @@ class Database:
 
     # --- Internal ---
 
+    def reinforce_item(self, item_id: str) -> None:
+        """Increment reinforcement_count and update last_reinforced timestamp."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE memory_items SET reinforcement_count = reinforcement_count + 1, last_reinforced = ? WHERE id = ?",
+            (now, item_id),
+        )
+        self.conn.commit()
+
     def _row_to_item(self, row: sqlite3.Row) -> MemoryItem:
         last_accessed = None
         if row["last_accessed"]:
             last_accessed = datetime.fromisoformat(row["last_accessed"])
+        last_reinforced = None
+        if row["last_reinforced"]:
+            last_reinforced = datetime.fromisoformat(row["last_reinforced"])
         return MemoryItem(
             id=row["id"],
             summary=row["summary"],
@@ -236,6 +269,8 @@ class Database:
             daily_ref=row["daily_ref"],
             source_session_id=row["source_session_id"],
             consolidated_into=row["consolidated_into"],
+            reinforcement_count=row["reinforcement_count"],
+            last_reinforced=last_reinforced,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

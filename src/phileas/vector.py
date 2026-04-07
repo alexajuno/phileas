@@ -24,9 +24,12 @@ class VectorStore:
     def close(self):
         pass  # ChromaDB PersistentClient doesn't need explicit close
 
-    def add(self, memory_id: str, text: str) -> None:
+    def add(self, memory_id: str, text: str, metadata: dict | None = None) -> None:
         """Add or update a memory embedding."""
-        self._collection.upsert(ids=[memory_id], documents=[text])
+        kwargs: dict = {"ids": [memory_id], "documents": [text]}
+        if metadata:
+            kwargs["metadatas"] = [metadata]
+        self._collection.upsert(**kwargs)
 
     def search(self, query: str, top_k: int = 5) -> list[tuple[str, float]]:
         """Search by semantic similarity. Returns [(memory_id, score)]."""
@@ -37,6 +40,19 @@ class VectorStore:
         distances = results["distances"][0] if results["distances"] else []
         # ChromaDB returns distances (lower = closer for cosine). Convert to similarity.
         return [(id_, 1.0 - dist) for id_, dist in zip(ids, distances)]
+
+    def find_similar(self, text: str, floor: float = 0.70, ceiling: float = 0.95) -> tuple[str, float] | None:
+        """Find the most similar memory in the [floor, ceiling) range. Returns (id, similarity) or None."""
+        if self._collection.count() == 0:
+            return None
+        results = self._collection.query(query_texts=[text], n_results=1)
+        if not results["ids"] or not results["ids"][0]:
+            return None
+        dist = results["distances"][0][0]
+        similarity = 1.0 - dist
+        if floor <= similarity < ceiling:
+            return (results["ids"][0][0], similarity)
+        return None
 
     def find_duplicate(self, text: str, threshold: float = 0.95) -> str | None:
         """Check if a near-duplicate exists. Returns memory_id if found."""

@@ -29,13 +29,15 @@ log = get_logger()
 _MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
 
 
-def _days_since(dt: datetime | None) -> float:
-    if dt is None:
+def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
+    """Days since a given datetime, with optional fallback (e.g. created_at)."""
+    target = dt or fallback
+    if target is None:
         return 0.0
     now = datetime.now(timezone.utc)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return max(0.0, (now - dt).total_seconds() / 86400.0)
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - target).total_seconds() / 86400.0)
 
 
 def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
@@ -98,12 +100,27 @@ class MemoryEngine:
             relationship_count=len(relationships or []),
         ) as timer:
             # 1. Deduplicate via ChromaDB
-            duplicate_id = self.vector.find_duplicate(summary, threshold=0.95)
+            reinforce_cfg = self.config.reinforcement
+            duplicate_id = self.vector.find_duplicate(summary, threshold=reinforce_cfg.ceiling)
             if duplicate_id:
                 existing = self.db.get_item(duplicate_id)
                 if existing and existing.status == "active":
                     timer.extra["dedup"] = True
                     return {"id": existing.id, "summary": existing.summary, "deduplicated": True}
+
+            # 1b. Reinforcement check: similar but not duplicate (0.70-0.94 band)
+            similar = self.vector.find_similar(
+                summary, floor=reinforce_cfg.floor, ceiling=reinforce_cfg.ceiling
+            )
+            reinforced_id = None
+            if similar:
+                similar_id, sim_score = similar
+                existing = self.db.get_item(similar_id)
+                if existing and existing.status == "active":
+                    self.db.reinforce_item(similar_id)
+                    reinforced_id = similar_id
+                    timer.extra["reinforced"] = similar_id
+                    timer.extra["reinforced_sim"] = round(sim_score, 3)
 
             # 2. Default daily_ref to today
             if daily_ref is None:
@@ -130,8 +147,8 @@ class MemoryEngine:
 
             self.db.save_item(item)
 
-            # 4. Add to ChromaDB
-            self.vector.add(item.id, summary)
+            # 4. Add to ChromaDB (with type metadata for future filtering)
+            self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
 
             # 5. Link entities and relationships in KuzuDB
             if entities:
@@ -154,15 +171,16 @@ class MemoryEngine:
                         self.graph.upsert_node(to_type, to_name)
                         try:
                             self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                        except Exception:
-                            # Silently ignore unsupported edge types
-                            pass
+                        except Exception as e:
+                            log.debug("graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}})
 
             timer.extra["dedup"] = False
             timer.extra["id"] = item.id
 
             # 6. Check for contradictions with existing memories
             result: dict = {"id": item.id, "summary": item.summary, "deduplicated": False}
+            if reinforced_id:
+                result["reinforced"] = reinforced_id
             if self.llm.available:
                 from phileas.llm.contradiction import detect_contradictions
 
@@ -178,8 +196,8 @@ class MemoryEngine:
                         )
                         if contradiction.get("contradicts"):
                             result["contradiction"] = contradiction
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("contradiction check failed", extra={"op": "memorize", "data": {"error": str(e)}})
 
             # 7. Background entity extraction if caller provided none
             if not entities and self.llm.available:
@@ -265,7 +283,8 @@ class MemoryEngine:
                     # search can match it even if the LLM rewrites diverge.
                     if query not in queries:
                         queries.insert(0, query)
-                except Exception:
+                except Exception as e:
+                    log.debug("query rewrite failed, using original", extra={"op": "recall", "data": {"error": str(e)}})
                     queries = [query]
             else:
                 queries = [query]
@@ -286,20 +305,33 @@ class MemoryEngine:
             # Path 2: semantic search (ChromaDB) — bucketed by type,
             # run for each query variant
             search_types = [memory_type] if memory_type else _MEMORY_TYPES
+
+            # Pre-cache type → active items (avoids repeated DB queries)
+            type_item_cache: dict[str, dict[str, MemoryItem]] = {}
+            all_type_ids: set[str] = set()
+            for mtype in search_types:
+                items = self.db.get_items_by_type(mtype)
+                active = {item.id: item for item in items if item.status == "active"}
+                type_item_cache[mtype] = active
+                all_type_ids.update(active.keys())
+
+            # Search vector once per query (not per type), filter client-side
             for q in queries:
-                for mtype in search_types:
-                    type_items = self.db.get_items_by_type(mtype)
-                    type_ids = {item.id for item in type_items if item.status == "active"}
-                    if not type_ids:
+                if not all_type_ids:
+                    break
+                semantic_hits = self.vector.search(q, top_k=top_k * 3)
+                for mem_id, sim in semantic_hits:
+                    if sim < self.config.recall.similarity_floor:
                         continue
-                    # Search broadly, then filter to this type
-                    semantic_hits = self.vector.search(q, top_k=top_k * 3)
-                    for mem_id, sim in semantic_hits:
-                        if mem_id in type_ids and sim >= self.config.recall.similarity_floor:
-                            if mem_id not in candidates:
-                                item = self.db.get_item(mem_id)
-                                if item:
-                                    candidates[mem_id] = item
+                    if mem_id in candidates:
+                        continue
+                    if mem_id not in all_type_ids:
+                        continue
+                    # Find the item from the type cache (no extra DB query)
+                    for mtype in search_types:
+                        if mem_id in type_item_cache[mtype]:
+                            candidates[mem_id] = type_item_cache[mtype][mem_id]
+                            break
 
             # Path 3: graph search (KuzuDB) — word-based entity lookup
             words = query.split()
@@ -314,7 +346,8 @@ class MemoryEngine:
                         continue
                     try:
                         memory_ids = self.graph.get_memories_about(entity_type, entity_name)
-                    except Exception:
+                    except Exception as e:
+                        log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}})
                         continue
                     for mem_id in memory_ids:
                         if mem_id not in candidates:
@@ -337,7 +370,8 @@ class MemoryEngine:
                     seen_entities.add((ename, etype))
                     try:
                         connected_ids = self.graph.get_memories_about(etype, ename)
-                    except Exception:
+                    except Exception as e:
+                        log.debug("graph bridge failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
                         continue
                     for connected_id in connected_ids:
                         if connected_id not in candidates:
@@ -471,8 +505,8 @@ class MemoryEngine:
                     try:
                         mem_ids = self.graph.get_memories_about("Person", ename)
                         person_memory_ids.update(mem_ids)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("person lookup failed", extra={"op": "recall", "data": {"person": ename, "error": str(e)}})
 
             # Identify profile memories about the matched person
             for mem_id in person_memory_ids:
@@ -485,17 +519,23 @@ class MemoryEngine:
             for sel in selected:
                 item = filtered[sel["id"]]
                 relevance = sel["relevance"]
-                days = _days_since(item.last_accessed)
+                days = _days_since(item.last_accessed, fallback=item.created_at)
                 score = compute_score(
                     relevance,
                     item.importance,
                     days,
                     item.access_count,
                     item.tier,
+                    item.reinforcement_count,
                     relevance_weight=self.config.scoring.relevance_weight,
                     importance_weight=self.config.scoring.importance_weight,
                     recency_weight=self.config.scoring.recency_weight,
                     access_weight=self.config.scoring.access_weight,
+                    reinforcement_weight=self.config.scoring.reinforcement_weight,
+                    base_decay=self.config.reinforcement.base_decay,
+                    decay_halving=self.config.reinforcement.decay_halving,
+                    halving_interval=self.config.reinforcement.halving_interval,
+                    min_decay=self.config.reinforcement.min_decay,
                 )
                 # Person-aware boosts
                 if sel["id"] in person_profile_ids:
@@ -560,15 +600,15 @@ class MemoryEngine:
                 # 3. Re-embed in ChromaDB
                 try:
                     self.vector.delete(memory_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("vector delete failed during update", extra={"op": "update", "data": {"id": memory_id, "error": str(e)}})
                 self.vector.add(memory_id, summary)
 
                 # 4. Link active → snapshot via SUPERSEDES in graph
                 try:
                     self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("graph SUPERSEDES link failed", extra={"op": "update", "data": {"id": memory_id, "error": str(e)}})
 
             # 5. Link entities and relationships in graph
             if entities:
@@ -591,8 +631,8 @@ class MemoryEngine:
                         self.graph.upsert_node(to_type, to_name)
                         try:
                             self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("graph edge failed", extra={"op": "update", "data": {"edge": edge, "error": str(e)}})
 
             timer.extra["snapshot_id"] = snapshot_id
             return {
@@ -611,8 +651,8 @@ class MemoryEngine:
             self.db.archive_item(memory_id, reason)
             try:
                 self.vector.delete(memory_id)
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("vector delete failed during forget", extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}})
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------
@@ -662,7 +702,8 @@ class MemoryEngine:
                     continue
                 try:
                     memory_ids = self.graph.get_memories_about(etype, ename)
-                except Exception:
+                except Exception as e:
+                    log.debug("graph lookup failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}})
                     continue
                 for mem_id in memory_ids:
                     if mem_id in seen_ids:
@@ -753,8 +794,8 @@ class MemoryEngine:
                     for src_id in source_ids[:10]:
                         try:
                             self.graph.link_memory_to_memory(result["id"], "DERIVED_FROM", src_id)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("graph DERIVED_FROM link failed", extra={"op": "reflect", "data": {"error": str(e)}})
 
             # Store marker to prevent duplicate reflection
             self.memorize(

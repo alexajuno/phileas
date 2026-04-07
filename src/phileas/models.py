@@ -45,5 +45,7 @@ class MemoryItem:
     daily_ref: str | None = None
     source_session_id: str | None = None
     consolidated_into: str | None = None  # memory ID of tier-3 parent
+    reinforcement_count: int = 0  # how many similar memories arrived after this one
+    last_reinforced: datetime | None = None
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)

@@ -82,11 +82,22 @@ class RecallConfig:
 
 
 @dataclass
+class ReinforcementConfig:
+    floor: float = 0.70  # Min similarity to reinforce
+    ceiling: float = 0.95  # Above this is dedup, not reinforcement
+    base_decay: float = 0.01  # Default decay rate (50% after ~70 days)
+    decay_halving: float = 0.5  # Decay rate multiplier per halving_interval reinforcements
+    halving_interval: int = 3  # Reinforcements needed to halve decay rate
+    min_decay: float = 0.001  # Floor on decay rate (near-permanent)
+
+
+@dataclass
 class ScoringConfig:
     relevance_weight: float = 0.55
-    importance_weight: float = 0.2
-    recency_weight: float = 0.15
-    access_weight: float = 0.1
+    importance_weight: float = 0.15
+    recency_weight: float = 0.10
+    access_weight: float = 0.05
+    reinforcement_weight: float = 0.15
 
 
 @dataclass
@@ -118,6 +129,7 @@ class PhileasConfig:
     reranker: RerankerConfig = field(default_factory=RerankerConfig)
     recall: RecallConfig = field(default_factory=RecallConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
+    reinforcement: ReinforcementConfig = field(default_factory=ReinforcementConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
 
@@ -193,6 +205,7 @@ def load_config(home: Path | None = None) -> PhileasConfig:
             "reranker": cfg.reranker,
             "recall": cfg.recall,
             "scoring": cfg.scoring,
+            "reinforcement": cfg.reinforcement,
             "logging": cfg.logging,
             "consolidation": cfg.consolidation,
         }
