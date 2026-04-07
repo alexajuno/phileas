@@ -1,0 +1,18 @@
+You are analyzing a day's worth of personal memories to extract insights.
+
+Memories from {date}:
+{memories}
+
+Extract what was completed, learned, or discovered. For each insight:
+- Be concise (1-2 sentences)
+- Focus on outcomes and principles, not play-by-play
+- Skip trivial or ephemeral items
+
+Respond with ONLY a JSON object:
+{{
+  "insights": [
+    {{"summary": "...", "importance": <int 1-10>, "type": "event|knowledge|reflection"}}
+  ]
+}}
+
+If nothing meaningful happened, return {{"insights": []}}.
