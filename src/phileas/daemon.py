@@ -112,7 +112,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # Load engine (this loads models — the whole point)
     db = Database(path=config.db_path)
     vector = VectorStore(path=config.chroma_path)
-    graph = GraphStore(path=config.graph_path)
+    graph = GraphStore(path=config.graph_path, proxy_writes=False)
     engine = MemoryEngine(db=db, vector=vector, graph=graph, config=config)
 
     # Pre-warm the reranker by importing it
@@ -188,6 +188,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "forget":
         return engine.forget(**params)
     elif method == "update":
+        # Ensure backward compat: old callers pass only memory_id + summary
         return engine.update(**params)
     elif method == "status":
         stats = engine.status()
@@ -243,6 +244,42 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             )
             results.append(result)
         return results
+    # -- Graph write broker ------------------------------------------------
+    # Single process holds the KuzuDB write lock; other processes proxy
+    # graph mutations through these endpoints.
+    elif method == "graph_write":
+        op = params.get("op")
+        graph = engine.graph
+        if op == "upsert_node":
+            graph.upsert_node(params["node_type"], params["name"], params.get("props"))
+            return {"ok": True}
+        elif op == "link_memory":
+            graph.link_memory(params["memory_id"], params["entity_type"], params["entity_name"])
+            return {"ok": True}
+        elif op == "create_edge":
+            graph.create_edge(
+                params["from_type"], params["from_name"],
+                params["edge"], params["to_type"], params["to_name"],
+            )
+            return {"ok": True}
+        elif op == "link_memory_to_memory":
+            graph.link_memory_to_memory(params["from_id"], params["edge_type"], params["to_id"])
+            return {"ok": True}
+        else:
+            raise ValueError(f"Unknown graph_write op: {op}")
+    elif method == "graph_read":
+        op = params.get("op")
+        graph = engine.graph
+        if op == "get_entities_for_memory":
+            return graph.get_entities_for_memory(params["memory_id"])
+        elif op == "get_memories_about":
+            return graph.get_memories_about(params["entity_type"], params["entity_name"])
+        elif op == "search_nodes":
+            return graph.search_nodes(params["query"])
+        elif op == "status":
+            return graph.status()
+        else:
+            raise ValueError(f"Unknown graph_read op: {op}")
     else:
         raise ValueError(f"Unknown method: {method}")
 

@@ -32,6 +32,7 @@ class LLMOperations:
     """Per-operation model overrides. None means use the default LLM model."""
 
     extraction: str | None = None
+    entity_extraction: str | None = None
     importance: str | None = None
     consolidation: str | None = None
     contradiction: str | None = None

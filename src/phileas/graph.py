@@ -53,17 +53,43 @@ class GraphStore:
     """Graph store backed by KuzuDB for entity relationship storage.
 
     Lazily connects to KuzuDB on first use. If the database is locked by
-    another process, graph operations gracefully degrade to no-ops so the
-    rest of the MCP server still works.
+    another process, graph writes are proxied through the Phileas daemon
+    (which holds the single write lock). If no daemon is running, writes
+    gracefully degrade to no-ops.
     """
 
-    def __init__(self, path: Path = DEFAULT_GRAPH_PATH) -> None:
+    def __init__(self, path: Path = DEFAULT_GRAPH_PATH, proxy_writes: bool = True) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
         self._read_only: bool = False
         self._warned_locked: bool = False
+        self._proxy_writes: bool = proxy_writes
+
+    def _daemon_graph_write(self, op: str, params: dict) -> bool:
+        """Proxy a graph write through the daemon. Returns True on success."""
+        if not self._proxy_writes:
+            return False
+        try:
+            from phileas.daemon import call
+            result = call("graph_write", {"op": op, **params})
+            return result is not None and result.get("ok", False)
+        except Exception:
+            return False
+
+    def _daemon_graph_read(self, op: str, params: dict, default: Any = None) -> Any:
+        """Proxy a graph read through the daemon. Returns result or default."""
+        if not self._proxy_writes:  # proxy_writes controls all proxying
+            return default
+        try:
+            from phileas.daemon import call
+            result = call("graph_read", {"op": op, **params})
+            if result is not None and result.get("ok", False):
+                return result.get("result", default)
+        except Exception:
+            pass
+        return default
 
     def _ensure_connected(self) -> bool:
         """Lazily open KuzuDB. Returns True if connected, False if unavailable.
@@ -143,6 +169,9 @@ class GraphStore:
             Optional dict of additional properties, serialised to JSON.
         """
         if not self._ensure_writable():
+            self._daemon_graph_write("upsert_node", {
+                "node_type": node_type, "name": name, "props": props,
+            })
             return
         if node_type not in ENTITY_NODE_TYPES:
             raise ValueError(f"Unknown node type: {node_type!r}. Must be one of {ENTITY_NODE_TYPES}")
@@ -187,6 +216,10 @@ class GraphStore:
         If the edge already exists, this is a no-op.
         """
         if not self._ensure_writable():
+            self._daemon_graph_write("create_edge", {
+                "from_type": from_type, "from_name": from_name,
+                "edge": edge_type, "to_type": to_type, "to_name": to_name,
+            })
             return
         # Check existence first
         check_q = (
@@ -212,6 +245,10 @@ class GraphStore:
         Creates the Memory node if it does not exist.
         """
         if not self._ensure_writable():
+            self._daemon_graph_write("link_memory", {
+                "memory_id": memory_id, "entity_type": entity_type,
+                "entity_name": entity_name,
+            })
             return
         if entity_type not in ABOUT_EDGE:
             raise ValueError(f"Cannot link memory to unknown entity type: {entity_type!r}")
@@ -234,6 +271,9 @@ class GraphStore:
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
         """Create an edge between two Memory nodes, matched by id."""
         if not self._ensure_writable():
+            self._daemon_graph_write("link_memory_to_memory", {
+                "from_id": from_id, "edge_type": edge_type, "to_id": to_id,
+            })
             return
         # Ensure both Memory nodes exist
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
@@ -305,7 +345,11 @@ class GraphStore:
             Name of the entity node.
         """
         if not self._ensure_connected():
-            return []
+            return self._daemon_graph_read(
+                "get_memories_about",
+                {"entity_type": entity_type, "entity_name": entity_name},
+                default=[],
+            )
         if entity_type not in ABOUT_EDGE:
             raise ValueError(f"Unknown entity type: {entity_type!r}")
         edge_type = ABOUT_EDGE[entity_type]
@@ -340,7 +384,9 @@ class GraphStore:
             Substring to match against node names and aliases.
         """
         if not self._ensure_connected():
-            return []
+            return self._daemon_graph_read(
+                "search_nodes", {"query": name_query}, default=[],
+            )
         parts = []
         for node_type in ENTITY_NODE_TYPES:
             parts.append(
@@ -361,7 +407,9 @@ class GraphStore:
         Returns [{"name": str, "type": str}].
         """
         if not self._ensure_connected():
-            return []
+            return self._daemon_graph_read(
+                "get_entities_for_memory", {"memory_id": memory_id}, default=[],
+            )
         results = []
         for entity_type, edge_type in ABOUT_EDGE.items():
             try:

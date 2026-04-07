@@ -84,7 +84,7 @@ def test_locked_graph_degrades_gracefully(kuzu_path):
     time.sleep(0.3)  # let the subprocess grab the lock
 
     try:
-        gs = GraphStore(path=kuzu_path)
+        gs = GraphStore(path=kuzu_path, proxy_writes=False)
         connected = gs._ensure_connected()
         # Connection should fail (KuzuDB exclusive lock blocks everything)
         assert not connected, "Should not connect when lock is held"

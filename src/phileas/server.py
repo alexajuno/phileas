@@ -38,6 +38,16 @@ mcp = FastMCP(
 )
 
 _config = load_config()
+
+# Start daemon if not running — it holds the KuzuDB write lock so
+# multiple MCP server instances can proxy graph writes through it.
+from phileas.daemon import is_running as _daemon_running, start as _daemon_start
+if not _daemon_running(_config):
+    try:
+        _daemon_start(_config, foreground=False)
+    except Exception:
+        pass  # Daemon start failed; graph writes will degrade gracefully
+
 db = Database(path=_config.db_path)
 vector = VectorStore(path=_config.chroma_path)
 graph = GraphStore(path=_config.graph_path)
@@ -162,23 +172,41 @@ def recall(
 
 
 @mcp.tool()
-def update(memory_id: str, summary: str) -> str:
-    """Update a memory's content in place, preserving its original date and identity.
+def update(
+    memory_id: str,
+    summary: str | None = None,
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
+) -> str:
+    """Update a memory: change its summary and/or add entities to the knowledge graph.
 
-    Creates an archived snapshot of the old version linked via SUPERSEDES edge
-    in the knowledge graph, so the correction trail is preserved.
+    If summary is provided, snapshots the old version and updates the text.
+    If entities/relationships are provided, links them in the graph (additive, won't remove existing links).
 
     Args:
         memory_id: The UUID of the memory to update.
-        summary: The new summary text to replace the old one.
+        summary: New summary text (optional — omit to keep existing summary).
+        entities: List or JSON string of {"name": str, "type": str} to link in the graph.
+        relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"}.
     """
-    result = engine.update(memory_id, summary)
+    parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
+    parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
+
+    result = engine.update(
+        memory_id,
+        summary=summary,
+        entities=parsed_entities,
+        relationships=parsed_relationships,
+    )
     if "error" in result:
         return result["error"]
-    return (
-        f"Updated [{result['id']}] {result['summary']}\n"
-        f"Old version archived as [{result['snapshot_id']}]"
-    )
+
+    parts = [f"Updated [{result['id']}] {result['summary']}"]
+    if result.get("snapshot_id"):
+        parts.append(f"Old version archived as [{result['snapshot_id']}]")
+    if parsed_entities:
+        parts.append(f"Linked {len(parsed_entities)} entities")
+    return "\n".join(parts)
 
 
 @mcp.tool()

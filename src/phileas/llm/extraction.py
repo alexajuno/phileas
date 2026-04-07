@@ -8,6 +8,7 @@ from pathlib import Path
 from phileas.llm import LLMClient
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extraction.txt"
+_ENTITY_PROMPT_PATH = Path(__file__).parent / "prompts" / "entity_extraction.txt"
 
 _REQUIRED_FIELDS = ("summary", "memory_type", "importance", "entities", "relationships")
 _DEFAULTS: dict = {
@@ -65,3 +66,36 @@ async def extract_memories(client: LLMClient, text: str) -> list[dict]:
 
     except (json.JSONDecodeError, KeyError, ValueError, TypeError, RuntimeError):
         return _fallback(text)
+
+
+async def extract_entities(client: LLMClient, summary: str) -> dict:
+    """Extract entities and relationships from a memory summary.
+
+    Returns {"entities": [...], "relationships": [...]}.
+    Returns empty lists on failure.
+    """
+    empty: dict = {"entities": [], "relationships": []}
+
+    if not client.available:
+        return empty
+
+    try:
+        template = _ENTITY_PROMPT_PATH.read_text(encoding="utf-8")
+        prompt = template.format(summary=summary)
+
+        response = await client.complete(
+            operation="entity_extraction",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512,
+        )
+
+        from phileas.llm import parse_json_response
+
+        data = parse_json_response(response)
+        return {
+            "entities": data.get("entities", []),
+            "relationships": data.get("relationships", []),
+        }
+
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError, RuntimeError):
+        return empty

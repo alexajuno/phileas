@@ -11,6 +11,7 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import date, datetime, timezone
 
 from phileas.config import PhileasConfig, load_config
@@ -177,7 +178,42 @@ class MemoryEngine:
                     except Exception:
                         pass
 
+            # 7. Background entity extraction if caller provided none
+            if not entities and self.llm.available:
+                threading.Thread(
+                    target=self._bg_extract_entities,
+                    args=(item.id, item.summary),
+                    daemon=True,
+                ).start()
+
             return result
+
+    def _bg_extract_entities(self, memory_id: str, summary: str) -> None:
+        """Background thread: extract entities via LLM and link them."""
+        try:
+            from phileas.llm.extraction import extract_entities
+
+            result = asyncio.run(extract_entities(self.llm, summary))
+            entities = result.get("entities", [])
+            relationships = result.get("relationships", [])
+
+            if entities or relationships:
+                self.update(memory_id, entities=entities, relationships=relationships)
+                log.info(
+                    "bg entity extraction",
+                    extra={"op": "bg_entity_extract", "data": {
+                        "memory_id": memory_id,
+                        "entities": len(entities),
+                        "relationships": len(relationships),
+                    }},
+                )
+        except Exception as e:
+            log.warning(
+                "bg entity extraction failed",
+                extra={"op": "bg_entity_extract", "data": {
+                    "memory_id": memory_id, "error": str(e),
+                }},
+            )
 
     # ------------------------------------------------------------------
     # recall
@@ -477,43 +513,79 @@ class MemoryEngine:
     # update
     # ------------------------------------------------------------------
 
-    def update(self, memory_id: str, summary: str) -> dict:
-        """Update a memory in place: snapshot old version, update summary, re-embed, link via graph.
+    def update(
+        self,
+        memory_id: str,
+        summary: str | None = None,
+        entities: list[dict] | None = None,
+        relationships: list[dict] | None = None,
+    ) -> dict:
+        """Update a memory in place: optionally change summary, add entities/relationships.
 
-        Preserves created_at and daily_ref. The old version becomes an archived
-        snapshot linked by a SUPERSEDES edge.
+        If summary is provided, snapshots the old version and updates text + embedding.
+        If entities/relationships are provided, links them in the graph.
+        Preserves created_at and daily_ref.
         """
-        with OpTimer(log, "update", memory_id=memory_id) as timer:
+        with OpTimer(
+            log, "update", memory_id=memory_id,
+            entity_count=len(entities or []), relationship_count=len(relationships or []),
+        ) as timer:
             item = self.db.get_item(memory_id)
             if not item:
                 return {"error": f"Memory {memory_id} not found."}
             if item.status != "active":
                 return {"error": f"Memory {memory_id} is not active (status={item.status})."}
 
-            # 1. Snapshot old version as archived copy
-            snapshot_id = self.db.snapshot_item(item)
+            snapshot_id = None
+            if summary and summary != item.summary:
+                # 1. Snapshot old version as archived copy
+                snapshot_id = self.db.snapshot_item(item)
 
-            # 2. Update active memory in place
-            updated = self.db.update_item(memory_id, summary)
+                # 2. Update active memory in place
+                updated = self.db.update_item(memory_id, summary)
 
-            # 3. Re-embed in ChromaDB
-            try:
-                self.vector.delete(memory_id)
-            except Exception:
-                pass
-            self.vector.add(memory_id, summary)
+                # 3. Re-embed in ChromaDB
+                try:
+                    self.vector.delete(memory_id)
+                except Exception:
+                    pass
+                self.vector.add(memory_id, summary)
 
-            # 4. Link active → snapshot via SUPERSEDES in graph
-            try:
-                self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
-            except Exception:
-                pass
+                # 4. Link active → snapshot via SUPERSEDES in graph
+                try:
+                    self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
+                except Exception:
+                    pass
+
+            # 5. Link entities and relationships in graph
+            if entities:
+                for entity in entities:
+                    name = entity.get("name")
+                    etype = entity.get("type")
+                    if name and etype:
+                        self.graph.upsert_node(etype, name)
+                        self.graph.link_memory(memory_id, etype, name)
+
+            if relationships:
+                for rel in relationships:
+                    from_name = rel.get("from_name")
+                    from_type = rel.get("from_type")
+                    edge = rel.get("edge")
+                    to_name = rel.get("to_name")
+                    to_type = rel.get("to_type")
+                    if from_name and from_type and edge and to_name and to_type:
+                        self.graph.upsert_node(from_type, from_name)
+                        self.graph.upsert_node(to_type, to_name)
+                        try:
+                            self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                        except Exception:
+                            pass
 
             timer.extra["snapshot_id"] = snapshot_id
             return {
                 "id": memory_id,
                 "snapshot_id": snapshot_id,
-                "summary": updated.summary if updated else summary,
+                "summary": (summary or item.summary),
             }
 
     # ------------------------------------------------------------------
