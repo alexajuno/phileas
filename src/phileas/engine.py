@@ -717,15 +717,12 @@ class MemoryEngine:
         target_date = target_date or date.today().isoformat()
 
         with OpTimer(log, "reflect", date=target_date) as timer:
-            # Check idempotency: look for a reflection marker
-            marker_summary = f"[Daily reflection {target_date}]"
-            existing = self.vector.search(marker_summary, top_k=1)
-            for mem_id, score in existing:
-                if score > 0.95:
-                    item = self.db.get_item(mem_id)
-                    if item and item.summary.startswith("[Daily reflection"):
-                        timer.extra["skipped"] = True
-                        return []
+            # Check idempotency: look for a reflection marker in the day's memories
+            day_items = self.db.get_items_by_date_range(target_date)
+            for item in day_items:
+                if item.summary.startswith("[Daily reflection"):
+                    timer.extra["skipped"] = True
+                    return []
 
             # Gather the day's memories
             day_memories = self.timeline(target_date, window=0)
