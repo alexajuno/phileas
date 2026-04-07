@@ -80,9 +80,10 @@ def test_reflect_returns_insights(tmp_dir, monkeypatch):
     """reflect() gathers today's memories and stores insights."""
     engine = _make_engine(tmp_dir)
     today = date.today().isoformat()
-    engine.memorize("Set up CI/CD for project", memory_type="event", importance=7, auto_importance=False, daily_ref=today)
-    engine.memorize("Fixed all lint errors", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
-    engine.memorize("Discovered token tracking bug", memory_type="event", importance=6, auto_importance=False, daily_ref=today)
+    kw = dict(auto_importance=False, daily_ref=today)
+    engine.memorize("Set up CI/CD for project", memory_type="event", importance=7, **kw)
+    engine.memorize("Fixed all lint errors", memory_type="event", importance=5, **kw)
+    engine.memorize("Discovered token tracking bug", memory_type="event", importance=6, **kw)
 
     async def fake_reflect(client, d, memories):
         return [{"summary": "CI/CD pipeline completed and lint cleaned up", "importance": 7, "type": "reflection"}]

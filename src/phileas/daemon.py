@@ -13,7 +13,8 @@ import json
 import os
 import signal
 import sys
-from datetime import date as date_cls, datetime, timedelta, timezone
+from datetime import date as date_cls
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -270,6 +271,9 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "update":
         # Ensure backward compat: old callers pass only memory_id + summary
         return engine.update(**params)
+    elif method == "reflect":
+        target_date = params.get("date") or params.get("target_date")
+        return engine.reflect(target_date=target_date)
     elif method == "status":
         stats = engine.status()
         stats["sessions_processed"] = engine.db.get_processed_session_count()

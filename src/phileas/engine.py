@@ -761,7 +761,10 @@ class MemoryEngine:
 
             # Store marker to prevent duplicate reflection
             self.memorize(
-                summary=f"[Daily reflection {target_date}] Processed {len(day_memories)} memories, produced {len(stored)} insights.",
+                summary=(
+                    f"[Daily reflection {target_date}] Processed"
+                    f" {len(day_memories)} memories, produced {len(stored)} insights."
+                ),
                 memory_type="knowledge",
                 importance=1,
                 auto_importance=False,

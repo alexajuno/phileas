@@ -18,6 +18,7 @@ from phileas.cli.commands import (
     init_cmd,
     list_cmd,
     recall,
+    reflect,
     remember,
     serve,
     show,
@@ -44,6 +45,7 @@ app.add_command(list_cmd)
 app.add_command(show)
 app.add_command(ingest)
 app.add_command(consolidate)
+app.add_command(reflect)
 app.add_command(contradictions)
 app.add_command(export_cmd)
 app.add_command(serve)

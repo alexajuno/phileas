@@ -434,6 +434,43 @@ def consolidate(min_cluster: int, max_clusters: int):
 
 
 # ------------------------------------------------------------------
+# reflect
+# ------------------------------------------------------------------
+
+
+@click.command()
+@click.option("--date", default=None, help="Date to reflect on (YYYY-MM-DD). Defaults to today.")
+def reflect(date: str | None):
+    """Synthesize insights from a day's memories."""
+    try:
+        resp = _daemon_call("reflect", {"date": date})
+        if resp and resp.get("ok"):
+            insights = resp["result"]
+            if not insights:
+                print_error("No insights extracted (not enough data or already reflected).")
+                return
+            print_success(f"Extracted {len(insights)} insight(s):")
+            for ins in insights:
+                console.print(f"  [{ins.get('type', 'reflection')}] {ins['summary']}")
+            return
+
+        # Fallback: direct engine
+        engine = _get_engine()
+        insights = engine.reflect(target_date=date)
+        if not insights:
+            print_error("No insights extracted (not enough data or already reflected).")
+            return
+        print_success(f"Extracted {len(insights)} insight(s):")
+        for ins in insights:
+            console.print(f"  [{ins.get('type', 'reflection')}] {ins['summary']}")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+# ------------------------------------------------------------------
 # contradictions
 # ------------------------------------------------------------------
 

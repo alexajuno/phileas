@@ -295,6 +295,22 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
 
 
 @mcp.tool()
+def reflect(date: str | None = None) -> str:
+    """Run daily reflection to synthesize insights from a day's memories.
+
+    Args:
+        date: Date to reflect on (YYYY-MM-DD). Defaults to today.
+    """
+    insights = engine.reflect(target_date=date)
+    if not insights:
+        return "No insights extracted (not enough data or already reflected)."
+    lines = [f"Extracted {len(insights)} insight(s):"]
+    for ins in insights:
+        lines.append(f"  [{ins.get('type', 'reflection')}] {ins['summary']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def profile() -> str:
     """Get all profile memories — who the user is, their identity and core traits."""
     items = db.get_items_by_type("profile")

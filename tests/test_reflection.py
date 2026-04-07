@@ -12,7 +12,9 @@ def mock_llm():
     client = MagicMock()
     client.available = True
     client.complete = AsyncMock(
-        return_value='{"insights": [{"summary": "Set up CI/CD pipeline for the project", "importance": 7, "type": "event"}]}'
+        return_value=(
+            '{"insights": [{"summary": "Set up CI/CD pipeline for the project", "importance": 7, "type": "event"}]}'
+        )
     )
     return client
 
@@ -40,7 +42,8 @@ async def test_reflect_on_day_empty_when_no_memories(mock_llm):
 
 @pytest.mark.asyncio
 async def test_reflect_on_day_empty_when_too_few_memories(mock_llm):
-    result = await reflect_on_day(mock_llm, "2026-04-07", [{"id": "a", "summary": "x", "type": "event", "importance": 5}])
+    memories = [{"id": "a", "summary": "x", "type": "event", "importance": 5}]
+    result = await reflect_on_day(mock_llm, "2026-04-07", memories)
     assert result == []
     mock_llm.complete.assert_not_called()
 

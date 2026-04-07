@@ -31,8 +31,7 @@ async def reflect_on_day(
 
     try:
         formatted = "\n".join(
-            f"- [{m.get('type', 'knowledge')}] (importance={m.get('importance', 5)}) {m['summary']}"
-            for m in memories
+            f"- [{m.get('type', 'knowledge')}] (importance={m.get('importance', 5)}) {m['summary']}" for m in memories
         )
 
         template = _PROMPT_PATH.read_text(encoding="utf-8")
@@ -62,5 +61,5 @@ async def reflect_on_day(
 
         return results
 
-    except (json.JSONDecodeError, KeyError, ValueError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, RuntimeError:
         return []

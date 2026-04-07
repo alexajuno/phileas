@@ -1,6 +1,6 @@
 """Tests for daemon cron scheduling logic."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from phileas.daemon import _cron_tick, _should_reflect
