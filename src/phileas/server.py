@@ -39,9 +39,11 @@ mcp = FastMCP(
 
 _config = load_config()
 
+from phileas.daemon import is_running as _daemon_running  # noqa: E402
+from phileas.daemon import start as _daemon_start  # noqa: E402
+
 # Start daemon if not running — it holds the KuzuDB write lock so
 # multiple MCP server instances can proxy graph writes through it.
-from phileas.daemon import is_running as _daemon_running, start as _daemon_start
 if not _daemon_running(_config):
     try:
         _daemon_start(_config, foreground=False)
@@ -96,7 +98,9 @@ def memorize(
 
 @mcp.tool()
 def memorize_batch(memories: list | str) -> str:
-    """Store multiple memories in one call. Use when catching up on a conversation or saving several related memories at once.
+    """Store multiple memories in one call.
+
+    Use when catching up on a conversation or saving several related memories at once.
 
     Args:
         memories: List or JSON string of memory objects. Each object has:
@@ -274,7 +278,8 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
     Args:
         start_date: Start date in YYYY-MM-DD format.
         end_date: End date in YYYY-MM-DD format (optional; if omitted, returns only start_date).
-        window: Days to expand search in both directions (default 1). Helps catch events that span midnight or were tagged to adjacent days.
+        window: Days to expand search in both directions (default 1).
+            Helps catch events that span midnight or were tagged to adjacent days.
     """
     items = engine.timeline(start_date, end_date=end_date, window=window)
     if not items:

@@ -7,7 +7,6 @@ import pytest
 from phileas.config import LLMConfig, LLMOperations
 from phileas.llm import LLMClient
 
-
 # ------------------------------------------------------------------
 # Availability
 # ------------------------------------------------------------------
@@ -178,9 +177,7 @@ class TestQueryRewrite:
         from phileas.llm.query_rewrite import rewrite_query
 
         client = LLMClient(_LLM_CONFIG)
-        client.complete = AsyncMock(
-            return_value='{"queries": ["tech stack", "programming languages", "frameworks"]}'
-        )
+        client.complete = AsyncMock(return_value='{"queries": ["tech stack", "programming languages", "frameworks"]}')
         result = await rewrite_query(client, "what tech do I use")
         assert len(result) == 3
         assert "tech stack" in result

@@ -64,7 +64,7 @@ async def extract_memories(client: LLMClient, text: str) -> list[dict]:
 
         return memories
 
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, TypeError, RuntimeError:
         return _fallback(text)
 
 
@@ -97,5 +97,5 @@ async def extract_entities(client: LLMClient, summary: str) -> dict:
             "relationships": data.get("relationships", []),
         }
 
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, TypeError, RuntimeError:
         return empty

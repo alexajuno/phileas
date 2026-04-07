@@ -27,9 +27,7 @@ async def detect_contradictions(
         return _NO_CONTRADICTION
 
     try:
-        formatted = "\n".join(
-            f"- [{m['id']}] {m['summary']}" for m in existing_memories
-        )
+        formatted = "\n".join(f"- [{m['id']}] {m['summary']}" for m in existing_memories)
 
         template = _PROMPT_PATH.read_text(encoding="utf-8")
         prompt = template.format(new_memory=new_memory, existing_memories=formatted)
@@ -49,5 +47,5 @@ async def detect_contradictions(
             "explanation": str(data["explanation"]),
         }
 
-    except (json.JSONDecodeError, KeyError, ValueError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, RuntimeError:
         return _NO_CONTRADICTION

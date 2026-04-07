@@ -63,6 +63,7 @@ class MemoryEngine:
 
         # Usage tracking
         from phileas.llm.usage import UsageTracker
+
         usage_db = self.config.home / "usage.db"
         self._usage_tracker = UsageTracker(usage_db)
 
@@ -89,8 +90,12 @@ class MemoryEngine:
         Returns a dict with keys: id, summary, deduplicated.
         """
         with OpTimer(
-            log, "memorize", memory_type=memory_type, importance=importance,
-            entity_count=len(entities or []), relationship_count=len(relationships or []),
+            log,
+            "memorize",
+            memory_type=memory_type,
+            importance=importance,
+            entity_count=len(entities or []),
+            relationship_count=len(relationships or []),
         ) as timer:
             # 1. Deduplicate via ChromaDB
             duplicate_id = self.vector.find_duplicate(summary, threshold=0.95)
@@ -119,9 +124,7 @@ class MemoryEngine:
                 from phileas.llm.importance import score_importance
 
                 try:
-                    item.importance = asyncio.run(
-                        score_importance(self.llm, item.summary, item.memory_type)
-                    )
+                    item.importance = asyncio.run(score_importance(self.llm, item.summary, item.memory_type))
                 except Exception as e:
                     log.warning("auto-importance failed", extra={"op": "importance", "data": {"error": str(e)}})
 
@@ -201,18 +204,25 @@ class MemoryEngine:
                 self.update(memory_id, entities=entities, relationships=relationships)
                 log.info(
                     "bg entity extraction",
-                    extra={"op": "bg_entity_extract", "data": {
-                        "memory_id": memory_id,
-                        "entities": len(entities),
-                        "relationships": len(relationships),
-                    }},
+                    extra={
+                        "op": "bg_entity_extract",
+                        "data": {
+                            "memory_id": memory_id,
+                            "entities": len(entities),
+                            "relationships": len(relationships),
+                        },
+                    },
                 )
         except Exception as e:
             log.warning(
                 "bg entity extraction failed",
-                extra={"op": "bg_entity_extract", "data": {
-                    "memory_id": memory_id, "error": str(e),
-                }},
+                extra={
+                    "op": "bg_entity_extract",
+                    "data": {
+                        "memory_id": memory_id,
+                        "error": str(e),
+                    },
+                },
             )
 
     # ------------------------------------------------------------------
@@ -236,8 +246,12 @@ class MemoryEngine:
         Returns list of dicts with id, summary, type, importance, score.
         """
         with OpTimer(
-            log, "recall", query=query, top_k=top_k,
-            memory_type=memory_type, min_importance=min_importance,
+            log,
+            "recall",
+            query=query,
+            top_k=top_k,
+            memory_type=memory_type,
+            min_importance=min_importance,
         ) as timer:
             # ----------------------------------------------------------
             # Stage 0: Query expansion via LLM
@@ -364,11 +378,7 @@ class MemoryEngine:
             cosine_map = {mid: sim for mid, sim in cosine_hits}
 
             # Cross-encoder for non-keyword candidates only
-            ce_candidates = [
-                (mem_id, item.summary)
-                for mem_id, item in filtered.items()
-                if mem_id not in keyword_ids
-            ]
+            ce_candidates = [(mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in keyword_ids]
             if ce_candidates:
                 reranked = rerank(query, ce_candidates)
                 raw_ce = {mem_id: score for mem_id, score in reranked}
@@ -377,10 +387,7 @@ class MemoryEngine:
                 max_score = max(ce_scores) if ce_scores else 1
                 score_range = max_score - min_score
                 if score_range > 0.01:
-                    norm_ce = {
-                        mid: (s - min_score) / score_range
-                        for mid, s in raw_ce.items()
-                    }
+                    norm_ce = {mid: (s - min_score) / score_range for mid, s in raw_ce.items()}
                 else:
                     norm_ce = {mid: 0.5 for mid in raw_ce}
             else:
@@ -435,14 +442,13 @@ class MemoryEngine:
                     sim_matrix[id_a][id_b] = dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
             # Build MMR candidates with relevance scores
-            mmr_candidates = [
-                {"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)}
-                for mem_id in candidate_ids
-            ]
+            mmr_candidates = [{"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)} for mem_id in candidate_ids]
 
             # Select diverse subset via MMR
             selected = mmr_select(
-                mmr_candidates, sim_matrix, top_k=top_k,
+                mmr_candidates,
+                sim_matrix,
+                top_k=top_k,
                 lambda_param=self.config.recall.mmr_lambda,
             )
 
@@ -481,7 +487,11 @@ class MemoryEngine:
                 relevance = sel["relevance"]
                 days = _days_since(item.last_accessed)
                 score = compute_score(
-                    relevance, item.importance, days, item.access_count, item.tier,
+                    relevance,
+                    item.importance,
+                    days,
+                    item.access_count,
+                    item.tier,
                     relevance_weight=self.config.scoring.relevance_weight,
                     importance_weight=self.config.scoring.importance_weight,
                     recency_weight=self.config.scoring.recency_weight,
@@ -527,8 +537,11 @@ class MemoryEngine:
         Preserves created_at and daily_ref.
         """
         with OpTimer(
-            log, "update", memory_id=memory_id,
-            entity_count=len(entities or []), relationship_count=len(relationships or []),
+            log,
+            "update",
+            memory_id=memory_id,
+            entity_count=len(entities or []),
+            relationship_count=len(relationships or []),
         ) as timer:
             item = self.db.get_item(memory_id)
             if not item:
@@ -542,7 +555,7 @@ class MemoryEngine:
                 snapshot_id = self.db.snapshot_item(item)
 
                 # 2. Update active memory in place
-                updated = self.db.update_item(memory_id, summary)
+                self.db.update_item(memory_id, summary)
 
                 # 3. Re-embed in ChromaDB
                 try:
@@ -617,7 +630,9 @@ class MemoryEngine:
     ) -> str:
         """Create an edge in the graph, optionally linking a memory."""
         with OpTimer(
-            log, "relate", edge=f"{from_name}({from_type})-[{edge_type}]->{to_name}({to_type})",
+            log,
+            "relate",
+            edge=f"{from_name}({from_type})-[{edge_type}]->{to_name}({to_type})",
         ):
             self.graph.upsert_node(from_type, from_name)
             self.graph.upsert_node(to_type, to_name)
@@ -674,6 +689,7 @@ class MemoryEngine:
         """
         if window > 0:
             from datetime import timedelta
+
             start_dt = date.fromisoformat(start_date)
             expanded_start = (start_dt - timedelta(days=window)).isoformat()
             if end_date:

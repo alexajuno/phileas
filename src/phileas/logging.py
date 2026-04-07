@@ -54,9 +54,7 @@ def get_logger(
 
     resolved_dir.mkdir(parents=True, exist_ok=True)
     log_file = resolved_dir / "phileas.log"
-    handler = RotatingFileHandler(
-        log_file, maxBytes=resolved_max_bytes, backupCount=resolved_backup_count
-    )
+    handler = RotatingFileHandler(log_file, maxBytes=resolved_max_bytes, backupCount=resolved_backup_count)
     handler.setFormatter(JSONFormatter())
     logger.addHandler(handler)
 

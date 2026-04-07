@@ -40,5 +40,5 @@ async def consolidate_memories(client: LLMClient, cluster: list[dict]) -> dict |
 
         return {"summary": summary, "importance": importance}
 
-    except (json.JSONDecodeError, KeyError, ValueError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, RuntimeError:
         return None

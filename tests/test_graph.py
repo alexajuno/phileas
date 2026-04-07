@@ -76,10 +76,13 @@ def test_locked_graph_degrades_gracefully(kuzu_path):
 
     # Spawn a subprocess that holds the exclusive lock
     holder = subprocess.Popen(
-        [sys.executable, "-c",
-         f"import kuzu, time; db = kuzu.Database('{kuzu_path}'); "
-         f"conn = kuzu.Connection(db); time.sleep(30)"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [
+            sys.executable,
+            "-c",
+            f"import kuzu, time; db = kuzu.Database('{kuzu_path}'); conn = kuzu.Connection(db); time.sleep(30)",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     time.sleep(0.3)  # let the subprocess grab the lock
 

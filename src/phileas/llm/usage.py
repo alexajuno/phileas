@@ -6,7 +6,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 USAGE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,8 +57,17 @@ class UsageTracker:
                 total_tokens, cost_usd, latency_ms, success, error, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                operation, model, provider, prompt_tokens, completion_tokens,
-                total_tokens, cost_usd, latency_ms, int(success), error, now,
+                operation,
+                model,
+                provider,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                cost_usd,
+                latency_ms,
+                int(success),
+                error,
+                now,
             ),
         )
         self._conn.commit()

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 
 import click
 
@@ -32,12 +31,14 @@ from phileas.vector import VectorStore
 def _daemon_call(method: str, params: dict | None = None) -> dict | None:
     """Try calling the daemon. Returns response or None if not running."""
     from phileas.daemon import call
+
     return call(method, params)
 
 
 def _get_engine() -> MemoryEngine:
     """Create a MemoryEngine from the current config. Suppresses model loading noise."""
     import logging
+
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     logging.getLogger("transformers").setLevel(logging.ERROR)
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
@@ -56,8 +57,7 @@ def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
         return short_id
     # Prefix match
     items = engine.db.get_active_items() + [
-        i for i in (engine.db.get_items_by_tier(2) + engine.db.get_items_by_tier(3))
-        if i.status == "archived"
+        i for i in (engine.db.get_items_by_tier(2) + engine.db.get_items_by_tier(3)) if i.status == "archived"
     ]
     matches = [i.id for i in items if i.id.startswith(short_id)]
     if len(matches) == 1:
@@ -94,17 +94,25 @@ def status():
 
 @click.command()
 @click.argument("text")
-@click.option("--type", "memory_type", default="knowledge", help="Memory type (profile, event, knowledge, behavior, reflection).")
+@click.option(
+    "--type",
+    "memory_type",
+    default="knowledge",
+    help="Memory type (profile, event, knowledge, behavior, reflection).",
+)
 @click.option("--importance", default=None, type=int, help="Importance score 1-10 (auto-scored by LLM if omitted).")
 def remember(text: str, memory_type: str, importance: int | None):
     """Store a memory."""
     try:
-        resp = _daemon_call("memorize", {
-            "summary": text,
-            "memory_type": memory_type,
-            "importance": importance if importance is not None else 5,
-            "auto_importance": importance is None,
-        })
+        resp = _daemon_call(
+            "memorize",
+            {
+                "summary": text,
+                "memory_type": memory_type,
+                "importance": importance if importance is not None else 5,
+                "auto_importance": importance is None,
+            },
+        )
         if resp and resp.get("ok"):
             result = resp["result"]
             if result.get("deduplicated"):
@@ -261,18 +269,20 @@ def show(memory_id: str):
             print_error(f"Memory {memory_id} not found.")
             raise SystemExit(1)
 
-        print_memory_detail({
-            "id": item.id,
-            "summary": item.summary,
-            "memory_type": item.memory_type,
-            "importance": item.importance,
-            "tier": item.tier,
-            "status": item.status,
-            "access_count": item.access_count,
-            "daily_ref": item.daily_ref,
-            "created_at": item.created_at.isoformat() if item.created_at else "",
-            "updated_at": item.updated_at.isoformat() if item.updated_at else "",
-        })
+        print_memory_detail(
+            {
+                "id": item.id,
+                "summary": item.summary,
+                "memory_type": item.memory_type,
+                "importance": item.importance,
+                "tier": item.tier,
+                "status": item.status,
+                "access_count": item.access_count,
+                "daily_ref": item.daily_ref,
+                "created_at": item.created_at.isoformat() if item.created_at else "",
+                "updated_at": item.updated_at.isoformat() if item.updated_at else "",
+            }
+        )
     except SystemExit:
         raise
     except Exception as exc:
@@ -456,16 +466,16 @@ def contradictions(limit: int):
             if not related:
                 continue
 
-            result = asyncio.run(
-                detect_contradictions(engine.llm, new_memory=item.summary, existing_memories=related)
-            )
+            result = asyncio.run(detect_contradictions(engine.llm, new_memory=item.summary, existing_memories=related))
             if result.get("contradicts"):
-                found.append({
-                    "memory_id": item.id,
-                    "summary": item.summary,
-                    "conflicting_ids": result.get("conflicting_ids", []),
-                    "explanation": result.get("explanation", ""),
-                })
+                found.append(
+                    {
+                        "memory_id": item.id,
+                        "summary": item.summary,
+                        "conflicting_ids": result.get("conflicting_ids", []),
+                        "explanation": result.get("explanation", ""),
+                    }
+                )
 
         if not found:
             print_success("No contradictions found.")
@@ -553,6 +563,7 @@ def serve():
 def init_cmd():
     """Set up Phileas interactively."""
     from phileas.cli.wizard import run_wizard
+
     run_wizard()
 
 
@@ -564,7 +575,8 @@ def init_cmd():
 @click.command()
 def start():
     """Start the Phileas daemon (keeps models loaded for fast CLI)."""
-    from phileas.daemon import is_running, start as daemon_start
+    from phileas.daemon import is_running
+    from phileas.daemon import start as daemon_start
 
     port = is_running()
     if port:
@@ -667,9 +679,13 @@ def usage(recent: int):
                     ts = call["created_at"][:19].replace("T", " ")
                     ok = "[green]Y[/green]" if call["success"] else f"[red]N[/red] {call.get('error', '')[:30]}"
                     r_table.add_row(
-                        ts, call["operation"], call["model"] or "",
-                        str(call["total_tokens"]), f"${call['cost_usd']:.4f}",
-                        f"{call['latency_ms']:.0f}", ok,
+                        ts,
+                        call["operation"],
+                        call["model"] or "",
+                        str(call["total_tokens"]),
+                        f"${call['cost_usd']:.4f}",
+                        f"{call['latency_ms']:.0f}",
+                        ok,
                     )
                 console.print(r_table)
 

@@ -15,7 +15,6 @@ import signal
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from threading import Thread
 
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
@@ -85,6 +84,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         if pid > 0:
             # Parent: wait briefly for port file, then return
             import time
+
             for _ in range(50):  # Wait up to 5 seconds
                 time.sleep(0.1)
                 port_file = _port_path(config)
@@ -105,6 +105,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     # Suppress model loading noise
     import logging
+
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     logging.getLogger("transformers").setLevel(logging.ERROR)
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
@@ -118,6 +119,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # Pre-warm the reranker by importing it
     try:
         from sentence_transformers import CrossEncoder
+
         CrossEncoder(config.reranker.model, max_length=256)
     except Exception:
         pass
@@ -202,8 +204,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         else:
             items = engine.db.get_active_items()[:limit]
         return [
-            {"id": i.id, "summary": i.summary, "type": i.memory_type,
-             "importance": i.importance, "score": 0}
+            {"id": i.id, "summary": i.summary, "type": i.memory_type, "importance": i.importance, "score": 0}
             for i in items
         ]
     elif method == "show":
@@ -211,25 +212,39 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         if not item:
             raise ValueError(f"Memory {params['memory_id']} not found")
         return {
-            "id": item.id, "summary": item.summary, "memory_type": item.memory_type,
-            "importance": item.importance, "tier": item.tier, "status": item.status,
-            "access_count": item.access_count, "daily_ref": item.daily_ref,
+            "id": item.id,
+            "summary": item.summary,
+            "memory_type": item.memory_type,
+            "importance": item.importance,
+            "tier": item.tier,
+            "status": item.status,
+            "access_count": item.access_count,
+            "daily_ref": item.daily_ref,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         }
     elif method == "export":
         items = engine.db.get_active_items()
         return [
-            {"id": i.id, "summary": i.summary, "memory_type": i.memory_type,
-             "importance": i.importance, "tier": i.tier, "status": i.status,
-             "access_count": i.access_count, "daily_ref": i.daily_ref,
-             "created_at": i.created_at.isoformat() if i.created_at else None,
-             "updated_at": i.updated_at.isoformat() if i.updated_at else None}
+            {
+                "id": i.id,
+                "summary": i.summary,
+                "memory_type": i.memory_type,
+                "importance": i.importance,
+                "tier": i.tier,
+                "status": i.status,
+                "access_count": i.access_count,
+                "daily_ref": i.daily_ref,
+                "created_at": i.created_at.isoformat() if i.created_at else None,
+                "updated_at": i.updated_at.isoformat() if i.updated_at else None,
+            }
             for i in items
         ]
     elif method == "ingest":
         import asyncio
+
         from phileas.llm.extraction import extract_memories
+
         text = params["text"]
         memories = asyncio.run(extract_memories(engine.llm, text=text))
         results = []
@@ -258,8 +273,11 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return {"ok": True}
         elif op == "create_edge":
             graph.create_edge(
-                params["from_type"], params["from_name"],
-                params["edge"], params["to_type"], params["to_name"],
+                params["from_type"],
+                params["from_name"],
+                params["edge"],
+                params["to_type"],
+                params["to_name"],
             )
             return {"ok": True}
         elif op == "link_memory_to_memory":

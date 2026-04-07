@@ -10,9 +10,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("phileas.graph")
-
 import kuzu
+
+log = logging.getLogger("phileas.graph")
 
 DEFAULT_GRAPH_PATH = Path.home() / ".phileas" / "graph"
 
@@ -73,6 +73,7 @@ class GraphStore:
             return False
         try:
             from phileas.daemon import call
+
             result = call("graph_write", {"op": op, **params})
             return result is not None and result.get("ok", False)
         except Exception:
@@ -84,6 +85,7 @@ class GraphStore:
             return default
         try:
             from phileas.daemon import call
+
             result = call("graph_read", {"op": op, **params})
             if result is not None and result.get("ok", False):
                 return result.get("result", default)
@@ -169,9 +171,14 @@ class GraphStore:
             Optional dict of additional properties, serialised to JSON.
         """
         if not self._ensure_writable():
-            self._daemon_graph_write("upsert_node", {
-                "node_type": node_type, "name": name, "props": props,
-            })
+            self._daemon_graph_write(
+                "upsert_node",
+                {
+                    "node_type": node_type,
+                    "name": name,
+                    "props": props,
+                },
+            )
             return
         if node_type not in ENTITY_NODE_TYPES:
             raise ValueError(f"Unknown node type: {node_type!r}. Must be one of {ENTITY_NODE_TYPES}")
@@ -216,10 +223,16 @@ class GraphStore:
         If the edge already exists, this is a no-op.
         """
         if not self._ensure_writable():
-            self._daemon_graph_write("create_edge", {
-                "from_type": from_type, "from_name": from_name,
-                "edge": edge_type, "to_type": to_type, "to_name": to_name,
-            })
+            self._daemon_graph_write(
+                "create_edge",
+                {
+                    "from_type": from_type,
+                    "from_name": from_name,
+                    "edge": edge_type,
+                    "to_type": to_type,
+                    "to_name": to_name,
+                },
+            )
             return
         # Check existence first
         check_q = (
@@ -245,10 +258,14 @@ class GraphStore:
         Creates the Memory node if it does not exist.
         """
         if not self._ensure_writable():
-            self._daemon_graph_write("link_memory", {
-                "memory_id": memory_id, "entity_type": entity_type,
-                "entity_name": entity_name,
-            })
+            self._daemon_graph_write(
+                "link_memory",
+                {
+                    "memory_id": memory_id,
+                    "entity_type": entity_type,
+                    "entity_name": entity_name,
+                },
+            )
             return
         if entity_type not in ABOUT_EDGE:
             raise ValueError(f"Cannot link memory to unknown entity type: {entity_type!r}")
@@ -271,9 +288,14 @@ class GraphStore:
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
         """Create an edge between two Memory nodes, matched by id."""
         if not self._ensure_writable():
-            self._daemon_graph_write("link_memory_to_memory", {
-                "from_id": from_id, "edge_type": edge_type, "to_id": to_id,
-            })
+            self._daemon_graph_write(
+                "link_memory_to_memory",
+                {
+                    "from_id": from_id,
+                    "edge_type": edge_type,
+                    "to_id": to_id,
+                },
+            )
             return
         # Ensure both Memory nodes exist
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
@@ -385,7 +407,9 @@ class GraphStore:
         """
         if not self._ensure_connected():
             return self._daemon_graph_read(
-                "search_nodes", {"query": name_query}, default=[],
+                "search_nodes",
+                {"query": name_query},
+                default=[],
             )
         parts = []
         for node_type in ENTITY_NODE_TYPES:
@@ -408,7 +432,9 @@ class GraphStore:
         """
         if not self._ensure_connected():
             return self._daemon_graph_read(
-                "get_entities_for_memory", {"memory_id": memory_id}, default=[],
+                "get_entities_for_memory",
+                {"memory_id": memory_id},
+                default=[],
             )
         results = []
         for entity_type, edge_type in ABOUT_EDGE.items():

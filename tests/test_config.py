@@ -1,24 +1,13 @@
 """Tests for the Phileas configuration system."""
 
-import os
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from phileas.config import (
-    ConsolidationConfig,
-    EmbeddingsConfig,
     LLMConfig,
     LLMOperations,
-    LoggingConfig,
-    PhileasConfig,
-    RecallConfig,
-    RerankerConfig,
-    ScoringConfig,
     load_config,
 )
-
 
 # ------------------------------------------------------------------
 # Defaults (no file, no env)
@@ -99,11 +88,13 @@ class TestTomlOverrides:
     def test_partial_override(self, tmp_path):
         """Non-overridden values stay at defaults."""
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [recall]
             similarity_floor = 0.6
             default_top_k = 20
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         # Overridden
         assert cfg.recall.similarity_floor == 0.6
@@ -115,7 +106,8 @@ class TestTomlOverrides:
 
     def test_full_llm_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [llm]
             provider = "anthropic"
             model = "claude-sonnet-4-20250514"
@@ -123,7 +115,8 @@ class TestTomlOverrides:
             [llm.operations]
             extraction = "claude-haiku-4-20250514"
             importance = "claude-haiku-4-20250514"
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.llm.provider == "anthropic"
         assert cfg.llm.model == "claude-sonnet-4-20250514"
@@ -134,11 +127,13 @@ class TestTomlOverrides:
 
     def test_scoring_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [scoring]
             relevance_weight = 0.6
             importance_weight = 0.15
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.scoring.relevance_weight == 0.6
         assert cfg.scoring.importance_weight == 0.15
@@ -148,11 +143,13 @@ class TestTomlOverrides:
 
     def test_logging_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [logging]
             level = "DEBUG"
             file_max_bytes = 1048576
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.logging.level == "DEBUG"
         assert cfg.logging.file_max_bytes == 1_048_576
@@ -160,28 +157,34 @@ class TestTomlOverrides:
 
     def test_embeddings_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [embeddings]
             model = "all-mpnet-base-v2"
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.embeddings.model == "all-mpnet-base-v2"
 
     def test_reranker_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [reranker]
             model = "cross-encoder/ms-marco-MiniLM-L-12-v2"
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.reranker.model == "cross-encoder/ms-marco-MiniLM-L-12-v2"
 
     def test_consolidation_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [consolidation]
             auto_threshold = 50
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.consolidation.auto_threshold == 50
 
@@ -222,10 +225,12 @@ class TestEnvOverride:
         custom_home = tmp_path / "custom_phileas"
         custom_home.mkdir()
         config_file = custom_home / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [recall]
             default_top_k = 25
-        """))
+        """)
+        )
         monkeypatch.setenv("PHILEAS_HOME", str(custom_home))
         cfg = load_config()
         assert cfg.home == custom_home
@@ -322,11 +327,13 @@ class TestLLMAvailability:
 
     def test_available_from_config(self, tmp_path):
         config_file = tmp_path / "config.toml"
-        config_file.write_text(textwrap.dedent("""\
+        config_file.write_text(
+            textwrap.dedent("""\
             [llm]
             provider = "anthropic"
             model = "claude-sonnet-4-20250514"
-        """))
+        """)
+        )
         cfg = load_config(home=tmp_path)
         assert cfg.llm.available is True
 

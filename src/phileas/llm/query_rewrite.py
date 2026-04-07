@@ -37,5 +37,5 @@ async def rewrite_query(client: LLMClient, query: str) -> list[str]:
             return [query]
         return queries
 
-    except (json.JSONDecodeError, KeyError, ValueError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, RuntimeError:
         return [query]

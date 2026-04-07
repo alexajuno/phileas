@@ -40,5 +40,5 @@ async def score_importance(
         raw = int(data["importance"])
         return max(1, min(10, raw))
 
-    except (json.JSONDecodeError, KeyError, ValueError, RuntimeError):
+    except json.JSONDecodeError, KeyError, ValueError, RuntimeError:
         return default

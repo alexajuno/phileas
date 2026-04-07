@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import click
@@ -88,7 +87,7 @@ def _wire_claude_code(home: Path) -> bool:
     if mcp_json_path.exists():
         try:
             mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             mcp_config = {}
     else:
         mcp_config = {}
@@ -106,8 +105,14 @@ def _wire_claude_code(home: Path) -> bool:
         mcp_config["mcpServers"]["phileas"] = {
             "type": "stdio",
             "command": "uv",
-            "args": ["run", "--project", str(Path(__file__).resolve().parents[2].parent), "python", "-c",
-                      "from phileas.server import mcp; mcp.run()"],
+            "args": [
+                "run",
+                "--project",
+                str(Path(__file__).resolve().parents[2].parent),
+                "python",
+                "-c",
+                "from phileas.server import mcp; mcp.run()",
+            ],
         }
 
     try:
@@ -121,6 +126,7 @@ def _wire_claude_code(home: Path) -> bool:
 def _find_phileas_command() -> str | None:
     """Find the phileas executable on PATH."""
     import shutil
+
     return shutil.which("phileas")
 
 
@@ -189,7 +195,9 @@ def run_wizard() -> None:
     # 1. Usage mode
     console.print("How will you use Phileas?")
     console.print()
-    console.print("  [cyan]1[/cyan]  With Claude Code [dim](recommended)[/dim] -- Claude is the brain, Phileas stores memories")
+    console.print(
+        "  [cyan]1[/cyan]  With Claude Code [dim](recommended)[/dim] -- Claude is the brain, Phileas stores memories"
+    )
     console.print("  [cyan]2[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
     console.print("  [cyan]3[/cyan]  Both -- Claude Code + standalone CLI access")
     console.print()
@@ -281,7 +289,7 @@ def run_wizard() -> None:
     else:
         console.print("Next steps:")
         console.print("  [cyan]1.[/cyan] Restart Claude Code for MCP integration")
-        console.print("  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember \"I like Python\"[/cyan]")
+        console.print('  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember "I like Python"[/cyan]')
         console.print("  [cyan]3.[/cyan] Check usage: [cyan]phileas usage[/cyan]")
 
     console.print()
