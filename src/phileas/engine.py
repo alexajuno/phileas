@@ -859,6 +859,150 @@ class MemoryEngine:
             return stored
 
     # ------------------------------------------------------------------
+    # infer_graph
+    # ------------------------------------------------------------------
+
+    def infer_graph(self) -> dict:
+        """Run graph inference: discover relationships and patterns from recent memories.
+
+        Uses a marker memory to track the last inference time.
+        Returns {"edges_added": N, "insights_stored": N, "memories_processed": N}.
+        """
+        from phileas.llm.inference import infer_graph as llm_infer
+
+        with OpTimer(log, "infer_graph") as timer:
+            if not self.llm.available:
+                timer.extra["skipped"] = "llm_unavailable"
+                return {"edges_added": 0, "insights_stored": 0, "memories_processed": 0}
+
+            # Find last inference marker
+            active = self.db.get_active_items()
+            last_inference_time = None
+            for item in active:
+                if item.summary.startswith("[Graph inference"):
+                    last_inference_time = item.created_at
+                    break
+
+            # Get memories since last inference (or last 24h if first run)
+            if last_inference_time:
+                since = last_inference_time.isoformat()
+            else:
+                from datetime import timedelta
+
+                since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+            recent = self.db.get_items_since(since, limit=100)
+            # Filter out markers and low-importance items
+            recent = [m for m in recent if not m.summary.startswith("[") and m.importance >= 3]
+
+            if not recent:
+                timer.extra["skipped"] = "no_new_memories"
+                return {"edges_added": 0, "insights_stored": 0, "memories_processed": 0}
+
+            # Build graph context: entities and edges for these memories
+            graph_lines = []
+            seen_entities: set[str] = set()
+            for mem in recent:
+                entities = self.graph.get_entities_for_memory(mem.id)
+                for ent in entities:
+                    eid = f"{ent['type']}:{ent['name']}"
+                    if eid not in seen_entities:
+                        seen_entities.add(eid)
+                        # Get related entities for context
+                        try:
+                            related = self.graph.get_related_entities(ent["type"], ent["name"])
+                            if related:
+                                for rel in related:
+                                    graph_lines.append(
+                                        f"  {ent['type']}:{ent['name']} --[{rel.get('edge_type', '?')}]--> "
+                                        f"{rel['type']}:{rel['name']}"
+                                    )
+                            else:
+                                graph_lines.append(f"  {ent['type']}:{ent['name']} (no connections)")
+                        except Exception:
+                            graph_lines.append(f"  {ent['type']}:{ent['name']} (no connections)")
+
+            graph_context = "\n".join(graph_lines) if graph_lines else "(no graph data yet)"
+
+            memory_dicts = [
+                {
+                    "summary": m.summary,
+                    "type": m.memory_type,
+                    "importance": m.importance,
+                }
+                for m in recent
+            ]
+
+            # Call LLM
+            result = asyncio.run(llm_infer(self.llm, memory_dicts, graph_context))
+
+            # Apply relationships
+            edges_added = 0
+            for rel in result.get("relationships", []):
+                from_name = rel.get("from_name")
+                from_type = rel.get("from_type")
+                edge = rel.get("edge")
+                to_name = rel.get("to_name")
+                to_type = rel.get("to_type")
+                if from_name and from_type and edge and to_name and to_type:
+                    try:
+                        self.graph.upsert_node(from_type, from_name)
+                        self.graph.upsert_node(to_type, to_name)
+                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                        edges_added += 1
+                        log.info(
+                            "inferred edge",
+                            extra={
+                                "op": "infer_graph",
+                                "data": {
+                                    "edge": f"{from_name}-[{edge}]->{to_name}",
+                                    "reason": rel.get("reason", ""),
+                                },
+                            },
+                        )
+                    except Exception as e:
+                        log.debug(
+                            "inferred edge failed",
+                            extra={"op": "infer_graph", "data": {"error": str(e)}},
+                        )
+
+            # Store insights
+            insights_stored = 0
+            for ins in result.get("insights", []):
+                summary = ins.get("summary")
+                if not summary:
+                    continue
+                self.memorize(
+                    summary=summary,
+                    memory_type=ins.get("memory_type", "inference"),
+                    importance=ins.get("importance", 5),
+                    auto_importance=False,
+                    daily_ref=date.today().isoformat(),
+                )
+                insights_stored += 1
+
+            # Store marker
+            self.memorize(
+                summary=(
+                    f"[Graph inference] Processed {len(recent)} memories, "
+                    f"added {edges_added} edges, produced {insights_stored} insights."
+                ),
+                memory_type="knowledge",
+                importance=1,
+                auto_importance=False,
+                daily_ref=date.today().isoformat(),
+            )
+
+            timer.extra["memories_processed"] = len(recent)
+            timer.extra["edges_added"] = edges_added
+            timer.extra["insights_stored"] = insights_stored
+            return {
+                "edges_added": edges_added,
+                "insights_stored": insights_stored,
+                "memories_processed": len(recent),
+            }
+
+    # ------------------------------------------------------------------
     # status
     # ------------------------------------------------------------------
 

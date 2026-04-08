@@ -467,6 +467,43 @@ def reflect(date: str | None):
 
 
 # ------------------------------------------------------------------
+# infer-graph
+# ------------------------------------------------------------------
+
+
+@click.command("infer-graph")
+def infer_graph():
+    """Run graph inference to discover relationships and patterns."""
+    try:
+        resp = _daemon_call("infer_graph")
+        if resp and resp.get("ok"):
+            result = resp["result"]
+            if result["memories_processed"] == 0:
+                console.print("No new memories to process.")
+                return
+            print_success(
+                f"Processed {result['memories_processed']} memories: "
+                f"{result['edges_added']} edges added, "
+                f"{result['insights_stored']} insights stored."
+            )
+            return
+
+        engine = _get_engine()
+        result = engine.infer_graph()
+        if result["memories_processed"] == 0:
+            console.print("No new memories to process.")
+            return
+        print_success(
+            f"Processed {result['memories_processed']} memories: "
+            f"{result['edges_added']} edges added, "
+            f"{result['insights_stored']} insights stored."
+        )
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+# ------------------------------------------------------------------
 # contradictions
 # ------------------------------------------------------------------
 
