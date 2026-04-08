@@ -334,7 +334,26 @@ class MemoryEngine:
                             break
 
             # Path 3: graph search (KuzuDB) — word-based entity lookup
+            # Also follows entity↔entity edges to discover related entities.
             words = query.split()
+            seen_entities: set[tuple[str, str]] = set()
+
+            def _add_memories_for_entity(etype: str, ename: str) -> None:
+                """Add memories linked to an entity to the candidates pool."""
+                if (ename, etype) in seen_entities:
+                    return
+                seen_entities.add((ename, etype))
+                try:
+                    memory_ids = self.graph.get_memories_about(etype, ename)
+                except Exception as e:
+                    log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
+                    return
+                for mem_id in memory_ids:
+                    if mem_id not in candidates:
+                        item = self.db.get_item(mem_id)
+                        if item:
+                            candidates[mem_id] = item
+
             for word in words:
                 if len(word) < 2:
                     continue
@@ -344,45 +363,38 @@ class MemoryEngine:
                     entity_type = node.get("type")
                     if not entity_name or not entity_type:
                         continue
+                    _add_memories_for_entity(entity_type, entity_name)
+                    # Follow entity↔entity edges to discover related entities
                     try:
-                        memory_ids = self.graph.get_memories_about(entity_type, entity_name)
+                        related = self.graph.get_related_entities(entity_type, entity_name)
+                        for rel in related:
+                            _add_memories_for_entity(rel["type"], rel["name"])
                     except Exception as e:
                         log.debug(
-                            "graph lookup failed",
+                            "graph traversal failed",
                             extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
                         )
-                        continue
-                    for mem_id in memory_ids:
-                        if mem_id not in candidates:
-                            item = self.db.get_item(mem_id)
-                            if item:
-                                candidates[mem_id] = item
 
             # Path 4: semantic-to-graph bridge
             # Use top semantic hits to discover entities, then follow graph
-            # edges to find additional connected memories.
-            seen_entities: set[tuple[str, str]] = set()
+            # edges (including entity↔entity) to find connected memories.
             bridge_source_ids = list(candidates.keys())[:top_k]
             for mem_id in bridge_source_ids:
                 entities = self.graph.get_entities_for_memory(mem_id)
                 for entity in entities:
                     ename = entity["name"]
                     etype = entity["type"]
-                    if (ename, etype) in seen_entities:
-                        continue
-                    seen_entities.add((ename, etype))
+                    _add_memories_for_entity(etype, ename)
+                    # Follow entity↔entity edges from bridge entities
                     try:
-                        connected_ids = self.graph.get_memories_about(etype, ename)
+                        related = self.graph.get_related_entities(etype, ename)
+                        for rel in related:
+                            _add_memories_for_entity(rel["type"], rel["name"])
                     except Exception as e:
                         log.debug(
-                            "graph bridge failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}}
+                            "graph bridge traversal failed",
+                            extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
                         )
-                        continue
-                    for connected_id in connected_ids:
-                        if connected_id not in candidates:
-                            item = self.db.get_item(connected_id)
-                            if item:
-                                candidates[connected_id] = item
 
             # Apply filters
             filtered: dict[str, MemoryItem] = {}
@@ -704,7 +716,11 @@ class MemoryEngine:
     # ------------------------------------------------------------------
 
     def about(self, name: str, entity_type: str | None = None) -> list[dict]:
-        """Return memories connected to an entity node in the graph."""
+        """Return memories connected to an entity node in the graph.
+
+        Also follows entity↔entity edges to include memories about
+        directly related entities.
+        """
         with OpTimer(log, "about", entity=name, entity_type=entity_type) as timer:
             # Search graph for the entity
             node_hits = self.graph.search_nodes(name)
@@ -713,16 +729,17 @@ class MemoryEngine:
 
             results = []
             seen_ids: set[str] = set()
-            for node in node_hits:
-                etype = node.get("type")
-                ename = node.get("name")
-                if not etype or not ename:
-                    continue
+            seen_entities: set[tuple[str, str]] = set()
+
+            def _collect_memories(etype: str, ename: str) -> None:
+                if (ename, etype) in seen_entities:
+                    return
+                seen_entities.add((ename, etype))
                 try:
                     memory_ids = self.graph.get_memories_about(etype, ename)
                 except Exception as e:
                     log.debug("graph lookup failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}})
-                    continue
+                    return
                 for mem_id in memory_ids:
                     if mem_id in seen_ids:
                         continue
@@ -730,6 +747,22 @@ class MemoryEngine:
                     item = self.db.get_item(mem_id)
                     if item and item.status == "active":
                         results.append(_item_to_dict(item))
+
+            for node in node_hits:
+                etype = node.get("type")
+                ename = node.get("name")
+                if not etype or not ename:
+                    continue
+                _collect_memories(etype, ename)
+                # Follow entity↔entity edges
+                try:
+                    related = self.graph.get_related_entities(etype, ename)
+                    for rel in related:
+                        _collect_memories(rel["type"], rel["name"])
+                except Exception as e:
+                    log.debug(
+                        "graph traversal failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}}
+                    )
 
             timer.extra["results"] = len(results)
             return results

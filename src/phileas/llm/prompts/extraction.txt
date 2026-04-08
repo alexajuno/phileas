@@ -9,8 +9,8 @@ For each memory, provide:
 - summary: 1-2 sentence description
 - memory_type: one of "profile", "event", "knowledge", "behavior", "reflection"
 - importance: 1-10 (see scale below)
-- entities: list of {{"name": str, "type": str}} where type is one of "Person", "Project", "Place", "Tool", "Topic"
-- relationships: list of {{"from_name": str, "from_type": str, "edge": str, "to_name": str, "to_type": str}}
+- entities: list of {{"name": str, "type": str}} — use whatever type best describes the entity (Person, Project, Place, Tool, Topic, Company, Language, Concept, etc.)
+- relationships: list of {{"from_name": str, "from_type": str, "edge": str, "to_name": str, "to_type": str}} — use descriptive edge types (BUILDS, USES, KNOWS, WORKS_AT, STUDIES, LIKES, etc.)
 
 Importance scale:
   1-2: Trivial, 3-4: Minor, 5-6: Notable, 7-8: Significant, 9-10: Life-defining
