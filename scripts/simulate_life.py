@@ -28,7 +28,6 @@ from phileas.graph import GraphStore
 from phileas.models import MemoryItem, _uuid
 from phileas.vector import VectorStore
 
-
 # ------------------------------------------------------------------
 # Life themes
 # ------------------------------------------------------------------
@@ -199,29 +198,48 @@ class Probe:
 
 PROBES = [
     # Presence: does the theme appear at all?
-    Probe("loneliness_presence", "what recurring emotional struggles does this person have?",
-          relevant_themes=["loneliness"], metric="presence"),
-    Probe("work_stress_presence", "what causes this person stress?",
-          relevant_themes=["work_stress"], metric="presence"),
-    Probe("career_presence", "what are this person's career ambitions?",
-          relevant_themes=["career_ambition"], metric="presence"),
+    Probe(
+        "loneliness_presence",
+        "what recurring emotional struggles does this person have?",
+        relevant_themes=["loneliness"],
+        metric="presence",
+    ),
+    Probe(
+        "work_stress_presence", "what causes this person stress?", relevant_themes=["work_stress"], metric="presence"
+    ),
+    Probe(
+        "career_presence",
+        "what are this person's career ambitions?",
+        relevant_themes=["career_ambition"],
+        metric="presence",
+    ),
     # Noise suppression
-    Probe("noise_suppression", "what happened recently?",
-          relevant_themes=["daily_noise"], metric="absence"),
+    Probe("noise_suppression", "what happened recently?", relevant_themes=["daily_noise"], metric="absence"),
     # Precision: fraction of relevant results
-    Probe("anxiety_precision", "what makes this person anxious?",
-          relevant_themes=["work_stress", "loneliness"], metric="precision"),
-    Probe("relationships_precision", "what relationships does this person have?",
-          relevant_themes=["crush", "family", "loneliness"], metric="precision"),
+    Probe(
+        "anxiety_precision",
+        "what makes this person anxious?",
+        relevant_themes=["work_stress", "loneliness"],
+        metric="precision",
+    ),
+    Probe(
+        "relationships_precision",
+        "what relationships does this person have?",
+        relevant_themes=["crush", "family", "loneliness"],
+        metric="precision",
+    ),
     # MRR: how HIGH do relevant results rank? (rank-sensitive)
-    Probe("stress_mrr", "what causes this person stress?",
-          relevant_themes=["work_stress"], metric="mrr"),
-    Probe("anxiety_mrr", "what makes this person anxious?",
-          relevant_themes=["work_stress", "loneliness"], metric="mrr"),
-    Probe("career_mrr", "what are this person's career ambitions?",
-          relevant_themes=["career_ambition"], metric="mrr"),
-    Probe("relationships_mrr", "what relationships does this person have?",
-          relevant_themes=["crush", "family"], metric="mrr"),
+    Probe("stress_mrr", "what causes this person stress?", relevant_themes=["work_stress"], metric="mrr"),
+    Probe(
+        "anxiety_mrr", "what makes this person anxious?", relevant_themes=["work_stress", "loneliness"], metric="mrr"
+    ),
+    Probe("career_mrr", "what are this person's career ambitions?", relevant_themes=["career_ambition"], metric="mrr"),
+    Probe(
+        "relationships_mrr",
+        "what relationships does this person have?",
+        relevant_themes=["crush", "family"],
+        metric="mrr",
+    ),
 ]
 
 
@@ -230,8 +248,9 @@ PROBES = [
 # ------------------------------------------------------------------
 
 
-def make_engine(tmp_dir: Path, reinforcement: ReinforcementConfig | None = None,
-                scoring: ScoringConfig | None = None) -> MemoryEngine:
+def make_engine(
+    tmp_dir: Path, reinforcement: ReinforcementConfig | None = None, scoring: ScoringConfig | None = None
+) -> MemoryEngine:
     cfg = load_config(home=tmp_dir)
     if reinforcement is not None:
         cfg.reinforcement = reinforcement
@@ -295,13 +314,15 @@ def generate_memories(themes: list[Theme], months: int, seed: int = 42) -> list[
                     ]
                     summary = variations[(n - 2) % len(variations)]
 
-                memories.append({
-                    "summary": summary,
-                    "memory_type": theme.memory_type,
-                    "importance": rng.randint(*theme.importance_range),
-                    "daily_ref": mem_date.isoformat(),
-                    "theme": theme.name,
-                })
+                memories.append(
+                    {
+                        "summary": summary,
+                        "memory_type": theme.memory_type,
+                        "importance": rng.randint(*theme.importance_range),
+                        "daily_ref": mem_date.isoformat(),
+                        "theme": theme.name,
+                    }
+                )
 
     memories.sort(key=lambda m: m["daily_ref"])
     return memories
@@ -313,8 +334,9 @@ def generate_memories(themes: list[Theme], months: int, seed: int = 42) -> list[
 # ------------------------------------------------------------------
 
 
-def inject_memory(engine: MemoryEngine, summary: str, memory_type: str,
-                  importance: int, daily_ref: str, sim_datetime: datetime) -> dict:
+def inject_memory(
+    engine: MemoryEngine, summary: str, memory_type: str, importance: int, daily_ref: str, sim_datetime: datetime
+) -> dict:
     """Inject a memory with a simulated timestamp, handling dedup and reinforcement."""
     reinforce_cfg = engine.config.reinforcement
 
@@ -357,8 +379,7 @@ def inject_memory(engine: MemoryEngine, summary: str, memory_type: str,
 # ------------------------------------------------------------------
 
 
-def score_probe(engine: MemoryEngine, probe: Probe, theme_map: dict[str, set[str]],
-                debug: bool = False) -> float:
+def score_probe(engine: MemoryEngine, probe: Probe, theme_map: dict[str, set[str]], debug: bool = False) -> float:
     results = engine.recall(probe.query, top_k=10)
     if not results:
         return 0.0
@@ -401,9 +422,9 @@ def score_probe(engine: MemoryEngine, probe: Probe, theme_map: dict[str, set[str
     return 0.0
 
 
-def run_checkpoint(engine: MemoryEngine, probes: list[Probe],
-                   theme_map: dict[str, set[str]], month: int,
-                   debug: bool = False) -> dict:
+def run_checkpoint(
+    engine: MemoryEngine, probes: list[Probe], theme_map: dict[str, set[str]], month: int, debug: bool = False
+) -> dict:
     scores = {}
     for probe in probes:
         scores[probe.name] = round(score_probe(engine, probe, theme_map, debug=debug), 3)
@@ -451,8 +472,7 @@ def run_simulation(
                 mem = memories[mem_idx]
                 mem_date = date.fromisoformat(mem["daily_ref"])
                 # Create a simulated datetime at noon on the memory's date
-                sim_dt = datetime(mem_date.year, mem_date.month, mem_date.day,
-                                  12, 0, 0, tzinfo=timezone.utc)
+                sim_dt = datetime(mem_date.year, mem_date.month, mem_date.day, 12, 0, 0, tzinfo=timezone.utc)
 
                 result = inject_memory(
                     engine,
@@ -482,14 +502,12 @@ def run_simulation(
 
             # Run checkpoint — mock datetime.now() to be at month end
             if month in checkpoints:
-                checkpoint_dt = datetime(month_end.year, month_end.month, month_end.day,
-                                         23, 0, 0, tzinfo=timezone.utc)
+                checkpoint_dt = datetime(month_end.year, month_end.month, month_end.day, 23, 0, 0, tzinfo=timezone.utc)
                 is_last = month == checkpoints[-1]
                 with patch("phileas.engine.datetime") as mock_dt:
                     mock_dt.now.return_value = checkpoint_dt
                     mock_dt.fromisoformat = datetime.fromisoformat
-                    scores = run_checkpoint(engine, PROBES, theme_map, month,
-                                            debug=is_last)
+                    scores = run_checkpoint(engine, PROBES, theme_map, month, debug=is_last)
 
                 checkpoint_results.append(scores)
                 print(f"[{label}] Month {month:2d}: avg={scores['avg']:.3f}  {scores}")
@@ -570,8 +588,7 @@ def main():
                 s = "+" if d >= 0 else ""
                 print(f"           {key}: {b[key]:.3f} -> {r[key]:.3f} ({s}{d:.3f})")
 
-    output = {"baseline": baseline, "reinforced": reinforced,
-              "baseline_stats": b_stats, "reinforced_stats": r_stats}
+    output = {"baseline": baseline, "reinforced": reinforced, "baseline_stats": b_stats, "reinforced_stats": r_stats}
     output_path = Path("simulation_results.json")
     output_path.write_text(json.dumps(output, indent=2))
     print(f"\nResults written to {output_path}")
