@@ -4,11 +4,24 @@ Canonical data store. ChromaDB and KuzuDB are derived indexes
 that can be rebuilt from this database.
 """
 
+import functools
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from phileas.models import MemoryItem
+
+
+def _locked(method):
+    """Serialize Database access across threads via self._lock."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
@@ -53,8 +66,9 @@ MIGRATIONS = [
 class Database:
     def __init__(self, path: Path = DEFAULT_DB_PATH):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
         self.conn.executescript(SCHEMA)
         self._migrate()
 
@@ -72,6 +86,7 @@ class Database:
 
     # --- Memory Items ---
 
+    @_locked
     def save_item(self, item: MemoryItem) -> None:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
@@ -100,18 +115,21 @@ class Database:
         )
         self.conn.commit()
 
+    @_locked
     def get_item(self, item_id: str) -> MemoryItem | None:
         row = self.conn.execute("SELECT * FROM memory_items WHERE id = ?", (item_id,)).fetchone()
         if not row:
             return None
         return self._row_to_item(row)
 
+    @_locked
     def get_active_items(self) -> list[MemoryItem]:
         rows = self.conn.execute(
             "SELECT * FROM memory_items WHERE status = 'active' ORDER BY created_at DESC"
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    @_locked
     def get_items_by_type(self, memory_type: str) -> list[MemoryItem]:
         rows = self.conn.execute(
             "SELECT * FROM memory_items WHERE memory_type = ? AND status = 'active' ORDER BY created_at DESC",
@@ -119,6 +137,7 @@ class Database:
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    @_locked
     def get_items_by_tier(self, tier: int) -> list[MemoryItem]:
         rows = self.conn.execute(
             "SELECT * FROM memory_items WHERE tier = ? AND status = 'active' ORDER BY created_at DESC",
@@ -126,6 +145,7 @@ class Database:
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    @_locked
     def search_by_keyword(self, query: str, top_k: int = 10) -> list[MemoryItem]:
         """Keyword search using SQLite LIKE. Splits query into words, scores by match count."""
         words = query.lower().split()
@@ -146,6 +166,7 @@ class Database:
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    @_locked
     def archive_item(self, item_id: str, reason: str | None = None) -> None:
         self.conn.execute(
             "UPDATE memory_items SET status = 'archived', updated_at = ? WHERE id = ?",
@@ -153,6 +174,7 @@ class Database:
         )
         self.conn.commit()
 
+    @_locked
     def update_item(self, item_id: str, summary: str) -> MemoryItem | None:
         """Update a memory's summary in place, preserving created_at and daily_ref."""
         item = self.get_item(item_id)
@@ -166,6 +188,7 @@ class Database:
         self.conn.commit()
         return self.get_item(item_id)
 
+    @_locked
     def snapshot_item(self, item: MemoryItem) -> str:
         """Create an archived copy of a memory, returning the snapshot's ID."""
         snapshot = MemoryItem(
@@ -184,6 +207,7 @@ class Database:
         self.save_item(snapshot)
         return snapshot.id
 
+    @_locked
     def bump_access(self, item_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
@@ -192,6 +216,7 @@ class Database:
         )
         self.conn.commit()
 
+    @_locked
     def get_counts(self) -> dict:
         row = self.conn.execute(
             """SELECT
@@ -205,10 +230,12 @@ class Database:
 
     # --- Processed Sessions ---
 
+    @_locked
     def is_session_processed(self, session_id: str) -> bool:
         row = self.conn.execute("SELECT 1 FROM processed_sessions WHERE session_id = ?", (session_id,)).fetchone()
         return row is not None
 
+    @_locked
     def mark_session_processed(self, session_id: str, file_path: str) -> None:
         self.conn.execute(
             "INSERT OR IGNORE INTO processed_sessions (session_id, file_path, processed_at) VALUES (?, ?, ?)",
@@ -216,12 +243,14 @@ class Database:
         )
         self.conn.commit()
 
+    @_locked
     def get_processed_session_count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) as cnt FROM processed_sessions").fetchone()
         return row["cnt"]
 
     # --- Timeline ---
 
+    @_locked
     def get_items_by_date_range(self, start_date: str, end_date: str | None = None) -> list[MemoryItem]:
         if end_date:
             rows = self.conn.execute(
@@ -239,6 +268,7 @@ class Database:
             ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    @_locked
     def get_items_since(self, since_iso: str, limit: int = 100) -> list[MemoryItem]:
         """Get active memories created after a given ISO timestamp."""
         rows = self.conn.execute(
@@ -251,6 +281,7 @@ class Database:
 
     # --- Internal ---
 
+    @_locked
     def reinforce_item(self, item_id: str) -> None:
         """Increment reinforcement_count and update last_reinforced timestamp."""
         now = datetime.now(timezone.utc).isoformat()
