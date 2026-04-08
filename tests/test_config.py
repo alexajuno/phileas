@@ -50,12 +50,13 @@ class TestDefaults:
         assert cfg.recall.mmr_lambda == 0.7
         assert cfg.recall.default_top_k == 10
 
-    def test_default_scoring(self):
-        cfg = load_config()
+    def test_default_scoring(self, tmp_path):
+        cfg = load_config(home=tmp_path)
         assert cfg.scoring.relevance_weight == 0.55
-        assert cfg.scoring.importance_weight == 0.2
-        assert cfg.scoring.recency_weight == 0.15
-        assert cfg.scoring.access_weight == 0.1
+        assert cfg.scoring.importance_weight == 0.15
+        assert cfg.scoring.recency_weight == 0.1
+        assert cfg.scoring.access_weight == 0.05
+        assert cfg.scoring.reinforcement_weight == 0.15
 
     def test_default_logging(self):
         cfg = load_config()
