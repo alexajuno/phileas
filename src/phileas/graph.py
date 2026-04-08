@@ -10,14 +10,27 @@ Schema (3 edge tables, 2 node tables):
 Entity types and edge types are open — the LLM can use any strings.
 """
 
+import functools
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
 import kuzu
 
 log = logging.getLogger("phileas.graph")
+
+
+def _locked(method):
+    """Serialize GraphStore access across threads via self._lock."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 DEFAULT_GRAPH_PATH = Path.home() / ".phileas" / "graph"
 
@@ -44,6 +57,7 @@ class GraphStore:
         self._read_only: bool = False
         self._warned_locked: bool = False
         self._proxy_writes: bool = proxy_writes
+        self._lock = threading.RLock()
 
     def _daemon_graph_write(self, op: str, params: dict) -> bool:
         """Proxy a graph write through the daemon. Returns True on success."""
@@ -340,6 +354,7 @@ class GraphStore:
     # Entity node operations
     # ------------------------------------------------------------------
 
+    @_locked
     def upsert_node(self, node_type: str, name: str, props: dict[str, Any] | None = None) -> None:
         """Insert or update an entity node.
 
@@ -365,6 +380,7 @@ class GraphStore:
             parameters={"id": entity_id, "name": name, "type": node_type, "props": props_str},
         )
 
+    @_locked
     def find_nodes(self, node_type: str, name: str) -> list[dict[str, Any]]:
         """Return nodes matching an exact type + name."""
         if not self._ensure_connected():
@@ -380,6 +396,7 @@ class GraphStore:
             rows.append({"name": row[0], "type": row[1], "props": row[2]})
         return rows
 
+    @_locked
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
         """Search entity nodes by name or alias using CONTAINS match."""
         if not self._ensure_connected():
@@ -398,6 +415,7 @@ class GraphStore:
             results.append({"name": row[0], "type": row[1]})
         return results
 
+    @_locked
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         """Set aliases for an entity node (e.g., "mom" for a Person)."""
         if not self._ensure_writable():
@@ -413,6 +431,7 @@ class GraphStore:
     # Memory ↔ Entity edges (ABOUT)
     # ------------------------------------------------------------------
 
+    @_locked
     def link_memory(self, memory_id: str, entity_type: str, entity_name: str) -> None:
         """Link a Memory node to an Entity via an ABOUT edge.
 
@@ -448,6 +467,7 @@ class GraphStore:
             parameters={"mid": memory_id, "eid": entity_id},
         )
 
+    @_locked
     def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
         """Return memory IDs linked to the given entity."""
         if not self._ensure_connected():
@@ -467,6 +487,7 @@ class GraphStore:
             ids.append(row[0])
         return ids
 
+    @_locked
     def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
         """Find all entities linked to a memory via ABOUT edges.
 
@@ -492,6 +513,7 @@ class GraphStore:
     # Entity ↔ Entity edges (REL)
     # ------------------------------------------------------------------
 
+    @_locked
     def create_edge(
         self,
         from_type: str,
@@ -531,6 +553,7 @@ class GraphStore:
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
 
+    @_locked
     def get_related_entities(
         self,
         entity_type: str,
@@ -590,6 +613,7 @@ class GraphStore:
     # Memory ↔ Memory edges (MEM_REL)
     # ------------------------------------------------------------------
 
+    @_locked
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
         """Create an edge between two Memory nodes with a given edge_type."""
         if not self._ensure_writable():
@@ -619,6 +643,7 @@ class GraphStore:
     # Neighborhood (general traversal)
     # ------------------------------------------------------------------
 
+    @_locked
     def get_neighborhood(self, node_type: str, name: str, depth: int = 1) -> list[dict[str, Any]]:
         """Return nodes connected to the given entity within the specified depth."""
         if not self._ensure_connected():
@@ -660,6 +685,7 @@ class GraphStore:
     # Stats
     # ------------------------------------------------------------------
 
+    @_locked
     def get_stats(self) -> dict[str, int]:
         """Return total node and edge counts."""
         if not self._ensure_connected():
@@ -682,6 +708,7 @@ class GraphStore:
 
         return {"nodes": total_nodes, "edges": total_edges}
 
+    @_locked
     def status(self) -> dict[str, Any]:
         """Detailed stats: node counts by type, edge counts by table."""
         if not self._ensure_connected():

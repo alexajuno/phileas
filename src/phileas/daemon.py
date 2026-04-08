@@ -16,6 +16,7 @@ import signal
 import sys
 from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from pathlib import Path
 
 from phileas.config import PhileasConfig, load_config
@@ -172,7 +173,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
             self.end_headers()
             self.wfile.write(body)
 
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadedHTTPServer(("127.0.0.1", 0), Handler)
     port = server.server_address[1]
 
     # Write PID and port files
