@@ -81,16 +81,19 @@ def compute_score(
     """
     rel_component = relevance * relevance_weight
     imp_component = (importance / 10.0) * importance_weight
-    rec_component = recency_score(
-        days_since_access,
-        importance,
-        tier,
-        reinforcement_count,
-        base_decay=base_decay,
-        decay_halving=decay_halving,
-        halving_interval=halving_interval,
-        min_decay=min_decay,
-    ) * recency_weight
+    rec_component = (
+        recency_score(
+            days_since_access,
+            importance,
+            tier,
+            reinforcement_count,
+            base_decay=base_decay,
+            decay_halving=decay_halving,
+            halving_interval=halving_interval,
+            min_decay=min_decay,
+        )
+        * recency_weight
+    )
     acc_component = (math.log(access_count + 1) / 5.0) * access_weight
     reinf_component = reinforcement_score(reinforcement_count) * reinforcement_weight
     return rel_component + imp_component + rec_component + acc_component + reinf_component

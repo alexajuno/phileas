@@ -49,10 +49,12 @@ def test_reinforcement_score_log_scale():
 
 
 def test_reinforced_beats_unreinforced():
-    reinforced = compute_score(relevance=0.5, importance=5, days_since_access=100,
-                               access_count=1, tier=2, reinforcement_count=8)
-    unreinforced = compute_score(relevance=0.5, importance=5, days_since_access=100,
-                                  access_count=1, tier=2, reinforcement_count=0)
+    reinforced = compute_score(
+        relevance=0.5, importance=5, days_since_access=100, access_count=1, tier=2, reinforcement_count=8
+    )
+    unreinforced = compute_score(
+        relevance=0.5, importance=5, days_since_access=100, access_count=1, tier=2, reinforcement_count=0
+    )
     assert reinforced > unreinforced
 
 

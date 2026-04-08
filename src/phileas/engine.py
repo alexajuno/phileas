@@ -109,9 +109,7 @@ class MemoryEngine:
                     return {"id": existing.id, "summary": existing.summary, "deduplicated": True}
 
             # 1b. Reinforcement check: similar but not duplicate (0.70-0.94 band)
-            similar = self.vector.find_similar(
-                summary, floor=reinforce_cfg.floor, ceiling=reinforce_cfg.ceiling
-            )
+            similar = self.vector.find_similar(summary, floor=reinforce_cfg.floor, ceiling=reinforce_cfg.ceiling)
             reinforced_id = None
             if similar:
                 similar_id, sim_score = similar
@@ -172,7 +170,9 @@ class MemoryEngine:
                         try:
                             self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
                         except Exception as e:
-                            log.debug("graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}})
+                            log.debug(
+                                "graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}}
+                            )
 
             timer.extra["dedup"] = False
             timer.extra["id"] = item.id
@@ -347,7 +347,10 @@ class MemoryEngine:
                     try:
                         memory_ids = self.graph.get_memories_about(entity_type, entity_name)
                     except Exception as e:
-                        log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}})
+                        log.debug(
+                            "graph lookup failed",
+                            extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
+                        )
                         continue
                     for mem_id in memory_ids:
                         if mem_id not in candidates:
@@ -371,7 +374,9 @@ class MemoryEngine:
                     try:
                         connected_ids = self.graph.get_memories_about(etype, ename)
                     except Exception as e:
-                        log.debug("graph bridge failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
+                        log.debug(
+                            "graph bridge failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}}
+                        )
                         continue
                     for connected_id in connected_ids:
                         if connected_id not in candidates:
@@ -506,7 +511,9 @@ class MemoryEngine:
                         mem_ids = self.graph.get_memories_about("Person", ename)
                         person_memory_ids.update(mem_ids)
                     except Exception as e:
-                        log.debug("person lookup failed", extra={"op": "recall", "data": {"person": ename, "error": str(e)}})
+                        log.debug(
+                            "person lookup failed", extra={"op": "recall", "data": {"person": ename, "error": str(e)}}
+                        )
 
             # Identify profile memories about the matched person
             for mem_id in person_memory_ids:
@@ -601,14 +608,20 @@ class MemoryEngine:
                 try:
                     self.vector.delete(memory_id)
                 except Exception as e:
-                    log.debug("vector delete failed during update", extra={"op": "update", "data": {"id": memory_id, "error": str(e)}})
+                    log.debug(
+                        "vector delete failed during update",
+                        extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
+                    )
                 self.vector.add(memory_id, summary)
 
                 # 4. Link active → snapshot via SUPERSEDES in graph
                 try:
                     self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
                 except Exception as e:
-                    log.debug("graph SUPERSEDES link failed", extra={"op": "update", "data": {"id": memory_id, "error": str(e)}})
+                    log.debug(
+                        "graph SUPERSEDES link failed",
+                        extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
+                    )
 
             # 5. Link entities and relationships in graph
             if entities:
@@ -632,7 +645,9 @@ class MemoryEngine:
                         try:
                             self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
                         except Exception as e:
-                            log.debug("graph edge failed", extra={"op": "update", "data": {"edge": edge, "error": str(e)}})
+                            log.debug(
+                                "graph edge failed", extra={"op": "update", "data": {"edge": edge, "error": str(e)}}
+                            )
 
             timer.extra["snapshot_id"] = snapshot_id
             return {
@@ -652,7 +667,10 @@ class MemoryEngine:
             try:
                 self.vector.delete(memory_id)
             except Exception as e:
-                log.debug("vector delete failed during forget", extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}})
+                log.debug(
+                    "vector delete failed during forget",
+                    extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}},
+                )
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------
@@ -795,7 +813,9 @@ class MemoryEngine:
                         try:
                             self.graph.link_memory_to_memory(result["id"], "DERIVED_FROM", src_id)
                         except Exception as e:
-                            log.debug("graph DERIVED_FROM link failed", extra={"op": "reflect", "data": {"error": str(e)}})
+                            log.debug(
+                                "graph DERIVED_FROM link failed", extra={"op": "reflect", "data": {"error": str(e)}}
+                            )
 
             # Store marker to prevent duplicate reflection
             self.memorize(
