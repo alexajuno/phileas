@@ -129,13 +129,9 @@ class GraphStore:
         )
         self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
         self._conn.execute(
-            "CREATE REL TABLE IF NOT EXISTS REL "
-            "(FROM Entity TO Entity, edge_type STRING DEFAULT '')"
-        )
-        self._conn.execute(
-            "CREATE REL TABLE IF NOT EXISTS MEM_REL "
-            "(FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+            "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
         )
 
     def _has_table(self, table_name: str) -> bool:
@@ -177,17 +173,17 @@ class GraphStore:
             if not self._has_table(etype):
                 continue
             try:
-                result = self._conn.execute(
-                    f"MATCH (n:{etype}) RETURN n.name, n.props, n.aliases"
-                )
+                result = self._conn.execute(f"MATCH (n:{etype}) RETURN n.name, n.props, n.aliases")
                 while result.has_next():
                     row = result.get_next()
-                    entities.append({
-                        "name": row[0],
-                        "type": etype,
-                        "props": row[1] or "",
-                        "aliases": row[2] or "[]",
-                    })
+                    entities.append(
+                        {
+                            "name": row[0],
+                            "type": etype,
+                            "props": row[1] or "",
+                            "aliases": row[2] or "[]",
+                        }
+                    )
             except RuntimeError:
                 pass
 
@@ -204,9 +200,7 @@ class GraphStore:
         about_edges: list[dict] = []  # {memory_id, entity_type, entity_name}
         for etype, edge_name in _OLD_ABOUT_EDGES.items():
             try:
-                result = self._conn.execute(
-                    f"MATCH (m:Memory)-[:{edge_name}]->(e:{etype}) RETURN m.id, e.name"
-                )
+                result = self._conn.execute(f"MATCH (m:Memory)-[:{edge_name}]->(e:{etype}) RETURN m.id, e.name")
                 while result.has_next():
                     row = result.get_next()
                     about_edges.append({"memory_id": row[0], "entity_type": etype, "entity_name": row[1]})
@@ -217,16 +211,18 @@ class GraphStore:
         entity_edges: list[dict] = []  # {from_type, from_name, edge_type, to_type, to_name}
         for edge_name, from_t, to_t in _OLD_ENTITY_EDGES:
             try:
-                result = self._conn.execute(
-                    f"MATCH (a:{from_t})-[:{edge_name}]->(b:{to_t}) RETURN a.name, b.name"
-                )
+                result = self._conn.execute(f"MATCH (a:{from_t})-[:{edge_name}]->(b:{to_t}) RETURN a.name, b.name")
                 while result.has_next():
                     row = result.get_next()
-                    entity_edges.append({
-                        "from_type": from_t, "from_name": row[0],
-                        "edge_type": edge_name,
-                        "to_type": to_t, "to_name": row[1],
-                    })
+                    entity_edges.append(
+                        {
+                            "from_type": from_t,
+                            "from_name": row[0],
+                            "edge_type": edge_name,
+                            "to_type": to_t,
+                            "to_name": row[1],
+                        }
+                    )
             except RuntimeError:
                 pass
 
@@ -234,9 +230,7 @@ class GraphStore:
         mem_edges: list[dict] = []
         for edge_name in _OLD_MEMORY_EDGES:
             try:
-                result = self._conn.execute(
-                    f"MATCH (a:Memory)-[:{edge_name}]->(b:Memory) RETURN a.id, b.id"
-                )
+                result = self._conn.execute(f"MATCH (a:Memory)-[:{edge_name}]->(b:Memory) RETURN a.id, b.id")
                 while result.has_next():
                     row = result.get_next()
                     mem_edges.append({"from_id": row[0], "edge_type": edge_name, "to_id": row[1]})
@@ -245,21 +239,19 @@ class GraphStore:
 
         log.info(
             "Migration data collected",
-            extra={"data": {
-                "entities": len(entities),
-                "memories": len(memory_ids),
-                "about_edges": len(about_edges),
-                "entity_edges": len(entity_edges),
-                "mem_edges": len(mem_edges),
-            }},
+            extra={
+                "data": {
+                    "entities": len(entities),
+                    "memories": len(memory_ids),
+                    "about_edges": len(about_edges),
+                    "entity_edges": len(entity_edges),
+                    "mem_edges": len(mem_edges),
+                }
+            },
         )
 
         # 2. Drop old tables (edges first, then nodes)
-        old_edge_tables = (
-            list(_OLD_ABOUT_EDGES.values())
-            + [e[0] for e in _OLD_ENTITY_EDGES]
-            + _OLD_MEMORY_EDGES
-        )
+        old_edge_tables = list(_OLD_ABOUT_EDGES.values()) + [e[0] for e in _OLD_ENTITY_EDGES] + _OLD_MEMORY_EDGES
         for table in old_edge_tables:
             try:
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
@@ -285,21 +277,16 @@ class GraphStore:
         )
         self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
         self._conn.execute(
-            "CREATE REL TABLE IF NOT EXISTS REL "
-            "(FROM Entity TO Entity, edge_type STRING DEFAULT '')"
-        )
-        self._conn.execute(
-            "CREATE REL TABLE IF NOT EXISTS MEM_REL "
-            "(FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+            "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
         )
 
         # 4. Re-insert data
         for ent in entities:
             entity_id = _entity_id(ent["type"], ent["name"])
             self._conn.execute(
-                "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, "
-                "n.props = $props, n.aliases = $aliases",
+                "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props, n.aliases = $aliases",
                 parameters={
                     "id": entity_id,
                     "name": ent["name"],
@@ -323,21 +310,23 @@ class GraphStore:
             fid = _entity_id(ee["from_type"], ee["from_name"])
             tid = _entity_id(ee["to_type"], ee["to_name"])
             self._conn.execute(
-                "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) "
-                "CREATE (a)-[:REL {edge_type: $et}]->(b)",
+                "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
                 parameters={"fid": fid, "tid": tid, "et": ee["edge_type"]},
             )
 
         for me in mem_edges:
             self._conn.execute(
-                "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) "
-                "CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
+                "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
                 parameters={"fid": me["from_id"], "tid": me["to_id"], "et": me["edge_type"]},
             )
 
         log.info(
             "Migration complete — %d entities, %d memories, %d about, %d rel, %d mem_rel edges",
-            len(entities), len(memory_ids), len(about_edges), len(entity_edges), len(mem_edges),
+            len(entities),
+            len(memory_ids),
+            len(about_edges),
+            len(entity_edges),
+            len(mem_edges),
         )
 
     def _ensure_writable(self) -> bool:
@@ -400,8 +389,7 @@ class GraphStore:
                 default=[],
             )
         result = self._conn.execute(
-            "MATCH (n:Entity) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q "
-            "RETURN n.name AS name, n.type AS type",
+            "MATCH (n:Entity) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q RETURN n.name AS name, n.type AS type",
             parameters={"q": name_query},
         )
         results = []
@@ -532,16 +520,14 @@ class GraphStore:
         to_id = _entity_id(to_type, to_name)
         # Check existence
         count_result = self._conn.execute(
-            "MATCH (a:Entity {id: $fid})-[r:REL]->(b:Entity {id: $tid}) "
-            "WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
+            "MATCH (a:Entity {id: $fid})-[r:REL]->(b:Entity {id: $tid}) WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
         row = count_result.get_next()
         if row[0] > 0:
             return
         self._conn.execute(
-            "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) "
-            "CREATE (a)-[:REL {edge_type: $et}]->(b)",
+            "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
 
@@ -575,8 +561,7 @@ class GraphStore:
             )
         else:
             out_result = self._conn.execute(
-                "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) "
-                "RETURN b.name, b.type, r.edge_type",
+                "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.name, b.type, r.edge_type",
                 parameters={"eid": entity_id},
             )
         while out_result.has_next():
@@ -592,8 +577,7 @@ class GraphStore:
             )
         else:
             in_result = self._conn.execute(
-                "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) "
-                "RETURN b.name, b.type, r.edge_type",
+                "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) RETURN b.name, b.type, r.edge_type",
                 parameters={"eid": entity_id},
             )
         while in_result.has_next():
@@ -627,8 +611,7 @@ class GraphStore:
         if row[0] > 0:
             return
         self._conn.execute(
-            "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) "
-            "CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
+            "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
 
@@ -646,8 +629,7 @@ class GraphStore:
 
         # Outgoing REL edges (Entity → Entity)
         out_rel = self._conn.execute(
-            "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) "
-            "RETURN b.name, b.type, r.edge_type",
+            "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.name, b.type, r.edge_type",
             parameters={"eid": entity_id},
         )
         while out_rel.has_next():
@@ -656,8 +638,7 @@ class GraphStore:
 
         # Incoming REL edges (Entity → this Entity)
         in_rel = self._conn.execute(
-            "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) "
-            "RETURN b.name, b.type, r.edge_type",
+            "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) RETURN b.name, b.type, r.edge_type",
             parameters={"eid": entity_id},
         )
         while in_rel.has_next():
@@ -690,10 +671,13 @@ class GraphStore:
             total_nodes += result.get_next()[0]
 
         total_edges = 0
-        for edge_table, from_t, to_t in [("ABOUT", "Memory", "Entity"), ("REL", "Entity", "Entity"), ("MEM_REL", "Memory", "Memory")]:
-            result = self._conn.execute(
-                f"MATCH (a:{from_t})-[:{edge_table}]->(b:{to_t}) RETURN COUNT(*) AS cnt"
-            )
+        edge_tables = [
+            ("ABOUT", "Memory", "Entity"),
+            ("REL", "Entity", "Entity"),
+            ("MEM_REL", "Memory", "Memory"),
+        ]
+        for edge_table, from_t, to_t in edge_tables:
+            result = self._conn.execute(f"MATCH (a:{from_t})-[:{edge_table}]->(b:{to_t}) RETURN COUNT(*) AS cnt")
             total_edges += result.get_next()[0]
 
         return {"nodes": total_nodes, "edges": total_edges}
@@ -704,9 +688,7 @@ class GraphStore:
             return {"nodes": -1, "edges": -1}
 
         # Entity count by type
-        type_result = self._conn.execute(
-            "MATCH (n:Entity) RETURN n.type AS type, COUNT(*) AS cnt ORDER BY cnt DESC"
-        )
+        type_result = self._conn.execute("MATCH (n:Entity) RETURN n.type AS type, COUNT(*) AS cnt ORDER BY cnt DESC")
         entity_types = {}
         while type_result.has_next():
             row = type_result.get_next()

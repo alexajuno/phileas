@@ -170,8 +170,16 @@ def test_migration_from_old_schema(kuzu_path):
     db = kuzu.Database(str(kuzu_path))
     conn = kuzu.Connection(db)
 
-    conn.execute("CREATE NODE TABLE IF NOT EXISTS Person (name STRING, props STRING DEFAULT '', aliases STRING DEFAULT '[]', PRIMARY KEY (name))")
-    conn.execute("CREATE NODE TABLE IF NOT EXISTS Project (name STRING, props STRING DEFAULT '', aliases STRING DEFAULT '[]', PRIMARY KEY (name))")
+    person_ddl = (
+        "CREATE NODE TABLE IF NOT EXISTS Person "
+        "(name STRING, props STRING DEFAULT '', aliases STRING DEFAULT '[]', PRIMARY KEY (name))"
+    )
+    project_ddl = (
+        "CREATE NODE TABLE IF NOT EXISTS Project "
+        "(name STRING, props STRING DEFAULT '', aliases STRING DEFAULT '[]', PRIMARY KEY (name))"
+    )
+    conn.execute(person_ddl)
+    conn.execute(project_ddl)
     conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
     conn.execute("CREATE REL TABLE IF NOT EXISTS BUILDS (FROM Person TO Project)")
     conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT_PERSON (FROM Memory TO Person)")
