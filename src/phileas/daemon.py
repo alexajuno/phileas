@@ -10,9 +10,11 @@ Architecture:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import sys
+from collections import deque
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -23,6 +25,11 @@ from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
 from phileas.vector import VectorStore
+
+log = logging.getLogger("phileas.daemon")
+
+# Module-level reinforcement queue, initialized by start()
+_reinforce_queue: deque[dict] | None = None
 
 
 def _pid_path(config: PhileasConfig) -> Path:
@@ -237,8 +244,48 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     if foreground:
         print(f"Phileas daemon running on port {port} (PID {os.getpid()})")
 
-    # -- Cron thread: periodic reflection ---
+    # -- Background threads ---
     import threading
+
+    global _reinforce_queue
+    _reinforce_queue = deque()
+
+    def _reinforcement_loop():
+        import time
+
+        reinforce_cfg = config.reinforcement
+        while True:
+            if not _reinforce_queue:
+                time.sleep(1)
+                continue
+            item = _reinforce_queue.popleft()
+            try:
+                similar = vector.find_similar(
+                    item["summary"],
+                    floor=reinforce_cfg.floor,
+                    ceiling=reinforce_cfg.ceiling,
+                )
+                if similar:
+                    similar_id, sim_score = similar
+                    existing = db.get_item(similar_id)
+                    if existing and existing.status == "active" and existing.id != item["memory_id"]:
+                        db.reinforce_item(similar_id)
+                        log.info(
+                            "reinforced",
+                            extra={
+                                "op": "reinforce",
+                                "data": {
+                                    "target": similar_id,
+                                    "source": item["memory_id"],
+                                    "sim": round(sim_score, 3),
+                                },
+                            },
+                        )
+            except Exception as e:
+                log.debug("reinforcement failed", extra={"op": "reinforce", "data": {"error": str(e)}})
+
+    reinforce_thread = threading.Thread(target=_reinforcement_loop, daemon=True)
+    reinforce_thread.start()
 
     def _cron_loop():
         import time
@@ -262,7 +309,12 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
 def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | str:
     """Route a daemon request to the engine."""
-    if method == "memorize":
+    if method == "reinforce":
+        if _reinforce_queue is not None:
+            _reinforce_queue.append(params)
+            return {"queued": True}
+        return {"queued": False, "reason": "queue not initialized"}
+    elif method == "memorize":
         return engine.memorize(**params)
     elif method == "recall":
         return engine.recall(**params)

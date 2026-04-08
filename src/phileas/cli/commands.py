@@ -115,10 +115,7 @@ def remember(text: str, memory_type: str, importance: int | None):
         )
         if resp and resp.get("ok"):
             result = resp["result"]
-            if result.get("deduplicated"):
-                print_error(f"Duplicate detected -- existing memory: {result['summary']}")
-            else:
-                print_memory_stored(result)
+            print_memory_stored(result)
             if result.get("contradiction"):
                 c = result["contradiction"]
                 print_warning(f"Contradiction: {c.get('explanation', '')}")
@@ -329,10 +326,9 @@ def ingest(source: str):
                 auto_importance=False,
             )
             print_memory_stored(result)
-            if not result.get("deduplicated"):
-                stored += 1
+            stored += 1
 
-        print_success(f"Ingested {stored} new memories from source.")
+        print_success(f"Ingested {stored} memories from source.")
     except SystemExit:
         raise
     except Exception as exc:

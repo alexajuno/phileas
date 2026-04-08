@@ -43,10 +43,6 @@ def print_status(stats: dict) -> None:
 
 def print_memory_stored(result: dict) -> None:
     """Print confirmation after storing a memory."""
-    if result.get("deduplicated"):
-        print_warning(f"Duplicate detected -- existing memory: [{result['id'][:8]}] {result['summary']}")
-        return
-
     mem_id = result["id"][:8]
     summary = result["summary"]
     console.print(f"[green]Stored[/green] [{mem_id}] {summary}")

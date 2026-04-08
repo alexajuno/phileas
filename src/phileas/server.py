@@ -90,9 +90,6 @@ def memorize(
         auto_importance=False,  # MCP caller (Claude Code) provides importance
     )
 
-    if result.get("deduplicated"):
-        return f"Duplicate detected — existing memory: [{result['id']}] {result['summary']}"
-
     return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
 
 
@@ -139,10 +136,7 @@ def memorize_batch(memories: list | str) -> str:
             auto_importance=False,
         )
 
-        if result.get("deduplicated"):
-            results.append(f"Duplicate: [{result['id']}] {result['summary']}")
-        else:
-            results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
+        results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
 
     return f"Batch complete ({len(results)} items):\n" + "\n".join(f"  {r}" for r in results)
 
