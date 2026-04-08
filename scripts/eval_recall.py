@@ -62,14 +62,16 @@ Scoring:
     try:
         result = subprocess.run(
             ["claude", "--print", "--model", model, prompt],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         output = result.stdout.strip()
         # Extract JSON from output
         if "{" in output:
-            json_str = output[output.index("{"):output.rindex("}") + 1]
+            json_str = output[output.index("{") : output.rindex("}") + 1]
             return json.loads(json_str)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, ValueError):
+    except subprocess.TimeoutExpired, json.JSONDecodeError, ValueError:
         pass
     return {"score": 0, "reason": "judge failed"}
 
@@ -126,13 +128,15 @@ def run_assessment(top_k: int = 5, judge_model: str = "haiku", workers: int = 8)
             judgment = judgments.get((query, mem["id"]), {"score": 0, "reason": "missed"})
             score = judgment.get("score", 0)
             reason = judgment.get("reason", "")
-            query_scores.append({
-                "memory_type": mem["type"],
-                "recall_score": round(mem["score"], 3),
-                "judge_score": score,
-                "reason": reason,
-                "summary": mem["summary"][:80],
-            })
+            query_scores.append(
+                {
+                    "memory_type": mem["type"],
+                    "recall_score": round(mem["score"], 3),
+                    "judge_score": score,
+                    "reason": reason,
+                    "summary": mem["summary"][:80],
+                }
+            )
             total_score += score
             total_count += 1
             print(f"  judge={score}/5 recall={mem['score']:.3f} [{mem['type']:10}] {mem['summary'][:70]}")
@@ -142,7 +146,7 @@ def run_assessment(top_k: int = 5, judge_model: str = "haiku", workers: int = 8)
         print(f"  -> avg: {avg:.2f}/5")
 
     overall = round(total_score / total_count, 2) if total_count else 0
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Overall: {overall}/5 ({total_count} judgments)")
 
     return {"queries": results, "overall": overall, "total_judgments": total_count}
