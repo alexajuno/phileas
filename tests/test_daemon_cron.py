@@ -1,69 +1,102 @@
-"""Tests for daemon cron scheduling logic."""
+"""Tests for systemd timer management and graph inference."""
 
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from phileas.daemon import _cron_tick, _should_reflect
+from phileas.systemd import _UNITS, _phileas_bin
 
 
-def test_should_reflect_true_after_cutoff():
-    """Should reflect when it's past 11pm and no reflection exists today."""
-    now = datetime(2026, 4, 7, 23, 30, tzinfo=timezone.utc)
-    assert _should_reflect(now, last_reflected=None) is True
+def test_unit_definitions_exist():
+    """All expected timer units are defined."""
+    assert "phileas-reflect" in _UNITS
+    assert "phileas-infer" in _UNITS
+    for name, units in _UNITS.items():
+        assert "service" in units
+        assert "timer" in units
 
 
-def test_should_reflect_false_before_cutoff_first_time():
-    """Should not reflect before 11pm on first run (no yesterday data yet)."""
-    now = datetime(2026, 4, 7, 15, 0, tzinfo=timezone.utc)
-    assert _should_reflect(now, last_reflected=None) is False
+def test_reflect_timer_is_daily():
+    """Reflect timer should run daily at 11pm."""
+    timer_content = _UNITS["phileas-reflect"]["timer"]
+    assert "OnCalendar=*-*-* 23:00:00" in timer_content
+    assert "Persistent=true" in timer_content
 
 
-def test_should_reflect_false_if_already_done_today():
-    """Should not reflect if already reflected today."""
-    now = datetime(2026, 4, 7, 23, 30, tzinfo=timezone.utc)
-    last = "2026-04-07"
-    assert _should_reflect(now, last_reflected=last) is False
+def test_infer_timer_is_every_2h():
+    """Infer timer should run every 2 hours."""
+    timer_content = _UNITS["phileas-infer"]["timer"]
+    assert "OnCalendar=*-*-* 00/2:00:00" in timer_content
+    assert "Persistent=true" in timer_content
 
 
-def test_should_reflect_true_for_missed_yesterday():
-    """Should reflect if we missed yesterday."""
-    now = datetime(2026, 4, 8, 10, 0, tzinfo=timezone.utc)
-    last = "2026-04-06"  # Last reflected 2 days ago
-    assert _should_reflect(now, last_reflected=last) is True
+def test_service_uses_phileas_home(tmp_path):
+    """Service units should set PHILEAS_HOME environment variable."""
+    for name, units in _UNITS.items():
+        rendered = units["service"].format(bin="phileas", home=str(tmp_path))
+        assert f"PHILEAS_HOME={tmp_path}" in rendered
 
 
-def test_should_reflect_false_when_yesterday_done():
-    """Should not reflect before 11pm when yesterday is done."""
-    now = datetime(2026, 4, 8, 10, 0, tzinfo=timezone.utc)
-    last = "2026-04-07"  # Yesterday is done
-    assert _should_reflect(now, last_reflected=last) is False
+def test_phileas_bin_fallback():
+    """Should return some path even when phileas isn't on PATH."""
+    with patch("phileas.systemd.which", return_value=None):
+        result = _phileas_bin()
+        assert "phileas" in result
 
 
-def test_should_reflect_true_yesterday_done_after_cutoff():
-    """Should reflect on today after 11pm when yesterday is done."""
-    now = datetime(2026, 4, 8, 23, 30, tzinfo=timezone.utc)
-    last = "2026-04-07"
-    assert _should_reflect(now, last_reflected=last) is True
+def test_install_timers_writes_files(tmp_path):
+    """install_timers should write service and timer files."""
+    unit_dir = tmp_path / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+
+    with (
+        patch("phileas.systemd._unit_dir", return_value=unit_dir),
+        patch("phileas.systemd._phileas_bin", return_value="/usr/bin/phileas"),
+        patch("subprocess.run"),
+    ):
+        from phileas.systemd import install_timers
+
+        installed = install_timers(tmp_path)
+
+    assert len(installed) == 2
+    assert (unit_dir / "phileas-reflect.service").exists()
+    assert (unit_dir / "phileas-reflect.timer").exists()
+    assert (unit_dir / "phileas-infer.service").exists()
+    assert (unit_dir / "phileas-infer.timer").exists()
+
+    # Check service content
+    reflect_svc = (unit_dir / "phileas-reflect.service").read_text()
+    assert "/usr/bin/phileas reflect" in reflect_svc
 
 
-def test_cron_tick_calls_reflect():
-    """cron_tick should call engine.reflect when should_reflect is True."""
-    engine = MagicMock()
-    engine.reflect.return_value = [{"summary": "insight", "importance": 7}]
+def test_remove_timers_cleans_up(tmp_path):
+    """remove_timers should remove unit files."""
+    unit_dir = tmp_path / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "phileas-reflect.service").write_text("test")
+    (unit_dir / "phileas-reflect.timer").write_text("test")
 
-    with patch("phileas.daemon._should_reflect", return_value=True):
-        date_str = _cron_tick(engine, last_reflected=None)
+    with (
+        patch("phileas.systemd._unit_dir", return_value=unit_dir),
+        patch("subprocess.run"),
+    ):
+        from phileas.systemd import remove_timers
 
-    engine.reflect.assert_called_once()
-    assert date_str is not None
+        removed = remove_timers()
+
+    assert "phileas-reflect" in removed
+    assert not (unit_dir / "phileas-reflect.service").exists()
+    assert not (unit_dir / "phileas-reflect.timer").exists()
 
 
-def test_cron_tick_skips_when_not_needed():
-    """cron_tick should skip when should_reflect is False."""
-    engine = MagicMock()
+def test_timer_status_handles_missing():
+    """timer_status should handle missing timers gracefully."""
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout="inactive\n", returncode=3)
 
-    with patch("phileas.daemon._should_reflect", return_value=False):
-        date_str = _cron_tick(engine, last_reflected="2026-04-07")
+        from phileas.systemd import timer_status
 
-    engine.reflect.assert_not_called()
-    assert date_str is None
+        results = timer_status()
+
+    assert len(results) == 2
+    for r in results:
+        assert "name" in r
+        assert "active" in r

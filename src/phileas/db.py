@@ -239,6 +239,16 @@ class Database:
             ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    def get_items_since(self, since_iso: str, limit: int = 100) -> list[MemoryItem]:
+        """Get active memories created after a given ISO timestamp."""
+        rows = self.conn.execute(
+            """SELECT * FROM memory_items
+            WHERE status = 'active' AND created_at > ?
+            ORDER BY created_at ASC LIMIT ?""",
+            (since_iso, limit),
+        ).fetchall()
+        return [self._row_to_item(row) for row in rows]
+
     # --- Internal ---
 
     def reinforce_item(self, item_id: str) -> None:
