@@ -1,8 +1,13 @@
-"""KuzuDB graph store wrapper for entity relationship storage.
+"""KuzuDB graph store — dynamic schema for entity relationship storage.
 
-Node types: Person, Project, Place, Tool, Topic, Memory
-Edge types: BUILDS, KNOWS, WORKS_AT, USES, ABOUT_PERSON, ABOUT_PROJECT, ABOUT_PLACE,
-            ABOUT_TOOL, ABOUT_TOPIC, RELATES_TO, CONTRADICTS, CONSOLIDATED_INTO
+Schema (3 edge tables, 2 node tables):
+  Node: Entity(id STRING PK, name STRING, type STRING, props STRING, aliases STRING)
+  Node: Memory(id STRING PK)
+  Edge: ABOUT(Memory → Entity)           — links memories to entities
+  Edge: REL(Entity → Entity, edge_type)  — any entity↔entity relationship
+  Edge: MEM_REL(Memory → Memory, edge_type) — memory↔memory relationships
+
+Entity types and edge types are open — the LLM can use any strings.
 """
 
 import json
@@ -16,37 +21,10 @@ log = logging.getLogger("phileas.graph")
 
 DEFAULT_GRAPH_PATH = Path.home() / ".phileas" / "graph"
 
-# Node types that have a name + props schema
-ENTITY_NODE_TYPES = ["Person", "Project", "Place", "Tool", "Topic"]
 
-# All node types
-ALL_NODE_TYPES = ENTITY_NODE_TYPES + ["Memory"]
-
-# Relationship definitions: (edge_type, from_type, to_type)
-REL_DEFINITIONS = [
-    ("BUILDS", "Person", "Project"),
-    ("KNOWS", "Person", "Person"),
-    ("WORKS_AT", "Person", "Place"),
-    ("USES", "Project", "Tool"),
-    ("ABOUT_PERSON", "Memory", "Person"),
-    ("ABOUT_PROJECT", "Memory", "Project"),
-    ("ABOUT_PLACE", "Memory", "Place"),
-    ("ABOUT_TOOL", "Memory", "Tool"),
-    ("ABOUT_TOPIC", "Memory", "Topic"),
-    ("RELATES_TO", "Memory", "Memory"),
-    ("CONTRADICTS", "Memory", "Memory"),
-    ("CONSOLIDATED_INTO", "Memory", "Memory"),
-    ("SUPERSEDES", "Memory", "Memory"),
-]
-
-# Map entity type -> ABOUT edge type
-ABOUT_EDGE = {
-    "Person": "ABOUT_PERSON",
-    "Project": "ABOUT_PROJECT",
-    "Place": "ABOUT_PLACE",
-    "Tool": "ABOUT_TOOL",
-    "Topic": "ABOUT_TOPIC",
-}
+def _entity_id(node_type: str, name: str) -> str:
+    """Deterministic primary key for an entity: 'Type:Name'."""
+    return f"{node_type}:{name}"
 
 
 class GraphStore:
@@ -131,25 +109,225 @@ class GraphStore:
             return False
 
     def _init_schema(self) -> None:
-        """Create all node and relationship tables if they don't exist."""
-        # Entity nodes (name + props)
-        for node_type in ENTITY_NODE_TYPES:
-            self._conn.execute(
-                f"CREATE NODE TABLE IF NOT EXISTS {node_type} "
-                f"(name STRING, props STRING DEFAULT '', PRIMARY KEY (name))"
-            )
-            # Add aliases column if it doesn't exist (migration for existing DBs)
-            try:
-                self._conn.execute(f"ALTER TABLE {node_type} ADD aliases STRING DEFAULT '[]'")
-            except RuntimeError:
-                pass  # Column already exists
+        """Create node and edge tables if they don't exist.
 
-        # Memory nodes (id only)
+        Also detects the old schema (separate Person/Project/... tables)
+        and migrates data to the unified Entity table.
+        """
+        # Detect old schema: check if Person table exists
+        old_schema = self._has_table("Person")
+
+        if old_schema:
+            self._migrate_from_old_schema()
+            return
+
+        # New schema: create tables
+        self._conn.execute(
+            "CREATE NODE TABLE IF NOT EXISTS Entity "
+            "(id STRING, name STRING, type STRING, props STRING DEFAULT '', "
+            "aliases STRING DEFAULT '[]', PRIMARY KEY (id))"
+        )
         self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
+        self._conn.execute(
+            "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+        )
 
-        # Relationship tables
-        for edge_type, from_type, to_type in REL_DEFINITIONS:
-            self._conn.execute(f"CREATE REL TABLE IF NOT EXISTS {edge_type} (FROM {from_type} TO {to_type})")
+    def _has_table(self, table_name: str) -> bool:
+        """Check if a node table exists in the database."""
+        try:
+            self._conn.execute(f"MATCH (n:{table_name}) RETURN COUNT(*) LIMIT 1")
+            return True
+        except RuntimeError:
+            return False
+
+    def _migrate_from_old_schema(self) -> None:
+        """Migrate from old per-type tables to unified Entity + edge tables.
+
+        Old schema: Person, Project, Place, Tool, Topic node tables
+                    + 13 separate edge tables
+        New schema: Entity node table + ABOUT, REL, MEM_REL edge tables
+        """
+        log.info("Migrating graph from old schema to unified Entity schema...")
+
+        _OLD_ENTITY_TYPES = ["Person", "Project", "Place", "Tool", "Topic"]
+        _OLD_ABOUT_EDGES = {
+            "Person": "ABOUT_PERSON",
+            "Project": "ABOUT_PROJECT",
+            "Place": "ABOUT_PLACE",
+            "Tool": "ABOUT_TOOL",
+            "Topic": "ABOUT_TOPIC",
+        }
+        _OLD_ENTITY_EDGES = [
+            ("BUILDS", "Person", "Project"),
+            ("KNOWS", "Person", "Person"),
+            ("WORKS_AT", "Person", "Place"),
+            ("USES", "Project", "Tool"),
+        ]
+        _OLD_MEMORY_EDGES = ["RELATES_TO", "CONTRADICTS", "CONSOLIDATED_INTO", "SUPERSEDES"]
+
+        # 1. Read all data from old tables
+        entities: list[dict] = []  # {name, type, props, aliases}
+        for etype in _OLD_ENTITY_TYPES:
+            if not self._has_table(etype):
+                continue
+            try:
+                result = self._conn.execute(f"MATCH (n:{etype}) RETURN n.name, n.props, n.aliases")
+                while result.has_next():
+                    row = result.get_next()
+                    entities.append(
+                        {
+                            "name": row[0],
+                            "type": etype,
+                            "props": row[1] or "",
+                            "aliases": row[2] or "[]",
+                        }
+                    )
+            except RuntimeError:
+                pass
+
+        # Memory nodes
+        memory_ids: list[str] = []
+        try:
+            result = self._conn.execute("MATCH (m:Memory) RETURN m.id")
+            while result.has_next():
+                memory_ids.append(result.get_next()[0])
+        except RuntimeError:
+            pass
+
+        # ABOUT edges
+        about_edges: list[dict] = []  # {memory_id, entity_type, entity_name}
+        for etype, edge_name in _OLD_ABOUT_EDGES.items():
+            try:
+                result = self._conn.execute(f"MATCH (m:Memory)-[:{edge_name}]->(e:{etype}) RETURN m.id, e.name")
+                while result.has_next():
+                    row = result.get_next()
+                    about_edges.append({"memory_id": row[0], "entity_type": etype, "entity_name": row[1]})
+            except RuntimeError:
+                pass
+
+        # Entity↔entity edges
+        entity_edges: list[dict] = []  # {from_type, from_name, edge_type, to_type, to_name}
+        for edge_name, from_t, to_t in _OLD_ENTITY_EDGES:
+            try:
+                result = self._conn.execute(f"MATCH (a:{from_t})-[:{edge_name}]->(b:{to_t}) RETURN a.name, b.name")
+                while result.has_next():
+                    row = result.get_next()
+                    entity_edges.append(
+                        {
+                            "from_type": from_t,
+                            "from_name": row[0],
+                            "edge_type": edge_name,
+                            "to_type": to_t,
+                            "to_name": row[1],
+                        }
+                    )
+            except RuntimeError:
+                pass
+
+        # Memory↔memory edges
+        mem_edges: list[dict] = []
+        for edge_name in _OLD_MEMORY_EDGES:
+            try:
+                result = self._conn.execute(f"MATCH (a:Memory)-[:{edge_name}]->(b:Memory) RETURN a.id, b.id")
+                while result.has_next():
+                    row = result.get_next()
+                    mem_edges.append({"from_id": row[0], "edge_type": edge_name, "to_id": row[1]})
+            except RuntimeError:
+                pass
+
+        log.info(
+            "Migration data collected",
+            extra={
+                "data": {
+                    "entities": len(entities),
+                    "memories": len(memory_ids),
+                    "about_edges": len(about_edges),
+                    "entity_edges": len(entity_edges),
+                    "mem_edges": len(mem_edges),
+                }
+            },
+        )
+
+        # 2. Drop old tables (edges first, then nodes)
+        old_edge_tables = list(_OLD_ABOUT_EDGES.values()) + [e[0] for e in _OLD_ENTITY_EDGES] + _OLD_MEMORY_EDGES
+        for table in old_edge_tables:
+            try:
+                self._conn.execute(f"DROP TABLE IF EXISTS {table}")
+            except RuntimeError:
+                pass
+
+        for etype in _OLD_ENTITY_TYPES:
+            try:
+                self._conn.execute(f"DROP TABLE IF EXISTS {etype}")
+            except RuntimeError:
+                pass
+
+        try:
+            self._conn.execute("DROP TABLE IF EXISTS Memory")
+        except RuntimeError:
+            pass
+
+        # 3. Create new tables
+        self._conn.execute(
+            "CREATE NODE TABLE IF NOT EXISTS Entity "
+            "(id STRING, name STRING, type STRING, props STRING DEFAULT '', "
+            "aliases STRING DEFAULT '[]', PRIMARY KEY (id))"
+        )
+        self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
+        self._conn.execute(
+            "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+        )
+
+        # 4. Re-insert data
+        for ent in entities:
+            entity_id = _entity_id(ent["type"], ent["name"])
+            self._conn.execute(
+                "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props, n.aliases = $aliases",
+                parameters={
+                    "id": entity_id,
+                    "name": ent["name"],
+                    "type": ent["type"],
+                    "props": ent["props"],
+                    "aliases": ent["aliases"],
+                },
+            )
+
+        for mid in memory_ids:
+            self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": mid})
+
+        for ae in about_edges:
+            eid = _entity_id(ae["entity_type"], ae["entity_name"])
+            self._conn.execute(
+                "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) CREATE (m)-[:ABOUT]->(e)",
+                parameters={"mid": ae["memory_id"], "eid": eid},
+            )
+
+        for ee in entity_edges:
+            fid = _entity_id(ee["from_type"], ee["from_name"])
+            tid = _entity_id(ee["to_type"], ee["to_name"])
+            self._conn.execute(
+                "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
+                parameters={"fid": fid, "tid": tid, "et": ee["edge_type"]},
+            )
+
+        for me in mem_edges:
+            self._conn.execute(
+                "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
+                parameters={"fid": me["from_id"], "tid": me["to_id"], "et": me["edge_type"]},
+            )
+
+        log.info(
+            "Migration complete — %d entities, %d memories, %d about, %d rel, %d mem_rel edges",
+            len(entities),
+            len(memory_ids),
+            len(about_edges),
+            len(entity_edges),
+            len(mem_edges),
+        )
 
     def _ensure_writable(self) -> bool:
         """Return True if connected in read-write mode."""
@@ -158,57 +336,161 @@ class GraphStore:
     def close(self) -> None:
         """No-op — KuzuDB connections close automatically on GC."""
 
+    # ------------------------------------------------------------------
+    # Entity node operations
+    # ------------------------------------------------------------------
+
     def upsert_node(self, node_type: str, name: str, props: dict[str, Any] | None = None) -> None:
         """Insert or update an entity node.
 
         Parameters
         ----------
         node_type:
-            One of Person, Project, Place, Tool, Topic.
+            Any string (e.g., Person, Project, Company, Language).
         name:
-            Primary key for the node.
+            Display name for the entity.
         props:
             Optional dict of additional properties, serialised to JSON.
         """
         if not self._ensure_writable():
             self._daemon_graph_write(
                 "upsert_node",
-                {
-                    "node_type": node_type,
-                    "name": name,
-                    "props": props,
-                },
+                {"node_type": node_type, "name": name, "props": props},
             )
             return
-        if node_type not in ENTITY_NODE_TYPES:
-            raise ValueError(f"Unknown node type: {node_type!r}. Must be one of {ENTITY_NODE_TYPES}")
+        entity_id = _entity_id(node_type, name)
         props_str = json.dumps(props) if props else ""
         self._conn.execute(
-            f"MERGE (n:{node_type} {{name: $name}}) SET n.props = $props",
-            parameters={"name": name, "props": props_str},
+            "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props",
+            parameters={"id": entity_id, "name": name, "type": node_type, "props": props_str},
         )
 
     def find_nodes(self, node_type: str, name: str) -> list[dict[str, Any]]:
-        """Return nodes matching an exact name (for testing / lookup).
-
-        Parameters
-        ----------
-        node_type:
-            One of the entity node types.
-        name:
-            Exact name to look up.
-        """
+        """Return nodes matching an exact type + name."""
         if not self._ensure_connected():
             return []
+        entity_id = _entity_id(node_type, name)
         result = self._conn.execute(
-            f"MATCH (n:{node_type} {{name: $name}}) RETURN n.name AS name, n.props AS props",
-            parameters={"name": name},
+            "MATCH (n:Entity {id: $id}) RETURN n.name AS name, n.type AS type, n.props AS props",
+            parameters={"id": entity_id},
         )
         rows = []
         while result.has_next():
             row = result.get_next()
-            rows.append({"name": row[0], "props": row[1]})
+            rows.append({"name": row[0], "type": row[1], "props": row[2]})
         return rows
+
+    def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
+        """Search entity nodes by name or alias using CONTAINS match."""
+        if not self._ensure_connected():
+            return self._daemon_graph_read(
+                "search_nodes",
+                {"query": name_query},
+                default=[],
+            )
+        result = self._conn.execute(
+            "MATCH (n:Entity) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q RETURN n.name AS name, n.type AS type",
+            parameters={"q": name_query},
+        )
+        results = []
+        while result.has_next():
+            row = result.get_next()
+            results.append({"name": row[0], "type": row[1]})
+        return results
+
+    def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
+        """Set aliases for an entity node (e.g., "mom" for a Person)."""
+        if not self._ensure_writable():
+            return
+        entity_id = _entity_id(node_type, name)
+        aliases_str = json.dumps(aliases)
+        self._conn.execute(
+            "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases",
+            parameters={"id": entity_id, "aliases": aliases_str},
+        )
+
+    # ------------------------------------------------------------------
+    # Memory ↔ Entity edges (ABOUT)
+    # ------------------------------------------------------------------
+
+    def link_memory(self, memory_id: str, entity_type: str, entity_name: str) -> None:
+        """Link a Memory node to an Entity via an ABOUT edge.
+
+        Creates both nodes if they don't exist.
+        """
+        if not self._ensure_writable():
+            self._daemon_graph_write(
+                "link_memory",
+                {
+                    "memory_id": memory_id,
+                    "entity_type": entity_type,
+                    "entity_name": entity_name,
+                },
+            )
+            return
+        entity_id = _entity_id(entity_type, entity_name)
+        # Ensure both nodes exist
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": memory_id})
+        self._conn.execute(
+            "MERGE (e:Entity {id: $eid}) SET e.name = $name, e.type = $type",
+            parameters={"eid": entity_id, "name": entity_name, "type": entity_type},
+        )
+        # Idempotent edge
+        count_result = self._conn.execute(
+            "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity {id: $eid}) RETURN COUNT(*) AS cnt",
+            parameters={"mid": memory_id, "eid": entity_id},
+        )
+        row = count_result.get_next()
+        if row[0] > 0:
+            return
+        self._conn.execute(
+            "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) CREATE (m)-[:ABOUT]->(e)",
+            parameters={"mid": memory_id, "eid": entity_id},
+        )
+
+    def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
+        """Return memory IDs linked to the given entity."""
+        if not self._ensure_connected():
+            return self._daemon_graph_read(
+                "get_memories_about",
+                {"entity_type": entity_type, "entity_name": entity_name},
+                default=[],
+            )
+        entity_id = _entity_id(entity_type, entity_name)
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
+            parameters={"eid": entity_id},
+        )
+        ids = []
+        while result.has_next():
+            row = result.get_next()
+            ids.append(row[0])
+        return ids
+
+    def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
+        """Find all entities linked to a memory via ABOUT edges.
+
+        Returns [{"name": str, "type": str}].
+        """
+        if not self._ensure_connected():
+            return self._daemon_graph_read(
+                "get_entities_for_memory",
+                {"memory_id": memory_id},
+                default=[],
+            )
+        result = self._conn.execute(
+            "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity) RETURN e.name, e.type",
+            parameters={"mid": memory_id},
+        )
+        results = []
+        while result.has_next():
+            row = result.get_next()
+            results.append({"name": row[0], "type": row[1]})
+        return results
+
+    # ------------------------------------------------------------------
+    # Entity ↔ Entity edges (REL)
+    # ------------------------------------------------------------------
 
     def create_edge(
         self,
@@ -218,9 +500,9 @@ class GraphStore:
         to_type: str,
         to_name: str,
     ) -> None:
-        """Create an edge between two nodes, idempotently.
+        """Create a typed edge between two entities, idempotently.
 
-        If the edge already exists, this is a no-op.
+        Any edge_type string is accepted (BUILDS, KNOWS, LIKES, etc.).
         """
         if not self._ensure_writable():
             self._daemon_graph_write(
@@ -234,67 +516,86 @@ class GraphStore:
                 },
             )
             return
-        # Check existence first
-        check_q = (
-            f"MATCH (a:{from_type} {{name: $from_name}})-[r:{edge_type}]->"
-            f"(b:{to_type} {{name: $to_name}}) RETURN COUNT(*) AS cnt"
-        )
+        from_id = _entity_id(from_type, from_name)
+        to_id = _entity_id(to_type, to_name)
+        # Check existence
         count_result = self._conn.execute(
-            check_q,
-            parameters={"from_name": from_name, "to_name": to_name},
+            "MATCH (a:Entity {id: $fid})-[r:REL]->(b:Entity {id: $tid}) WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
+            parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
         row = count_result.get_next()
         if row[0] > 0:
-            return  # Already exists
+            return
         self._conn.execute(
-            f"MATCH (a:{from_type} {{name: $from_name}}), (b:{to_type} {{name: $to_name}}) "
-            f"CREATE (a)-[:{edge_type}]->(b)",
-            parameters={"from_name": from_name, "to_name": to_name},
+            "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
+            parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
 
-    def link_memory(self, memory_id: str, entity_type: str, entity_name: str) -> None:
-        """Link a Memory node to an entity via an ABOUT_* edge.
+    def get_related_entities(
+        self,
+        entity_type: str,
+        entity_name: str,
+        edge_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return entities connected to the given entity via REL edges.
 
-        Creates the Memory node if it does not exist.
+        Follows both outgoing and incoming edges. Optionally filter by edge_type.
+
+        Returns [{"name": str, "type": str, "edge_type": str, "direction": "out"|"in"}].
         """
-        if not self._ensure_writable():
-            self._daemon_graph_write(
-                "link_memory",
-                {
-                    "memory_id": memory_id,
-                    "entity_type": entity_type,
-                    "entity_name": entity_name,
-                },
+        if not self._ensure_connected():
+            return self._daemon_graph_read(
+                "get_related_entities",
+                {"entity_type": entity_type, "entity_name": entity_name, "edge_type": edge_type},
+                default=[],
             )
-            return
-        if entity_type not in ABOUT_EDGE:
-            raise ValueError(f"Cannot link memory to unknown entity type: {entity_type!r}")
-        edge_type = ABOUT_EDGE[entity_type]
-        # Ensure memory node exists
-        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": memory_id})
-        # Idempotent edge
-        count_result = self._conn.execute(
-            f"MATCH (m:Memory {{id: $mid}})-[:{edge_type}]->(e:{entity_type} {{name: $ename}}) RETURN COUNT(*) AS cnt",
-            parameters={"mid": memory_id, "ename": entity_name},
-        )
-        row = count_result.get_next()
-        if row[0] > 0:
-            return
-        self._conn.execute(
-            f"MATCH (m:Memory {{id: $mid}}), (e:{entity_type} {{name: $ename}}) CREATE (m)-[:{edge_type}]->(e)",
-            parameters={"mid": memory_id, "ename": entity_name},
-        )
+        entity_id = _entity_id(entity_type, entity_name)
+        results = []
+
+        # Outgoing
+        if edge_type:
+            out_result = self._conn.execute(
+                "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) "
+                "WHERE r.edge_type = $et RETURN b.name, b.type, r.edge_type",
+                parameters={"eid": entity_id, "et": edge_type},
+            )
+        else:
+            out_result = self._conn.execute(
+                "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.name, b.type, r.edge_type",
+                parameters={"eid": entity_id},
+            )
+        while out_result.has_next():
+            row = out_result.get_next()
+            results.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "out"})
+
+        # Incoming
+        if edge_type:
+            in_result = self._conn.execute(
+                "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) "
+                "WHERE r.edge_type = $et RETURN b.name, b.type, r.edge_type",
+                parameters={"eid": entity_id, "et": edge_type},
+            )
+        else:
+            in_result = self._conn.execute(
+                "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) RETURN b.name, b.type, r.edge_type",
+                parameters={"eid": entity_id},
+            )
+        while in_result.has_next():
+            row = in_result.get_next()
+            results.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "in"})
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Memory ↔ Memory edges (MEM_REL)
+    # ------------------------------------------------------------------
 
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
-        """Create an edge between two Memory nodes, matched by id."""
+        """Create an edge between two Memory nodes with a given edge_type."""
         if not self._ensure_writable():
             self._daemon_graph_write(
                 "link_memory_to_memory",
-                {
-                    "from_id": from_id,
-                    "edge_type": edge_type,
-                    "to_id": to_id,
-                },
+                {"from_id": from_id, "edge_type": edge_type, "to_id": to_id},
             )
             return
         # Ensure both Memory nodes exist
@@ -302,168 +603,117 @@ class GraphStore:
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": to_id})
         # Check existence
         count_result = self._conn.execute(
-            f"MATCH (a:Memory {{id: $fid}})-[:{edge_type}]->(b:Memory {{id: $tid}}) RETURN COUNT(*) AS cnt",
-            parameters={"fid": from_id, "tid": to_id},
+            "MATCH (a:Memory {id: $fid})-[r:MEM_REL]->(b:Memory {id: $tid}) "
+            "WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
+            parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
         row = count_result.get_next()
         if row[0] > 0:
             return
         self._conn.execute(
-            f"MATCH (a:Memory {{id: $fid}}), (b:Memory {{id: $tid}}) CREATE (a)-[:{edge_type}]->(b)",
-            parameters={"fid": from_id, "tid": to_id},
+            "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
+            parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
+
+    # ------------------------------------------------------------------
+    # Neighborhood (general traversal)
+    # ------------------------------------------------------------------
 
     def get_neighborhood(self, node_type: str, name: str, depth: int = 1) -> list[dict[str, Any]]:
-        """Return nodes connected to the given node within the specified depth.
-
-        Only direct neighbours (depth=1) are currently returned as KuzuDB
-        variable-length traversal syntax differs from Neo4j.
-        """
+        """Return nodes connected to the given entity within the specified depth."""
         if not self._ensure_connected():
             return []
-        # Query outgoing edges
-        out_result = self._conn.execute(
-            f"MATCH (n:{node_type} {{name: $name}})-[r]->(m) RETURN m, label(m) AS lbl",
-            parameters={"name": name},
-        )
-        neighbors = []
-        while out_result.has_next():
-            row = out_result.get_next()
-            node_data = row[0]
-            label = row[1]
-            entry = {"label": label}
-            if "name" in node_data:
-                entry["name"] = node_data["name"]
-            if "id" in node_data:
-                entry["id"] = node_data["id"]
-            neighbors.append(entry)
+        entity_id = _entity_id(node_type, name)
 
-        # Query incoming edges
-        in_result = self._conn.execute(
-            f"MATCH (m)-[r]->(n:{node_type} {{name: $name}}) RETURN m, label(m) AS lbl",
-            parameters={"name": name},
+        neighbors = []
+
+        # Outgoing REL edges (Entity → Entity)
+        out_rel = self._conn.execute(
+            "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.name, b.type, r.edge_type",
+            parameters={"eid": entity_id},
         )
-        while in_result.has_next():
-            row = in_result.get_next()
-            node_data = row[0]
-            label = row[1]
-            entry = {"label": label}
-            if "name" in node_data:
-                entry["name"] = node_data["name"]
-            if "id" in node_data:
-                entry["id"] = node_data["id"]
-            neighbors.append(entry)
+        while out_rel.has_next():
+            row = out_rel.get_next()
+            neighbors.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "out"})
+
+        # Incoming REL edges (Entity → this Entity)
+        in_rel = self._conn.execute(
+            "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) RETURN b.name, b.type, r.edge_type",
+            parameters={"eid": entity_id},
+        )
+        while in_rel.has_next():
+            row = in_rel.get_next()
+            neighbors.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "in"})
+
+        # Incoming ABOUT edges (Memory → this Entity)
+        about_result = self._conn.execute(
+            "MATCH (m:Memory)-[:ABOUT]->(a:Entity {id: $eid}) RETURN m.id",
+            parameters={"eid": entity_id},
+        )
+        while about_result.has_next():
+            row = about_result.get_next()
+            neighbors.append({"id": row[0], "label": "Memory", "direction": "in"})
 
         return neighbors
 
-    def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
-        """Return memory IDs linked to the given entity.
-
-        Parameters
-        ----------
-        entity_type:
-            One of Person, Project, Place, Tool, Topic.
-        entity_name:
-            Name of the entity node.
-        """
-        if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "get_memories_about",
-                {"entity_type": entity_type, "entity_name": entity_name},
-                default=[],
-            )
-        if entity_type not in ABOUT_EDGE:
-            raise ValueError(f"Unknown entity type: {entity_type!r}")
-        edge_type = ABOUT_EDGE[entity_type]
-        result = self._conn.execute(
-            f"MATCH (m:Memory)-[:{edge_type}]->(e:{entity_type} {{name: $name}}) RETURN m.id",
-            parameters={"name": entity_name},
-        )
-        ids = []
-        while result.has_next():
-            row = result.get_next()
-            ids.append(row[0])
-        return ids
-
-    def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
-        """Set aliases for an entity node (e.g., "mom", "mẹ" for a Person)."""
-        if not self._ensure_writable():
-            return
-        if node_type not in ENTITY_NODE_TYPES:
-            raise ValueError(f"Unknown node type: {node_type!r}")
-        aliases_str = json.dumps(aliases)
-        self._conn.execute(
-            f"MATCH (n:{node_type} {{name: $name}}) SET n.aliases = $aliases",
-            parameters={"name": name, "aliases": aliases_str},
-        )
-
-    def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
-        """Search entity nodes by name or alias using CONTAINS match.
-
-        Parameters
-        ----------
-        name_query:
-            Substring to match against node names and aliases.
-        """
-        if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "search_nodes",
-                {"query": name_query},
-                default=[],
-            )
-        parts = []
-        for node_type in ENTITY_NODE_TYPES:
-            parts.append(
-                f"MATCH (n:{node_type}) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q "
-                f"RETURN n.name AS name, '{node_type}' AS type"
-            )
-        union_query = " UNION ".join(parts)
-        result = self._conn.execute(union_query, parameters={"q": name_query})
-        results = []
-        while result.has_next():
-            row = result.get_next()
-            results.append({"name": row[0], "type": row[1]})
-        return results
-
-    def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
-        """Find all entities linked to a memory via ABOUT_* edges.
-
-        Returns [{"name": str, "type": str}].
-        """
-        if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "get_entities_for_memory",
-                {"memory_id": memory_id},
-                default=[],
-            )
-        results = []
-        for entity_type, edge_type in ABOUT_EDGE.items():
-            try:
-                result = self._conn.execute(
-                    f"MATCH (m:Memory {{id: $mid}})-[:{edge_type}]->(e:{entity_type}) RETURN e.name",
-                    parameters={"mid": memory_id},
-                )
-                while result.has_next():
-                    row = result.get_next()
-                    results.append({"name": row[0], "type": entity_type})
-            except Exception:
-                continue
-        return results
+    # ------------------------------------------------------------------
+    # Stats
+    # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, int]:
-        """Return total node and edge counts across all tables."""
+        """Return total node and edge counts."""
         if not self._ensure_connected():
-            return {"nodes": -1, "edges": -1}  # -1 = unavailable (locked)
+            return {"nodes": -1, "edges": -1}
+
         total_nodes = 0
-        for node_type in ALL_NODE_TYPES:
-            result = self._conn.execute(f"MATCH (n:{node_type}) RETURN COUNT(*) AS cnt")
-            row = result.get_next()
-            total_nodes += row[0]
+        for table in ("Entity", "Memory"):
+            result = self._conn.execute(f"MATCH (n:{table}) RETURN COUNT(*) AS cnt")
+            total_nodes += result.get_next()[0]
 
         total_edges = 0
-        for edge_type, from_type, to_type in REL_DEFINITIONS:
-            result = self._conn.execute(f"MATCH (a:{from_type})-[:{edge_type}]->(b:{to_type}) RETURN COUNT(*) AS cnt")
-            row = result.get_next()
-            total_edges += row[0]
+        edge_tables = [
+            ("ABOUT", "Memory", "Entity"),
+            ("REL", "Entity", "Entity"),
+            ("MEM_REL", "Memory", "Memory"),
+        ]
+        for edge_table, from_t, to_t in edge_tables:
+            result = self._conn.execute(f"MATCH (a:{from_t})-[:{edge_table}]->(b:{to_t}) RETURN COUNT(*) AS cnt")
+            total_edges += result.get_next()[0]
 
         return {"nodes": total_nodes, "edges": total_edges}
+
+    def status(self) -> dict[str, Any]:
+        """Detailed stats: node counts by type, edge counts by table."""
+        if not self._ensure_connected():
+            return {"nodes": -1, "edges": -1}
+
+        # Entity count by type
+        type_result = self._conn.execute("MATCH (n:Entity) RETURN n.type AS type, COUNT(*) AS cnt ORDER BY cnt DESC")
+        entity_types = {}
+        while type_result.has_next():
+            row = type_result.get_next()
+            entity_types[row[0]] = row[1]
+
+        # Memory count
+        mem_result = self._conn.execute("MATCH (n:Memory) RETURN COUNT(*) AS cnt")
+        memory_count = mem_result.get_next()[0]
+
+        # Edge counts
+        about_result = self._conn.execute("MATCH ()-[:ABOUT]->() RETURN COUNT(*) AS cnt")
+        about_count = about_result.get_next()[0]
+
+        rel_result = self._conn.execute("MATCH ()-[:REL]->() RETURN COUNT(*) AS cnt")
+        rel_count = rel_result.get_next()[0]
+
+        mem_rel_result = self._conn.execute("MATCH ()-[:MEM_REL]->() RETURN COUNT(*) AS cnt")
+        mem_rel_count = mem_rel_result.get_next()[0]
+
+        return {
+            "entity_types": entity_types,
+            "memory_nodes": memory_count,
+            "about_edges": about_count,
+            "rel_edges": rel_count,
+            "mem_rel_edges": mem_rel_count,
+            "nodes": sum(entity_types.values()) + memory_count,
+            "edges": about_count + rel_count + mem_rel_count,
+        }

@@ -376,6 +376,12 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_memories_about(params["entity_type"], params["entity_name"])
         elif op == "search_nodes":
             return graph.search_nodes(params["query"])
+        elif op == "get_related_entities":
+            return graph.get_related_entities(
+                params["entity_type"],
+                params["entity_name"],
+                edge_type=params.get("edge_type"),
+            )
         elif op == "status":
             return graph.status()
         else:
