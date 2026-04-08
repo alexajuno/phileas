@@ -89,7 +89,7 @@ class MemoryEngine:
     ) -> dict:
         """Store a memory across all three backends.
 
-        Returns a dict with keys: id, summary, deduplicated.
+        Returns a dict with keys: id, summary.
         """
         with OpTimer(
             log,
@@ -99,28 +99,7 @@ class MemoryEngine:
             entity_count=len(entities or []),
             relationship_count=len(relationships or []),
         ) as timer:
-            # 1. Deduplicate via ChromaDB
-            reinforce_cfg = self.config.reinforcement
-            duplicate_id = self.vector.find_duplicate(summary, threshold=reinforce_cfg.ceiling)
-            if duplicate_id:
-                existing = self.db.get_item(duplicate_id)
-                if existing and existing.status == "active":
-                    timer.extra["dedup"] = True
-                    return {"id": existing.id, "summary": existing.summary, "deduplicated": True}
-
-            # 1b. Reinforcement check: similar but not duplicate (0.70-0.94 band)
-            similar = self.vector.find_similar(summary, floor=reinforce_cfg.floor, ceiling=reinforce_cfg.ceiling)
-            reinforced_id = None
-            if similar:
-                similar_id, sim_score = similar
-                existing = self.db.get_item(similar_id)
-                if existing and existing.status == "active":
-                    self.db.reinforce_item(similar_id)
-                    reinforced_id = similar_id
-                    timer.extra["reinforced"] = similar_id
-                    timer.extra["reinforced_sim"] = round(sim_score, 3)
-
-            # 2. Default daily_ref to today
+            # 1. Default daily_ref to today
             if daily_ref is None:
                 daily_ref = date.today().isoformat()
 
@@ -174,13 +153,13 @@ class MemoryEngine:
                                 "graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}}
                             )
 
-            timer.extra["dedup"] = False
             timer.extra["id"] = item.id
 
+            # 5. Queue reinforcement check to daemon (async)
+            self._queue_reinforcement(item.id, summary)
+
             # 6. Check for contradictions with existing memories
-            result: dict = {"id": item.id, "summary": item.summary, "deduplicated": False}
-            if reinforced_id:
-                result["reinforced"] = reinforced_id
+            result: dict = {"id": item.id, "summary": item.summary}
             if self.llm.available:
                 from phileas.llm.contradiction import detect_contradictions
 
@@ -208,6 +187,19 @@ class MemoryEngine:
                 ).start()
 
             return result
+
+    def _queue_reinforcement(self, memory_id: str, summary: str) -> None:
+        """Fire-and-forget: notify daemon to check reinforcement asynchronously."""
+
+        def _notify():
+            try:
+                from phileas.daemon import call
+
+                call("reinforce", {"memory_id": memory_id, "summary": summary})
+            except Exception:
+                pass  # Best-effort; daemon may not be running
+
+        threading.Thread(target=_notify, daemon=True).start()
 
     def _bg_extract_entities(self, memory_id: str, summary: str) -> None:
         """Background thread: extract entities via LLM and link them."""
@@ -839,16 +831,16 @@ class MemoryEngine:
                     auto_importance=False,
                     daily_ref=target_date,
                 )
-                if not result.get("deduplicated"):
-                    stored.append(result)
-                    # Link insight to source memories in graph
-                    for src_id in source_ids[:10]:
-                        try:
-                            self.graph.link_memory_to_memory(result["id"], "DERIVED_FROM", src_id)
-                        except Exception as e:
-                            log.debug(
-                                "graph DERIVED_FROM link failed", extra={"op": "reflect", "data": {"error": str(e)}}
-                            )
+                stored.append(result)
+                # Link insight to source memories in graph
+                for src_id in source_ids[:10]:
+                    try:
+                        self.graph.link_memory_to_memory(result["id"], "DERIVED_FROM", src_id)
+                    except Exception as e:
+                        log.debug(
+                            "graph DERIVED_FROM link failed",
+                            extra={"op": "reflect", "data": {"error": str(e)}},
+                        )
 
             # Store marker to prevent duplicate reflection
             self.memorize(

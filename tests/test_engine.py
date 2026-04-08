@@ -51,11 +51,13 @@ def test_forget(tmp_dir):
     assert not any(r["id"] == result["id"] for r in results)
 
 
-def test_dedup_prevents_duplicates(tmp_dir):
+def test_no_inline_dedup(tmp_dir):
+    """Dedup was removed from memorize — similar memories are stored separately.
+    Reinforcement is handled asynchronously by the daemon."""
     engine = _make_engine(tmp_dir)
     r1 = engine.memorize(summary="Giao likes morning coffee")
     r2 = engine.memorize(summary="Giao enjoys morning coffee")
-    assert r2["id"] == r1["id"]
+    assert r2["id"] != r1["id"]
 
 
 def test_timeline(tmp_dir):
