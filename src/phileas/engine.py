@@ -202,7 +202,12 @@ class MemoryEngine:
         threading.Thread(target=_notify, daemon=True).start()
 
     def _bg_extract_entities(self, memory_id: str, summary: str) -> None:
-        """Background thread: extract entities via LLM and link them."""
+        """Background thread: extract entities via LLM and link them in the graph.
+
+        Only does graph operations (no SQLite/ChromaDB) to avoid cross-thread
+        issues with internal SQLite connections in dependencies like ChromaDB.
+        Graph writes proxy through the daemon when KuzuDB is locked.
+        """
         try:
             from phileas.llm.extraction import extract_entities
 
@@ -210,19 +215,46 @@ class MemoryEngine:
             entities = result.get("entities", [])
             relationships = result.get("relationships", [])
 
-            if entities or relationships:
-                self.update(memory_id, entities=entities, relationships=relationships)
-                log.info(
-                    "bg entity extraction",
-                    extra={
-                        "op": "bg_entity_extract",
-                        "data": {
-                            "memory_id": memory_id,
-                            "entities": len(entities),
-                            "relationships": len(relationships),
-                        },
+            if not entities and not relationships:
+                return
+
+            # Link entities directly in graph — avoids update() which touches
+            # SQLite/ChromaDB and triggers cross-thread sqlite3 errors.
+            for entity in entities:
+                name = entity.get("name")
+                etype = entity.get("type")
+                if name and etype:
+                    self.graph.upsert_node(etype, name)
+                    self.graph.link_memory(memory_id, etype, name)
+
+            for rel in relationships:
+                from_name = rel.get("from_name")
+                from_type = rel.get("from_type")
+                edge = rel.get("edge")
+                to_name = rel.get("to_name")
+                to_type = rel.get("to_type")
+                if from_name and from_type and edge and to_name and to_type:
+                    self.graph.upsert_node(from_type, from_name)
+                    self.graph.upsert_node(to_type, to_name)
+                    try:
+                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                    except Exception as e:
+                        log.debug(
+                            "bg graph edge failed",
+                            extra={"op": "bg_entity_extract", "data": {"edge": edge, "error": str(e)}},
+                        )
+
+            log.info(
+                "bg entity extraction",
+                extra={
+                    "op": "bg_entity_extract",
+                    "data": {
+                        "memory_id": memory_id,
+                        "entities": len(entities),
+                        "relationships": len(relationships),
                     },
-                )
+                },
+            )
         except Exception as e:
             log.warning(
                 "bg entity extraction failed",

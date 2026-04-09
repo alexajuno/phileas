@@ -133,6 +133,12 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     graph = GraphStore(path=config.graph_path, proxy_writes=False)
     engine = MemoryEngine(db=db, vector=vector, graph=graph, config=config)
 
+    # Eagerly initialize KuzuDB connection — the daemon is the single
+    # process that should hold the write lock. Lazy init can race with
+    # MCP server processes and leave the daemon's graph in a broken state.
+    if not graph._ensure_connected():
+        log.warning("Daemon failed to initialize KuzuDB connection")
+
     # Pre-warm the reranker by importing it
     try:
         from sentence_transformers import CrossEncoder

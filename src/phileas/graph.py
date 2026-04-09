@@ -91,9 +91,18 @@ class GraphStore:
         Tries read-write first. If the database is locked by another process,
         falls back to read-only mode. If that also fails (KuzuDB exclusive lock
         blocks shared locks in current versions), logs a warning.
+
+        If an existing connection is stale (query fails), resets and retries.
         """
         if self._conn is not None:
-            return True
+            # Verify the connection is still alive
+            try:
+                self._conn.execute("RETURN 1")
+                return True
+            except RuntimeError:
+                log.warning("KuzuDB connection stale — reconnecting")
+                self._conn = None
+                self._db = None
         # Try read-write first
         try:
             self._db = kuzu.Database(str(self._path))
