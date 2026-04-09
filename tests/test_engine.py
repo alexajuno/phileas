@@ -82,7 +82,7 @@ def test_reflect_returns_insights(tmp_dir, monkeypatch):
     """reflect() gathers today's memories and stores insights."""
     engine = _make_engine(tmp_dir)
     today = date.today().isoformat()
-    kw = dict(auto_importance=False, daily_ref=today)
+    kw = dict(daily_ref=today)
     engine.memorize("Set up CI/CD for project", memory_type="event", importance=7, **kw)
     engine.memorize("Fixed all lint errors", memory_type="event", importance=5, **kw)
     engine.memorize("Discovered token tracking bug", memory_type="event", importance=6, **kw)
@@ -104,9 +104,9 @@ def test_reflect_skips_if_already_reflected(tmp_dir, monkeypatch):
     """reflect() is idempotent — won't reflect twice on the same day."""
     engine = _make_engine(tmp_dir)
     today = date.today().isoformat()
-    engine.memorize("Something happened", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
-    engine.memorize("Another thing", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
-    engine.memorize("Third thing", memory_type="event", importance=5, auto_importance=False, daily_ref=today)
+    engine.memorize("Something happened", memory_type="event", importance=5, daily_ref=today)
+    engine.memorize("Another thing", memory_type="event", importance=5, daily_ref=today)
+    engine.memorize("Third thing", memory_type="event", importance=5, daily_ref=today)
 
     async def fake_reflect(client, d, memories):
         return [{"summary": "Daily insight", "importance": 6, "type": "reflection"}]

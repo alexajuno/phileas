@@ -109,8 +109,7 @@ def remember(text: str, memory_type: str, importance: int | None):
             {
                 "summary": text,
                 "memory_type": memory_type,
-                "importance": importance if importance is not None else 5,
-                "auto_importance": importance is None,
+                "importance": importance,
             },
         )
         if resp and resp.get("ok"):
@@ -125,8 +124,7 @@ def remember(text: str, memory_type: str, importance: int | None):
         result = engine.memorize(
             summary=text,
             memory_type=memory_type,
-            importance=importance if importance is not None else 5,
-            auto_importance=importance is None,
+            importance=importance,
         )
         print_memory_stored(result)
     except Exception as exc:
@@ -323,7 +321,6 @@ def ingest(source: str):
                 importance=mem.get("importance", 5),
                 entities=mem.get("entities"),
                 relationships=mem.get("relationships"),
-                auto_importance=False,
             )
             print_memory_stored(result)
             stored += 1
@@ -416,7 +413,6 @@ def consolidate(min_cluster: int, max_clusters: int):
                     memory_type="reflection",
                     importance=result["importance"],
                     tier=3,
-                    auto_importance=False,
                 )
                 console.print(f"  Cluster {i}: {result['summary'][:80]}...")
                 consolidated_count += 1

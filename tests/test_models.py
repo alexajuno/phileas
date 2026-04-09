@@ -13,7 +13,6 @@ def test_memory_item_defaults():
     assert item.status == "active"
     assert item.last_accessed is None
     assert item.consolidated_into is None
-    assert item.source_session_id is None
     assert item.id  # UUID generated
 
 

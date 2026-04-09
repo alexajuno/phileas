@@ -344,7 +344,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 importance=mem.get("importance", 5),
                 entities=mem.get("entities"),
                 relationships=mem.get("relationships"),
-                auto_importance=False,
             )
             results.append(result)
         return results

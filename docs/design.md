@@ -38,7 +38,7 @@ All three are **embedded** (library, no server, no Docker). Data linked by share
 
 - **What:** Individual facts, events, preferences, decisions extracted from Tier 1 or captured live
 - **Storage:** All three DBs (SQLite metadata + ChromaDB embeddings + KuzuDB entities/relationships)
-- **Fields:** summary, memory_type, importance (1-10), access_count, last_accessed, daily_ref, source_session_id
+- **Fields:** summary, memory_type, importance (1-10), access_count, last_accessed, daily_ref
 - **Lifecycle:** Permanent, subject to importance decay and eventual consolidation
 - **Memory types:** profile, event, knowledge, behavior, reflection
 

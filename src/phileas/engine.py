@@ -79,13 +79,11 @@ class MemoryEngine:
         self,
         summary: str,
         memory_type: str = "knowledge",
-        importance: int = 5,
+        importance: int | None = None,
         daily_ref: str | None = None,
-        source_session_id: str | None = None,
         tier: int = 2,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
-        auto_importance: bool = True,
         raw_text: str | None = None,
     ) -> dict:
         """Store a memory across all three backends.
@@ -104,6 +102,19 @@ class MemoryEngine:
             if daily_ref is None:
                 daily_ref = date.today().isoformat()
 
+            # 2. Auto-score importance via LLM if caller didn't provide one
+            if importance is None:
+                if self.llm.available:
+                    from phileas.llm.importance import score_importance
+
+                    try:
+                        importance = asyncio.run(score_importance(self.llm, summary, memory_type))
+                    except Exception as e:
+                        log.warning("auto-importance failed", extra={"op": "importance", "data": {"error": str(e)}})
+                        importance = 5
+                else:
+                    importance = 5
+
             # 3. Create and persist MemoryItem
             item = MemoryItem(
                 summary=summary,
@@ -111,18 +122,8 @@ class MemoryEngine:
                 importance=importance,
                 tier=tier,
                 daily_ref=daily_ref,
-                source_session_id=source_session_id,
                 raw_text=raw_text,
             )
-
-            # 3a. Auto-score importance via LLM (when caller didn't override)
-            if auto_importance and self.llm.available:
-                from phileas.llm.importance import score_importance
-
-                try:
-                    item.importance = asyncio.run(score_importance(self.llm, item.summary, item.memory_type))
-                except Exception as e:
-                    log.warning("auto-importance failed", extra={"op": "importance", "data": {"error": str(e)}})
 
             self.db.save_item(item)
 
@@ -883,7 +884,6 @@ class MemoryEngine:
                     summary=ins["summary"],
                     memory_type=ins.get("type", "reflection"),
                     importance=ins["importance"],
-                    auto_importance=False,
                     daily_ref=target_date,
                 )
                 stored.append(result)
@@ -905,7 +905,6 @@ class MemoryEngine:
                 ),
                 memory_type="knowledge",
                 importance=1,
-                auto_importance=False,
                 daily_ref=target_date,
             )
 
@@ -1031,7 +1030,6 @@ class MemoryEngine:
                     summary=summary,
                     memory_type=ins.get("memory_type", "inference"),
                     importance=ins.get("importance", 5),
-                    auto_importance=False,
                     daily_ref=date.today().isoformat(),
                 )
                 insights_stored += 1
@@ -1044,7 +1042,6 @@ class MemoryEngine:
                 ),
                 memory_type="knowledge",
                 importance=1,
-                auto_importance=False,
                 daily_ref=date.today().isoformat(),
             )
 

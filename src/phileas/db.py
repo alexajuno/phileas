@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
-    source_session_id TEXT,
     consolidated_into TEXT REFERENCES memory_items(id),
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
@@ -92,10 +91,10 @@ class Database:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
                (id, summary, memory_type, importance, tier, status,
-                access_count, last_accessed, daily_ref, source_session_id,
+                access_count, last_accessed, daily_ref,
                 consolidated_into, reinforcement_count, last_reinforced,
                 raw_text, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -106,7 +105,6 @@ class Database:
                 item.access_count,
                 item.last_accessed.isoformat() if item.last_accessed else None,
                 item.daily_ref,
-                item.source_session_id,
                 item.consolidated_into,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
@@ -202,7 +200,6 @@ class Database:
             access_count=item.access_count,
             last_accessed=item.last_accessed,
             daily_ref=item.daily_ref,
-            source_session_id=item.source_session_id,
             consolidated_into=item.consolidated_into,
             created_at=item.created_at,
         )
@@ -310,7 +307,6 @@ class Database:
             access_count=row["access_count"],
             last_accessed=last_accessed,
             daily_ref=row["daily_ref"],
-            source_session_id=row["source_session_id"],
             consolidated_into=row["consolidated_into"],
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,

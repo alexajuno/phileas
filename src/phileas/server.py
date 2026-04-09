@@ -93,7 +93,6 @@ def memorize(
         daily_ref=daily_ref,
         entities=parsed_entities,
         relationships=parsed_relationships,
-        auto_importance=False,  # MCP caller (Claude Code) provides importance
         raw_text=raw_text,
     )
 
@@ -140,7 +139,6 @@ def memorize_batch(memories: list | str) -> str:
             daily_ref=mem.get("daily_ref"),
             entities=parsed_entities,
             relationships=parsed_relationships,
-            auto_importance=False,
         )
 
         results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
