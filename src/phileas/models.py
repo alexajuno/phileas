@@ -47,5 +47,6 @@ class MemoryItem:
     consolidated_into: str | None = None  # memory ID of tier-3 parent
     reinforcement_count: int = 0  # how many similar memories arrived after this one
     last_reinforced: datetime | None = None
+    raw_text: str | None = None  # verbatim source text (conversation snippet, etc.)
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)

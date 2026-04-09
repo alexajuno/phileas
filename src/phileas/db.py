@@ -60,6 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 MIGRATIONS = [
     "ALTER TABLE memory_items ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE memory_items ADD COLUMN last_reinforced TEXT",
+    "ALTER TABLE memory_items ADD COLUMN raw_text TEXT",
 ]
 
 
@@ -93,8 +94,8 @@ class Database:
                (id, summary, memory_type, importance, tier, status,
                 access_count, last_accessed, daily_ref, source_session_id,
                 consolidated_into, reinforcement_count, last_reinforced,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                raw_text, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -109,6 +110,7 @@ class Database:
                 item.consolidated_into,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
+                item.raw_text,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
@@ -312,6 +314,7 @@ class Database:
             consolidated_into=row["consolidated_into"],
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
+            raw_text=row["raw_text"] if "raw_text" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

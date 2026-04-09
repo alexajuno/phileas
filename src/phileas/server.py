@@ -67,6 +67,7 @@ def memorize(
     daily_ref: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
+    raw_text: str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -79,6 +80,8 @@ def memorize(
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
         entities: List or JSON string of {"name": str, "type": str} objects to link in the graph.
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
+        raw_text: Verbatim conversation snippet or source text that this memory was extracted from.
+            Stored separately for raw retrieval — keeps details that summaries lose.
     """
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
@@ -91,6 +94,7 @@ def memorize(
         entities=parsed_entities,
         relationships=parsed_relationships,
         auto_importance=False,  # MCP caller (Claude Code) provides importance
+        raw_text=raw_text,
     )
 
     return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"

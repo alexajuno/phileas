@@ -86,6 +86,7 @@ class MemoryEngine:
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         auto_importance: bool = True,
+        raw_text: str | None = None,
     ) -> dict:
         """Store a memory across all three backends.
 
@@ -111,6 +112,7 @@ class MemoryEngine:
                 tier=tier,
                 daily_ref=daily_ref,
                 source_session_id=source_session_id,
+                raw_text=raw_text,
             )
 
             # 3a. Auto-score importance via LLM (when caller didn't override)
@@ -126,6 +128,10 @@ class MemoryEngine:
 
             # 4. Add to ChromaDB (with type metadata for future filtering)
             self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
+
+            # 4b. Store raw text in separate ChromaDB collection for verbatim retrieval
+            if raw_text:
+                self.vector.add_raw(item.id, raw_text, metadata={"memory_type": memory_type})
 
             # 5. Link entities and relationships in KuzuDB
             if entities:
@@ -420,6 +426,19 @@ class MemoryEngine:
                             extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
                         )
 
+            # Path 5: raw text search (verbatim conversation snippets)
+            # Searches the raw_memories ChromaDB collection — catches details
+            # lost during summarization (names, places, specific phrases).
+            for q in queries:
+                raw_hits = self.vector.search_raw(q, top_k=top_k * 3)
+                for mem_id, sim in raw_hits:
+                    if sim < self.config.recall.similarity_floor:
+                        continue
+                    if mem_id not in candidates:
+                        item = self.db.get_item(mem_id)
+                        if item:
+                            candidates[mem_id] = item
+
             # Apply filters
             filtered: dict[str, MemoryItem] = {}
             for mem_id, item in candidates.items():
@@ -707,6 +726,10 @@ class MemoryEngine:
                     "vector delete failed during forget",
                     extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}},
                 )
+            try:
+                self.vector.delete_raw(memory_id)
+            except Exception:
+                pass  # Raw text may not exist for this memory
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------
@@ -1045,6 +1068,7 @@ class MemoryEngine:
         return {
             **counts,
             "vector_count": self.vector.count(),
+            "raw_vector_count": self.vector.raw_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],
         }

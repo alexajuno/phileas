@@ -10,6 +10,7 @@ import chromadb
 
 DEFAULT_CHROMA_PATH = Path.home() / ".phileas" / "chroma"
 COLLECTION_NAME = "memories"
+RAW_COLLECTION_NAME = "raw_memories"
 
 
 class VectorStore:
@@ -18,6 +19,10 @@ class VectorStore:
         self._client = chromadb.PersistentClient(path=str(path))
         self._collection = self._client.get_or_create_collection(
             name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+        self._raw_collection = self._client.get_or_create_collection(
+            name=RAW_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -81,3 +86,27 @@ class VectorStore:
 
     def count(self) -> int:
         return self._collection.count()
+
+    # --- Raw text collection ---
+
+    def add_raw(self, memory_id: str, raw_text: str, metadata: dict | None = None) -> None:
+        """Store raw verbatim text for a memory."""
+        kwargs: dict = {"ids": [memory_id], "documents": [raw_text]}
+        if metadata:
+            kwargs["metadatas"] = [metadata]
+        self._raw_collection.upsert(**kwargs)
+
+    def search_raw(self, query: str, top_k: int = 5) -> list[tuple[str, float]]:
+        """Search raw text by semantic similarity. Returns [(memory_id, score)]."""
+        if self._raw_collection.count() == 0:
+            return []
+        results = self._raw_collection.query(query_texts=[query], n_results=min(top_k, self._raw_collection.count()))
+        ids = results["ids"][0] if results["ids"] else []
+        distances = results["distances"][0] if results["distances"] else []
+        return [(id_, 1.0 - dist) for id_, dist in zip(ids, distances)]
+
+    def delete_raw(self, memory_id: str) -> None:
+        self._raw_collection.delete(ids=[memory_id])
+
+    def raw_count(self) -> int:
+        return self._raw_collection.count()
