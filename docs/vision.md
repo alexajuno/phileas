@@ -8,17 +8,11 @@ The models themselves are increasingly good. What's missing is the layer around 
 
 ## What Phileas is
 
-Phileas is the infrastructure that makes a real AI companion possible:
+Phileas is the infrastructure that try to create an AI companion:
 
 - **Long-term memory** — not just storing conversations, but building a living understanding that evolves: facts consolidate, irrelevant details fade, connections form between experiences.
 - **Context retrieval** — surfacing the right memories at the right time, so the companion responds with awareness of your history, not just your last message.
 - **Real-time adaptation** — adjusting to who you are a few minutes ago, now, not who you were six months ago. People change. The companion should notice.
-
-## What Phileas is not
-
-- Not a model. It sits above whatever LLM you use.
-- Not a chatbot UI. It's the infrastructure that makes any interface capable of continuity.
-- Not a cloud service. It runs locally. Your memories stay yours.
 
 ## Design principles
 
@@ -31,8 +25,3 @@ Phileas is the infrastructure that makes a real AI companion possible:
 
 Phileas Fogg — a companion for the journey. Not a servant, not a tool. Someone who's present, who travels alongside you.
 
-## Current focus
-
-We're in the research phase, surveying the landscape of long-term memory architectures for AI agents. The [research survey](long-term-memory-research.md) covers the major approaches: memory streams, tiered storage, knowledge graphs, forgetting curves, and more.
-
-Next: reading through the research together and deciding which architectural patterns fit the companion use case.
