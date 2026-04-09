@@ -49,7 +49,7 @@ class GraphStore:
     gracefully degrade to no-ops.
     """
 
-    def __init__(self, path: Path = DEFAULT_GRAPH_PATH, proxy_writes: bool = True) -> None:
+    def __init__(self, path: Path = DEFAULT_GRAPH_PATH, proxy_writes: bool = True, proxy_all: bool = False) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db: kuzu.Database | None = None
@@ -57,6 +57,7 @@ class GraphStore:
         self._read_only: bool = False
         self._warned_locked: bool = False
         self._proxy_writes: bool = proxy_writes
+        self._proxy_all: bool = proxy_all
         self._lock = threading.RLock()
 
     def _daemon_graph_write(self, op: str, params: dict) -> bool:
@@ -93,7 +94,10 @@ class GraphStore:
         blocks shared locks in current versions), logs a warning.
 
         If an existing connection is stale (query fails), resets and retries.
+        When proxy_all is True, never opens KuzuDB locally.
         """
+        if self._proxy_all:
+            return False
         if self._conn is not None:
             # Verify the connection is still alive
             try:
@@ -105,21 +109,33 @@ class GraphStore:
                 self._db = None
         # Try read-write first
         try:
-            self._db = kuzu.Database(str(self._path))
-            self._conn = kuzu.Connection(self._db)
+            db = kuzu.Database(str(self._path))
+            self._conn = kuzu.Connection(db)
+            self._db = db
             self._read_only = False
             self._init_schema()
             return True
         except RuntimeError:
-            pass
+            # Explicitly delete the failed Database object to release
+            # the file handle — otherwise the fd leak blocks the daemon
+            # from acquiring the exclusive lock.
+            try:
+                del db
+            except UnboundLocalError:
+                pass
         # Fall back to read-only
         try:
-            self._db = kuzu.Database(str(self._path), read_only=True)
-            self._conn = kuzu.Connection(self._db)
+            db = kuzu.Database(str(self._path), read_only=True)
+            self._conn = kuzu.Connection(db)
+            self._db = db
             self._read_only = True
             log.warning("KuzuDB opened in read-only mode — graph writes will be skipped")
             return True
         except RuntimeError:
+            try:
+                del db
+            except UnboundLocalError:
+                pass
             self._db = None
             self._conn = None
             if not self._warned_locked:
@@ -698,6 +714,9 @@ class GraphStore:
     def get_stats(self) -> dict[str, int]:
         """Return total node and edge counts."""
         if not self._ensure_connected():
+            result = self._daemon_graph_read("status", {})
+            if isinstance(result, dict) and result.get("nodes", -1) >= 0:
+                return {"nodes": result["nodes"], "edges": result["edges"]}
             return {"nodes": -1, "edges": -1}
 
         total_nodes = 0
@@ -721,6 +740,9 @@ class GraphStore:
     def status(self) -> dict[str, Any]:
         """Detailed stats: node counts by type, edge counts by table."""
         if not self._ensure_connected():
+            result = self._daemon_graph_read("status", {})
+            if isinstance(result, dict) and result.get("nodes", -1) >= 0:
+                return result
             return {"nodes": -1, "edges": -1}
 
         # Entity count by type

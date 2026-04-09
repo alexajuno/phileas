@@ -52,7 +52,10 @@ if not _daemon_running(_config):
 
 db = Database(path=_config.db_path)
 vector = VectorStore(path=_config.chroma_path)
-graph = GraphStore(path=_config.graph_path)
+# When daemon is running, proxy ALL graph operations through it to avoid
+# KuzuDB file descriptor leaks that block the daemon's exclusive lock.
+_daemon_is_up = _daemon_running(_config) is not None
+graph = GraphStore(path=_config.graph_path, proxy_all=_daemon_is_up)
 engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 
 
