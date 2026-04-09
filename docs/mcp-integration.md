@@ -19,7 +19,6 @@ This starts the Phileas MCP server using stdio transport. The server exposes the
 | `relate` | Create relationship edges in the knowledge graph |
 | `about` | Get all memories connected to an entity |
 | `timeline` | Get memories in a date range |
-| `profile` | Get all profile-type memories |
 | `ingest_session` | Parse a Claude Code JSONL session file for memory extraction |
 | `mark_session_done` | Mark a session as processed |
 | `consolidate` | Find clusters of similar memories for summarization |
@@ -184,10 +183,6 @@ Get memories in a date range.
 |-----------|------|----------|---------|-------------|
 | `start_date` | string | yes | -- | Start date (YYYY-MM-DD) |
 | `end_date` | string | no | *same as start* | End date (YYYY-MM-DD) |
-
-### profile
-
-Get all profile memories. No parameters.
 
 ### ingest_session
 

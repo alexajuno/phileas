@@ -126,7 +126,7 @@ Upgraded to be more proactive:
 |------|-----------|---------|
 | `about` | `(name, entity_type?=None)` | Query KuzuDB for entity + 1-hop neighborhood, return connected memories from SQLite. If `entity_type` omitted, searches all node types. |
 | `timeline` | `(start_date, end_date?=None)` | Query memories by `daily_ref` and `happened_at` in date range. Returns chronologically sorted. |
-| `profile` | `()` | All memories where memory_type="profile" (kept from current). |
+| `recall` | `(query, memory_type="profile")` | Profile memories via ranked recall (replaces old unfiltered `profile()` tool). |
 
 ### Retrieval Pipeline (inside `recall`)
 
@@ -169,7 +169,7 @@ Contradictions are detected by **Claude Code, not the MCP server** (no LLM insid
 |---------|-----------|
 | `memorize` | Upgraded (new params) |
 | `recall` | Upgraded (multi-path + scoring) |
-| `profile` | Kept as-is |
+| `profile` | Removed — use `recall(query, memory_type="profile")` instead |
 | `digest` | Removed — replaced by `ingest_session` |
 | `categories` | Removed — replaced by `about` + graph queries |
 
@@ -294,7 +294,7 @@ A 6-month-old identity fact (importance=10, accessed often) still beats a 1-day-
 ### What carries over
 - SQLite database structure (extended, not replaced)
 - MCP server via FastMCP
-- `memorize`, `recall`, `profile` tools (upgraded)
+- `memorize`, `recall` tools (upgraded); `profile` removed in favor of `recall(memory_type="profile")`
 - sentence-transformers embeddings
 
 ### What changes

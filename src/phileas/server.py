@@ -10,7 +10,7 @@ Tools:
   - relate: create a graph edge between entities
   - about: get memories connected to an entity
   - timeline: get memories in a date range
-  - profile: get all profile-type memories
+  - recall with memory_type="profile": get profile-type memories (ranked)
   - ingest_session: parse a JSONL session for Claude Code to extract from
   - mark_session_done: mark a session as processed
   - consolidate: find clusters of similar tier-2 memories for summarization
@@ -310,19 +310,6 @@ def reflect(date: str | None = None) -> str:
         lines.append(f"  [{ins.get('type', 'reflection')}] {ins['summary']}")
     return "\n".join(lines)
 
-
-@mcp.tool()
-def profile() -> str:
-    """Get all profile memories — who the user is, their identity and core traits."""
-    items = db.get_items_by_type("profile")
-    if not items:
-        return "No profile memories stored yet."
-
-    lines = [f"User profile ({len(items)} items):"]
-    for item in items:
-        imp = f"importance={item.importance}"
-        lines.append(f"  [{item.id}] {item.summary} ({imp})")
-    return "\n".join(lines)
 
 
 @mcp.tool()

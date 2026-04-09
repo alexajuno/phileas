@@ -348,7 +348,7 @@ Start the Phileas MCP server for AI client integration.
 phileas serve
 ```
 
-The server exposes memory tools (memorize, recall, forget, update, relate, about, timeline, profile, consolidate, status) over the Model Context Protocol. See [MCP Integration](mcp-integration.md) for client configuration.
+The server exposes memory tools (memorize, recall, forget, update, relate, about, timeline, consolidate, status) over the Model Context Protocol. See [MCP Integration](mcp-integration.md) for client configuration.
 
 ---
 
