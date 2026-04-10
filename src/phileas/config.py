@@ -38,7 +38,7 @@ class LLMOperations:
     contradiction: str | None = None
     query_rewrite: str | None = None
     reflection: str | None = None
-    graph_inference: str | None = None
+    fact_derivation: str | None = None
 
 
 @dataclass

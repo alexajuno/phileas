@@ -62,7 +62,7 @@ def _claude_cli_complete(
         input=prompt,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
 
     if result.returncode != 0 and not result.stdout.strip():

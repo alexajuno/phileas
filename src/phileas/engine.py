@@ -1025,23 +1025,26 @@ class MemoryEngine:
     # ------------------------------------------------------------------
 
     def infer_graph(self) -> dict:
-        """Run graph inference: discover relationships and patterns from recent memories.
+        """Run two-pass inference on recent memories.
+
+        Pass 1: Fact derivation — recall related memories for each new memory,
+                build clusters, ask LLM to derive facts by combining them.
+        Pass 2: Entity gap fill — find memories with sparse graph links and
+                run entity extraction on them.
 
         Uses a marker memory to track the last inference time.
-        Returns {"edges_added": N, "insights_stored": N, "memories_processed": N}.
+        Returns {"facts_derived": N, "entities_filled": N, "memories_processed": N}.
         """
-        from phileas.llm.inference import infer_graph as llm_infer
-
         with OpTimer(log, "infer_graph") as timer:
             if not self.llm.available:
                 timer.extra["skipped"] = "llm_unavailable"
-                return {"edges_added": 0, "insights_stored": 0, "memories_processed": 0}
+                return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
 
             # Find last inference marker
             active = self.db.get_active_items()
             last_inference_time = None
             for item in active:
-                if item.summary.startswith("[Graph inference"):
+                if item.summary.startswith("[Fact inference"):
                     last_inference_time = item.created_at
                     break
 
@@ -1054,99 +1057,23 @@ class MemoryEngine:
                 since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
             recent = self.db.get_items_since(since, limit=100)
-            # Filter out markers and low-importance items
             recent = [m for m in recent if not m.summary.startswith("[") and m.importance >= 3]
 
             if not recent:
                 timer.extra["skipped"] = "no_new_memories"
-                return {"edges_added": 0, "insights_stored": 0, "memories_processed": 0}
+                return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
 
-            # Build graph context: entities and edges for these memories
-            graph_lines = []
-            seen_entities: set[str] = set()
-            for mem in recent:
-                entities = self.graph.get_entities_for_memory(mem.id)
-                for ent in entities:
-                    eid = f"{ent['type']}:{ent['name']}"
-                    if eid not in seen_entities:
-                        seen_entities.add(eid)
-                        # Get related entities for context
-                        try:
-                            related = self.graph.get_related_entities(ent["type"], ent["name"])
-                            if related:
-                                for rel in related:
-                                    graph_lines.append(
-                                        f"  {ent['type']}:{ent['name']} --[{rel.get('edge_type', '?')}]--> "
-                                        f"{rel['type']}:{rel['name']}"
-                                    )
-                            else:
-                                graph_lines.append(f"  {ent['type']}:{ent['name']} (no connections)")
-                        except Exception:
-                            graph_lines.append(f"  {ent['type']}:{ent['name']} (no connections)")
+            # -- Pass 1: Fact derivation --
+            facts_derived = self._pass_fact_derivation(recent)
 
-            graph_context = "\n".join(graph_lines) if graph_lines else "(no graph data yet)"
-
-            memory_dicts = [
-                {
-                    "summary": m.summary,
-                    "type": m.memory_type,
-                    "importance": m.importance,
-                }
-                for m in recent
-            ]
-
-            # Call LLM
-            result = asyncio.run(llm_infer(self.llm, memory_dicts, graph_context))
-
-            # Apply relationships
-            edges_added = 0
-            for rel in result.get("relationships", []):
-                from_name = rel.get("from_name")
-                from_type = rel.get("from_type")
-                edge = rel.get("edge")
-                to_name = rel.get("to_name")
-                to_type = rel.get("to_type")
-                if from_name and from_type and edge and to_name and to_type:
-                    try:
-                        self.graph.upsert_node(from_type, from_name)
-                        self.graph.upsert_node(to_type, to_name)
-                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                        edges_added += 1
-                        log.info(
-                            "inferred edge",
-                            extra={
-                                "op": "infer_graph",
-                                "data": {
-                                    "edge": f"{from_name}-[{edge}]->{to_name}",
-                                    "reason": rel.get("reason", ""),
-                                },
-                            },
-                        )
-                    except Exception as e:
-                        log.debug(
-                            "inferred edge failed",
-                            extra={"op": "infer_graph", "data": {"error": str(e)}},
-                        )
-
-            # Store insights
-            insights_stored = 0
-            for ins in result.get("insights", []):
-                summary = ins.get("summary")
-                if not summary:
-                    continue
-                self.memorize(
-                    summary=summary,
-                    memory_type=ins.get("memory_type", "inference"),
-                    importance=ins.get("importance", 5),
-                    daily_ref=date.today().isoformat(),
-                )
-                insights_stored += 1
+            # -- Pass 2: Entity gap fill --
+            entities_filled = self._pass_entity_gap_fill(recent)
 
             # Store marker
             self.memorize(
                 summary=(
-                    f"[Graph inference] Processed {len(recent)} memories, "
-                    f"added {edges_added} edges, produced {insights_stored} insights."
+                    f"[Fact inference] Processed {len(recent)} memories, "
+                    f"derived {facts_derived} facts, filled {entities_filled} entity gaps."
                 ),
                 memory_type="knowledge",
                 importance=1,
@@ -1154,13 +1081,162 @@ class MemoryEngine:
             )
 
             timer.extra["memories_processed"] = len(recent)
-            timer.extra["edges_added"] = edges_added
-            timer.extra["insights_stored"] = insights_stored
+            timer.extra["facts_derived"] = facts_derived
+            timer.extra["entities_filled"] = entities_filled
             return {
-                "edges_added": edges_added,
-                "insights_stored": insights_stored,
+                "facts_derived": facts_derived,
+                "entities_filled": entities_filled,
                 "memories_processed": len(recent),
             }
+
+    def _pass_fact_derivation(self, recent: list[MemoryItem]) -> int:
+        """Pass 1: Build recall clusters for each recent memory, then derive facts."""
+        from phileas.llm.fact_derivation import derive_facts
+
+        # Build profile summary for LLM context
+        profile_items = self.db.get_items_by_type("profile")[:5]
+        profile_summary = (
+            "\n".join(f"- {p.summary[:200]}" for p in profile_items if not p.summary.startswith("["))
+            or "(no profile data)"
+        )
+
+        # Build clusters: for each recent memory, recall related older memories
+        # Use the full summary as query to get the richest recall context,
+        # plus entity names for graph-connected memories.
+        clusters = []
+        recent_ids = {m.id for m in recent}
+        for mem in recent:
+            related: list[dict] = []
+            related_ids: set[str] = set()
+
+            # Primary recall: use summary as query (full pipeline)
+            try:
+                recalled = self.recall(mem.summary, top_k=10, _skip_llm=True)
+                for r in recalled:
+                    rid = r["id"]
+                    if rid not in recent_ids and rid not in related_ids:
+                        related.append(r)
+                        related_ids.add(rid)
+            except Exception:
+                pass
+
+            # Secondary: recall by entity names for graph-connected memories
+            entities = self.graph.get_entities_for_memory(mem.id)
+            for ent in entities:
+                name = ent.get("name")
+                if not name:
+                    continue
+                try:
+                    recalled = self.recall(name, top_k=5, _skip_llm=True)
+                    for r in recalled:
+                        rid = r["id"]
+                        if rid not in recent_ids and rid not in related_ids:
+                            related.append(r)
+                            related_ids.add(rid)
+                except Exception:
+                    continue
+
+            if related:
+                clusters.append(
+                    {
+                        "new": {
+                            "summary": mem.summary,
+                            "type": mem.memory_type,
+                            "importance": mem.importance,
+                        },
+                        "related": [
+                            {
+                                "summary": r["summary"],
+                                "type": r["type"],
+                                "importance": r["importance"],
+                            }
+                            for r in related[:10]  # Cap related per cluster
+                        ],
+                    }
+                )
+
+        # Cap total clusters to keep prompt manageable
+        clusters = clusters[:15]
+
+        if not clusters:
+            return 0
+
+        # Call LLM to derive facts
+        facts = asyncio.run(derive_facts(self.llm, clusters, profile_summary))
+
+        # Store each derived fact
+        facts_stored = 0
+        for fact in facts:
+            result = self.memorize(
+                summary=fact["summary"],
+                memory_type=fact["memory_type"],
+                importance=fact["importance"],
+                daily_ref=date.today().isoformat(),
+            )
+            if not result.get("deduplicated"):
+                facts_stored += 1
+                log.info(
+                    "derived fact",
+                    extra={
+                        "op": "infer_graph",
+                        "data": {
+                            "summary": fact["summary"],
+                            "reasoning": fact.get("reasoning", ""),
+                        },
+                    },
+                )
+
+        return facts_stored
+
+    def _pass_entity_gap_fill(self, recent: list[MemoryItem]) -> int:
+        """Pass 2: Find memories with sparse entity links and extract entities."""
+        from phileas.llm.extraction import extract_entities
+
+        filled = 0
+        for mem in recent:
+            entities = self.graph.get_entities_for_memory(mem.id)
+            if len(entities) >= 2:
+                continue  # Already has enough entities
+
+            try:
+                result = asyncio.run(extract_entities(self.llm, mem.summary))
+                new_entities = result.get("entities", [])
+                new_relationships = result.get("relationships", [])
+
+                for entity in new_entities:
+                    name = entity.get("name")
+                    etype = entity.get("type")
+                    if name and etype:
+                        self.graph.upsert_node(etype, name)
+                        self.graph.link_memory(mem.id, etype, name)
+
+                for rel in new_relationships:
+                    from_name = rel.get("from_name")
+                    from_type = rel.get("from_type")
+                    edge = rel.get("edge")
+                    to_name = rel.get("to_name")
+                    to_type = rel.get("to_type")
+                    if from_name and from_type and edge and to_name and to_type:
+                        self.graph.upsert_node(from_type, from_name)
+                        self.graph.upsert_node(to_type, to_name)
+                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+
+                if new_entities:
+                    filled += 1
+                    log.info(
+                        "entity gap filled",
+                        extra={
+                            "op": "infer_graph",
+                            "data": {
+                                "memory_id": mem.id,
+                                "entities_added": len(new_entities),
+                            },
+                        },
+                    )
+            except Exception:
+                continue
+
+        return filled
 
     # ------------------------------------------------------------------
     # status
