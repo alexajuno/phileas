@@ -515,7 +515,11 @@ class MemoryEngine:
 
             # Cross-encoder for candidates not already validated by
             # keyword match or graph traversal
-            ce_candidates = [(mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched]
+            ce_candidates = [
+                (mem_id, item.summary)
+                for mem_id, item in filtered.items()
+                if mem_id not in structurally_matched
+            ]
             if ce_candidates:
                 reranked = rerank(query, ce_candidates)
                 raw_ce = {mem_id: score for mem_id, score in reranked}

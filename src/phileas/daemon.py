@@ -16,8 +16,8 @@ import signal
 import sys
 from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from socketserver import ThreadingMixIn
 from pathlib import Path
+from socketserver import ThreadingMixIn
 
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
