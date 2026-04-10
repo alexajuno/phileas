@@ -639,7 +639,8 @@ def init_cmd():
 
 
 @click.command()
-def start():
+@click.option("--foreground", "-f", is_flag=True, help="Run in foreground (for systemd).")
+def start(foreground: bool):
     """Start the Phileas daemon (keeps models loaded for fast CLI)."""
     from phileas.daemon import is_running
     from phileas.daemon import start as daemon_start
@@ -650,8 +651,9 @@ def start():
         return
 
     try:
-        console.print("Starting Phileas daemon...")
-        port = daemon_start()
+        if not foreground:
+            console.print("Starting Phileas daemon...")
+        port = daemon_start(foreground=foreground)
         console.print(f"[green]Daemon started[/green] on port {port}.")
         console.print("[dim]Models are loaded. CLI commands will be fast now.[/dim]")
     except Exception as exc:
@@ -685,10 +687,7 @@ def backfill_days():
     engine = MemoryEngine(db=db, vector=vector, graph=graph, config=cfg)
 
     result = engine.backfill_day_entities()
-    print_success(
-        f"Backfill complete: {result['days_created']} days, "
-        f"{result['memories_linked']} memories linked"
-    )
+    print_success(f"Backfill complete: {result['days_created']} days, {result['memories_linked']} memories linked")
 
 
 @click.command()

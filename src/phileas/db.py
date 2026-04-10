@@ -23,6 +23,7 @@ def _locked(method):
 
     return wrapper
 
+
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
 SCHEMA = """

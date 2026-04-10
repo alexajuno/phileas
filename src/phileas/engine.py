@@ -36,17 +36,17 @@ def _day_aliases(iso_date: str) -> list[str]:
     ["April 9", "Apr 9", "April 9 2026", "Apr 9 2026", "Thursday"]
     """
     d = date.fromisoformat(iso_date)
-    full_month = d.strftime("%B")       # "April"
-    short_month = d.strftime("%b")      # "Apr"
-    day = str(d.day)                    # "9" (no zero-padding)
-    year = str(d.year)                  # "2026"
-    weekday = d.strftime("%A")          # "Thursday"
+    full_month = d.strftime("%B")  # "April"
+    short_month = d.strftime("%b")  # "Apr"
+    day = str(d.day)  # "9" (no zero-padding)
+    year = str(d.year)  # "2026"
+    weekday = d.strftime("%A")  # "Thursday"
     return [
-        f"{full_month} {day}",          # "April 9"
-        f"{short_month} {day}",         # "Apr 9"
-        f"{full_month} {day} {year}",   # "April 9 2026"
+        f"{full_month} {day}",  # "April 9"
+        f"{short_month} {day}",  # "Apr 9"
+        f"{full_month} {day} {year}",  # "April 9 2026"
         f"{short_month} {day} {year}",  # "Apr 9 2026"
-        weekday,                        # "Thursday"
+        weekday,  # "Thursday"
     ]
 
 
@@ -516,9 +516,7 @@ class MemoryEngine:
             # Cross-encoder for candidates not already validated by
             # keyword match or graph traversal
             ce_candidates = [
-                (mem_id, item.summary)
-                for mem_id, item in filtered.items()
-                if mem_id not in structurally_matched
+                (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
             ]
             if ce_candidates:
                 reranked = rerank(query, ce_candidates)
@@ -916,9 +914,7 @@ class MemoryEngine:
                 items_by_id[item.id] = item
 
         # Fallback: also check SQLite daily_ref for un-migrated memories
-        fallback_items = self.db.get_items_by_date_range(
-            start_dt.isoformat(), end_dt.isoformat()
-        )
+        fallback_items = self.db.get_items_by_date_range(start_dt.isoformat(), end_dt.isoformat())
         for item in fallback_items:
             if item.id not in items_by_id:
                 items_by_id[item.id] = item

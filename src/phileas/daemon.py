@@ -130,7 +130,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # Load engine (this loads models — the whole point)
     db = Database(path=config.db_path)
     vector = VectorStore(path=config.chroma_path)
-    graph = GraphStore(path=config.graph_path, proxy_writes=False)
+    graph = GraphStore(path=config.graph_path)
     engine = MemoryEngine(db=db, vector=vector, graph=graph, config=config)
 
     # Eagerly initialize KuzuDB connection — the daemon is the single
@@ -371,6 +371,9 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         elif op == "link_memory_to_memory":
             graph.link_memory_to_memory(params["from_id"], params["edge_type"], params["to_id"])
             return {"ok": True}
+        elif op == "set_aliases":
+            graph.set_aliases(params["node_type"], params["name"], params["aliases"])
+            return {"ok": True}
         else:
             raise ValueError(f"Unknown graph_write op: {op}")
     elif method == "graph_read":
@@ -388,6 +391,10 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 params["entity_name"],
                 edge_type=params.get("edge_type"),
             )
+        elif op == "find_nodes":
+            return graph.find_nodes(params["node_type"], params["name"])
+        elif op == "get_neighborhood":
+            return graph.get_neighborhood(params["node_type"], params["name"], depth=params.get("depth", 1))
         elif op == "status":
             return graph.status()
         else:
