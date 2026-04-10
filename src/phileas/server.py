@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
-from phileas.graph import GraphStore
+from phileas.graph_proxy import GraphProxy
 from phileas.vector import VectorStore
 
 mcp = FastMCP(
@@ -39,23 +39,11 @@ mcp = FastMCP(
 
 _config = load_config()
 
-from phileas.daemon import is_running as _daemon_running  # noqa: E402
-from phileas.daemon import start as _daemon_start  # noqa: E402
-
-# Start daemon if not running — it holds the KuzuDB write lock so
-# multiple MCP server instances can proxy graph writes through it.
-if not _daemon_running(_config):
-    try:
-        _daemon_start(_config, foreground=False)
-    except Exception:
-        pass  # Daemon start failed; graph writes will degrade gracefully
-
 db = Database(path=_config.db_path)
 vector = VectorStore(path=_config.chroma_path)
-# When daemon is running, proxy ALL graph operations through it to avoid
-# KuzuDB file descriptor leaks that block the daemon's exclusive lock.
-_daemon_is_up = _daemon_running(_config) is not None
-graph = GraphStore(path=_config.graph_path, proxy_all=_daemon_is_up)
+# Graph operations always proxy through the daemon (systemd service).
+# MCP servers never open KuzuDB directly — avoids file lock conflicts.
+graph = GraphProxy()
 engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 
 
@@ -309,7 +297,6 @@ def reflect(date: str | None = None) -> str:
     return "\n".join(lines)
 
 
-
 @mcp.tool()
 def ingest_session(session_path: str) -> str:
     """Parse a Claude Code JSONL session file and return its conversation text.
@@ -450,7 +437,7 @@ def status() -> str:
 
     graph_nodes = stats.get("graph_nodes", 0)
     graph_edges = stats.get("graph_edges", 0)
-    graph_locked = graph_nodes < 0 or graph_edges < 0
+    daemon_down = graph_nodes < 0 or graph_edges < 0
 
     lines = [
         "Phileas Memory System Status",
@@ -461,8 +448,10 @@ def status() -> str:
         f"  Archived:         {stats.get('archived', 0)}",
         f"Vector embeddings:  {stats.get('vector_count', 0)}",
     ]
-    if graph_locked:
-        lines.append("Graph:              LOCKED (another process holds the KuzuDB lock)")
+    if daemon_down:
+        lines.append(
+            "Graph:              UNAVAILABLE (daemon not running). Start it with: systemctl --user start phileas-daemon"
+        )
     else:
         lines.append(f"Graph nodes:        {graph_nodes}")
         lines.append(f"Graph edges:        {graph_edges}")

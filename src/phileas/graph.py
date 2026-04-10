@@ -32,6 +32,7 @@ def _locked(method):
 
     return wrapper
 
+
 DEFAULT_GRAPH_PATH = Path.home() / ".phileas" / "graph"
 
 
@@ -43,61 +44,24 @@ def _entity_id(node_type: str, name: str) -> str:
 class GraphStore:
     """Graph store backed by KuzuDB for entity relationship storage.
 
-    Lazily connects to KuzuDB on first use. If the database is locked by
-    another process, graph writes are proxied through the Phileas daemon
-    (which holds the single write lock). If no daemon is running, writes
-    gracefully degrade to no-ops.
+    Direct KuzuDB access — used only by the daemon process, which holds
+    the exclusive file lock. MCP servers use GraphProxy instead.
     """
 
-    def __init__(self, path: Path = DEFAULT_GRAPH_PATH, proxy_writes: bool = True, proxy_all: bool = False) -> None:
+    def __init__(self, path: Path = DEFAULT_GRAPH_PATH) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
-        self._read_only: bool = False
         self._warned_locked: bool = False
-        self._proxy_writes: bool = proxy_writes
-        self._proxy_all: bool = proxy_all
         self._lock = threading.RLock()
-
-    def _daemon_graph_write(self, op: str, params: dict) -> bool:
-        """Proxy a graph write through the daemon. Returns True on success."""
-        if not self._proxy_writes:
-            return False
-        try:
-            from phileas.daemon import call
-
-            result = call("graph_write", {"op": op, **params})
-            return result is not None and result.get("ok", False)
-        except Exception:
-            return False
-
-    def _daemon_graph_read(self, op: str, params: dict, default: Any = None) -> Any:
-        """Proxy a graph read through the daemon. Returns result or default."""
-        if not self._proxy_writes:  # proxy_writes controls all proxying
-            return default
-        try:
-            from phileas.daemon import call
-
-            result = call("graph_read", {"op": op, **params})
-            if result is not None and result.get("ok", False):
-                return result.get("result", default)
-        except Exception:
-            pass
-        return default
 
     def _ensure_connected(self) -> bool:
         """Lazily open KuzuDB. Returns True if connected, False if unavailable.
 
         Tries read-write first. If the database is locked by another process,
-        falls back to read-only mode. If that also fails (KuzuDB exclusive lock
-        blocks shared locks in current versions), logs a warning.
-
-        If an existing connection is stale (query fails), resets and retries.
-        When proxy_all is True, never opens KuzuDB locally.
+        logs a warning. If an existing connection is stale, resets and retries.
         """
-        if self._proxy_all:
-            return False
         if self._conn is not None:
             # Verify the connection is still alive
             try:
@@ -107,29 +71,11 @@ class GraphStore:
                 log.warning("KuzuDB connection stale — reconnecting")
                 self._conn = None
                 self._db = None
-        # Try read-write first
         try:
             db = kuzu.Database(str(self._path))
             self._conn = kuzu.Connection(db)
             self._db = db
-            self._read_only = False
             self._init_schema()
-            return True
-        except RuntimeError:
-            # Explicitly delete the failed Database object to release
-            # the file handle — otherwise the fd leak blocks the daemon
-            # from acquiring the exclusive lock.
-            try:
-                del db
-            except UnboundLocalError:
-                pass
-        # Fall back to read-only
-        try:
-            db = kuzu.Database(str(self._path), read_only=True)
-            self._conn = kuzu.Connection(db)
-            self._db = db
-            self._read_only = True
-            log.warning("KuzuDB opened in read-only mode — graph writes will be skipped")
             return True
         except RuntimeError:
             try:
@@ -140,8 +86,7 @@ class GraphStore:
             self._conn = None
             if not self._warned_locked:
                 log.warning(
-                    "KuzuDB unavailable — another process holds the lock on %s. "
-                    "Graph features (about, entity search, person-aware boost) disabled.",
+                    "KuzuDB unavailable — another process holds the lock on %s.",
                     self._path,
                 )
                 self._warned_locked = True
@@ -368,10 +313,6 @@ class GraphStore:
             len(mem_edges),
         )
 
-    def _ensure_writable(self) -> bool:
-        """Return True if connected in read-write mode."""
-        return self._ensure_connected() and not self._read_only
-
     def close(self) -> None:
         """No-op — KuzuDB connections close automatically on GC."""
 
@@ -392,11 +333,7 @@ class GraphStore:
         props:
             Optional dict of additional properties, serialised to JSON.
         """
-        if not self._ensure_writable():
-            self._daemon_graph_write(
-                "upsert_node",
-                {"node_type": node_type, "name": name, "props": props},
-            )
+        if not self._ensure_connected():
             return
         entity_id = _entity_id(node_type, name)
         props_str = json.dumps(props) if props else ""
@@ -425,11 +362,7 @@ class GraphStore:
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
         """Search entity nodes by name or alias using CONTAINS match."""
         if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "search_nodes",
-                {"query": name_query},
-                default=[],
-            )
+            return []
         result = self._conn.execute(
             "MATCH (n:Entity) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q RETURN n.name AS name, n.type AS type",
             parameters={"q": name_query},
@@ -443,7 +376,7 @@ class GraphStore:
     @_locked
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         """Set aliases for an entity node (e.g., "mom" for a Person)."""
-        if not self._ensure_writable():
+        if not self._ensure_connected():
             return
         entity_id = _entity_id(node_type, name)
         aliases_str = json.dumps(aliases)
@@ -462,15 +395,7 @@ class GraphStore:
 
         Creates both nodes if they don't exist.
         """
-        if not self._ensure_writable():
-            self._daemon_graph_write(
-                "link_memory",
-                {
-                    "memory_id": memory_id,
-                    "entity_type": entity_type,
-                    "entity_name": entity_name,
-                },
-            )
+        if not self._ensure_connected():
             return
         entity_id = _entity_id(entity_type, entity_name)
         # Ensure both nodes exist
@@ -496,11 +421,7 @@ class GraphStore:
     def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
         """Return memory IDs linked to the given entity."""
         if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "get_memories_about",
-                {"entity_type": entity_type, "entity_name": entity_name},
-                default=[],
-            )
+            return []
         entity_id = _entity_id(entity_type, entity_name)
         result = self._conn.execute(
             "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
@@ -519,11 +440,7 @@ class GraphStore:
         Returns [{"name": str, "type": str}].
         """
         if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "get_entities_for_memory",
-                {"memory_id": memory_id},
-                default=[],
-            )
+            return []
         result = self._conn.execute(
             "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity) RETURN e.name, e.type",
             parameters={"mid": memory_id},
@@ -551,17 +468,7 @@ class GraphStore:
 
         Any edge_type string is accepted (BUILDS, KNOWS, LIKES, etc.).
         """
-        if not self._ensure_writable():
-            self._daemon_graph_write(
-                "create_edge",
-                {
-                    "from_type": from_type,
-                    "from_name": from_name,
-                    "edge": edge_type,
-                    "to_type": to_type,
-                    "to_name": to_name,
-                },
-            )
+        if not self._ensure_connected():
             return
         from_id = _entity_id(from_type, from_name)
         to_id = _entity_id(to_type, to_name)
@@ -592,11 +499,7 @@ class GraphStore:
         Returns [{"name": str, "type": str, "edge_type": str, "direction": "out"|"in"}].
         """
         if not self._ensure_connected():
-            return self._daemon_graph_read(
-                "get_related_entities",
-                {"entity_type": entity_type, "entity_name": entity_name, "edge_type": edge_type},
-                default=[],
-            )
+            return []
         entity_id = _entity_id(entity_type, entity_name)
         results = []
 
@@ -641,11 +544,7 @@ class GraphStore:
     @_locked
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
         """Create an edge between two Memory nodes with a given edge_type."""
-        if not self._ensure_writable():
-            self._daemon_graph_write(
-                "link_memory_to_memory",
-                {"from_id": from_id, "edge_type": edge_type, "to_id": to_id},
-            )
+        if not self._ensure_connected():
             return
         # Ensure both Memory nodes exist
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
@@ -714,9 +613,6 @@ class GraphStore:
     def get_stats(self) -> dict[str, int]:
         """Return total node and edge counts."""
         if not self._ensure_connected():
-            result = self._daemon_graph_read("status", {})
-            if isinstance(result, dict) and result.get("nodes", -1) >= 0:
-                return {"nodes": result["nodes"], "edges": result["edges"]}
             return {"nodes": -1, "edges": -1}
 
         total_nodes = 0
@@ -740,9 +636,6 @@ class GraphStore:
     def status(self) -> dict[str, Any]:
         """Detailed stats: node counts by type, edge counts by table."""
         if not self._ensure_connected():
-            result = self._daemon_graph_read("status", {})
-            if isinstance(result, dict) and result.get("nodes", -1) >= 0:
-                return result
             return {"nodes": -1, "edges": -1}
 
         # Entity count by type
