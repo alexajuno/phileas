@@ -1,110 +1,48 @@
-# Phileas -- Long-term memory for AI companions
+# Phileas — long-term memory for AI companions
 
-Your AI forgets you every session. Phileas fixes that.
+Your AI forgets you every session. You can talk to the most capable model in the world, but it doesn't *know* you. No continuity. No relationship that deepens over time.
 
-Phileas is a local-first memory system that gives AI companions persistent, intelligent memory. It runs on your machine, stores everything locally, and connects to any AI via [MCP](https://modelcontextprotocol.io/).
+The models are good enough. What's missing is the layer around them — the memory, the context, the sense of who you are and where you've been.
 
-Named after Phileas Fogg -- a steadfast partner for the journey.
+Phileas is that layer. It runs on your machine, stores everything locally, and connects to any AI through [MCP](https://modelcontextprotocol.io/).
 
-## Quick start
+Named after Phileas Fogg — a companion for the journey.
+
+## Get started
 
 ```bash
 pip install phileas-memory
 phileas init
-phileas remember "I'm a backend engineer who loves distributed systems"
-phileas recall "what do I work on"
 ```
 
-## Features
+The setup wizard walks you through connecting to your AI (Claude, GPT, Ollama, or any MCP client) and choosing where to store your memories. That's it.
 
-- **100% local** -- your memories never leave your machine
-- **Smart** -- auto-extracts facts, scores importance, and detects contradictions (with optional LLM)
-- **Connected** -- knowledge graph links people, projects, and concepts
-- **Works with any AI** -- Claude, GPT, Ollama, or any MCP-compatible client
-- **Fast** -- semantic search + graph traversal + cross-encoder reranking + MMR diversity
+## Connect to your AI
 
-## How it works
+If you use Claude Code, `phileas init` handles this automatically.
 
-Phileas uses a triple-store architecture -- each store handles what it's good at:
-
-| Store | Tech | Role |
-|-------|------|------|
-| **Relational** | SQLite | Memories, metadata, importance scoring, tiers, session tracking |
-| **Vector** | ChromaDB | Semantic search via sentence-transformers embeddings |
-| **Graph** | KuzuDB | Entity relationships and knowledge graph traversal |
-
-The `MemoryEngine` orchestrates all three. When you store a memory, it gets persisted to SQLite, embedded in ChromaDB, and linked into the knowledge graph in KuzuDB. When you recall, candidates are gathered from all three paths, reranked by a cross-encoder, and diversity-selected via MMR.
-
-## CLI commands
-
-| Command | Description |
-|---------|-------------|
-| `phileas init` | Interactive setup wizard |
-| `phileas remember "text"` | Store a memory |
-| `phileas recall "query"` | Search memories |
-| `phileas forget <id>` | Archive a memory |
-| `phileas update <id> "text"` | Update a memory's content |
-| `phileas list` | Browse all memories |
-| `phileas show <id>` | Show full detail of a memory |
-| `phileas ingest <source>` | Extract memories from text or a file (requires LLM) |
-| `phileas consolidate` | Merge similar memories into summaries (requires LLM) |
-| `phileas contradictions` | Find conflicting memories (requires LLM) |
-| `phileas export` | Export memories as JSON |
-| `phileas serve` | Start MCP server |
-| `phileas start` | Start background daemon (keeps models loaded for fast CLI) |
-| `phileas stop` | Stop the daemon |
-| `phileas usage` | Show LLM token usage, cost, and request breakdown |
-| `phileas status` | Show system health and stats |
-
-## Setup modes
-
-`phileas init` offers three modes:
-
-1. **Claude Code** -- Claude is the brain, Phileas stores memories. Auto-configures `~/.claude/.mcp.json`.
-2. **Standalone CLI** -- Phileas uses an LLM API (OpenAI, Anthropic, Ollama) for smart features.
-3. **Both** -- Claude Code integration + standalone CLI access.
-
-## Performance
-
-For faster CLI commands, start the daemon to keep models loaded in memory:
-
-```bash
-phileas start    # Models load once, CLI commands become instant
-phileas stop     # When you're done
-```
-
-Without the daemon, each CLI command loads models from scratch (~1-2s overhead).
-
-## Connect to an AI
-
-`phileas init` (mode 1 or 3) auto-configures Claude Code. Or manually:
+For other MCP clients, start the server and point your client at it:
 
 ```bash
 phileas serve
 ```
 
-Add to `~/.claude/.mcp.json`:
+See [MCP Integration](docs/mcp-integration.md) for client-specific setup.
 
-```json
-{
-  "mcpServers": {
-    "phileas": {
-      "command": "phileas",
-      "args": ["serve"]
-    }
-  }
-}
-```
+## What it believes
 
-See [MCP Integration](docs/mcp-integration.md) for other clients.
+- **Local-first** — your memories stay on your machine
+- **Model-agnostic** — works with any LLM
+- **Human-like, not perfect** — remembers what matters, lets the rest fade
+- **Open** — run it yourself, see how it works
 
-## Documentation
+## Learn more
 
-- [Quick Start](docs/quickstart.md) -- 5-minute guided tutorial
-- [Configuration](docs/configuration.md) -- Full config.toml reference
-- [CLI Reference](docs/cli-reference.md) -- All commands with options and examples
-- [LLM Setup](docs/llm-setup.md) -- Provider guides for Anthropic, OpenAI, Ollama
-- [MCP Integration](docs/mcp-integration.md) -- Connecting Phileas to AI clients
+- [Quick Start](docs/quickstart.md) — guided tutorial
+- [CLI Reference](docs/cli-reference.md) — all commands
+- [Configuration](docs/configuration.md) — config.toml reference
+- [LLM Setup](docs/llm-setup.md) — provider guides
+- [MCP Integration](docs/mcp-integration.md) — connecting to AI clients
 
 ## Requirements
 
