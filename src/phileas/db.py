@@ -279,6 +279,33 @@ class Database:
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    # --- Hot Set ---
+
+    @_locked
+    def get_hot_items(
+        self,
+        profile_behavior_floor: int = 7,
+        identity_floor: int = 9,
+        reinforcement_floor: int = 3,
+        access_floor: int = 20,
+        max_size: int = 100,
+    ) -> list[MemoryItem]:
+        """Return memories that qualify for the hot set (always-relevant cache)."""
+        rows = self.conn.execute(
+            """SELECT * FROM memory_items
+            WHERE status = 'active'
+            AND (
+                (memory_type IN ('profile', 'behavior') AND importance >= ?)
+                OR importance >= ?
+                OR (reinforcement_count >= ? AND importance >= 6)
+                OR (access_count >= ? AND importance >= 6)
+            )
+            ORDER BY importance DESC, access_count DESC
+            LIMIT ?""",
+            (profile_behavior_floor, identity_floor, reinforcement_floor, access_floor, max_size),
+        ).fetchall()
+        return [self._row_to_item(row) for row in rows]
+
     # --- Internal ---
 
     @_locked

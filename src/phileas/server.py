@@ -5,6 +5,7 @@ via skills/agents and calls these tools to store and retrieve them.
 
 Tools:
   - memorize: store a pre-extracted memory
+  - context: get core user context instantly (hot memory cache)
   - recall: retrieve relevant memories
   - forget: archive a memory
   - relate: create a graph edge between entities
@@ -132,6 +133,28 @@ def memorize_batch(memories: list | str) -> str:
         results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
 
     return f"Batch complete ({len(results)} items):\n" + "\n".join(f"  {r}" for r in results)
+
+
+@mcp.tool()
+def context(top_k: int = 10, memory_type: str | None = None) -> str:
+    """Get the user's core context — identity, preferences, key facts.
+
+    Returns the most important, frequently-accessed memories without the full
+    recall pipeline. Use at session start or when you need baseline context fast.
+
+    Args:
+        top_k: Maximum number of core memories to return.
+        memory_type: Filter by type ("profile", "behavior", etc.).
+    """
+    items = engine.get_hot_memories(top_k=top_k, memory_type=memory_type)
+    if not items:
+        return "No core context available yet."
+
+    lines = [f"Core context ({len(items)} memories):"]
+    for item in items:
+        imp_str = f"importance={item['importance']}"
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']} ({imp_str})")
+    return "\n".join(lines)
 
 
 @mcp.tool()

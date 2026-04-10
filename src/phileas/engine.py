@@ -17,6 +17,7 @@ from datetime import date, datetime, timezone
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
+from phileas.hot import HotMemorySet
 from phileas.llm import LLMClient
 from phileas.logging import OpTimer, get_logger
 from phileas.models import MemoryItem
@@ -91,6 +92,18 @@ class MemoryEngine:
         self._usage_tracker = UsageTracker(usage_db)
 
         self.llm = LLMClient(self.config.llm, usage_tracker=self._usage_tracker)
+
+        # Hot memory cache — always-relevant memories loaded at startup
+        self._hot = HotMemorySet.build(self.db, self.config.hot_set)
+
+    # ------------------------------------------------------------------
+    # hot memory access
+    # ------------------------------------------------------------------
+
+    def get_hot_memories(self, top_k: int = 10, memory_type: str | None = None) -> list[dict]:
+        """Return hot memories sorted by importance, without the recall pipeline."""
+        items = self._hot.get(top_k=top_k, memory_type=memory_type)
+        return [_item_to_dict(item) for item in items]
 
     # ------------------------------------------------------------------
     # memorize
@@ -216,6 +229,9 @@ class MemoryEngine:
                     args=(item.id, item.summary),
                     daemon=True,
                 ).start()
+
+            # 8. Update hot set if this memory qualifies
+            self._hot.add(item)
 
             return result
 
@@ -352,11 +368,23 @@ class MemoryEngine:
                 queries = [query]
 
             # ----------------------------------------------------------
-            # Stage 1: Gather candidates from multiple paths
+            # Stage 0.5: Seed candidates from hot set
             # ----------------------------------------------------------
             candidates: dict[str, MemoryItem] = {}  # id -> item
             keyword_ids: set[str] = set()  # track keyword-matched candidates
             graph_ids: set[str] = set()  # track graph-matched candidates
+
+            for hot_item in self._hot.get_all():
+                if memory_type and hot_item.memory_type != memory_type:
+                    continue
+                if min_importance is not None and hot_item.importance < min_importance:
+                    continue
+                candidates[hot_item.id] = hot_item
+                keyword_ids.add(hot_item.id)  # bypass cross-encoder
+
+            # ----------------------------------------------------------
+            # Stage 1: Gather candidates from multiple paths
+            # ----------------------------------------------------------
 
             # Path 1: keyword search (SQLite) — run for each query variant
             for q in queries:
@@ -758,6 +786,12 @@ class MemoryEngine:
                             )
 
             timer.extra["snapshot_id"] = snapshot_id
+
+            # Refresh hot set entry (may add, update, or remove)
+            updated_item = self.db.get_item(memory_id)
+            if updated_item:
+                self._hot.refresh_item(updated_item)
+
             return {
                 "id": memory_id,
                 "snapshot_id": snapshot_id,
@@ -783,6 +817,8 @@ class MemoryEngine:
                 self.vector.delete_raw(memory_id)
             except Exception:
                 pass  # Raw text may not exist for this memory
+
+            self._hot.remove(memory_id)
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------

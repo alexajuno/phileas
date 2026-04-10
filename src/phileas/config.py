@@ -113,6 +113,15 @@ class ConsolidationConfig:
     auto_threshold: int = 100
 
 
+@dataclass
+class HotSetConfig:
+    profile_behavior_floor: int = 7  # Min importance for profile/behavior types
+    identity_floor: int = 9  # Min importance for any type
+    reinforcement_floor: int = 3  # Min reinforcement_count (with importance >= 6)
+    access_floor: int = 20  # Min access_count (with importance >= 6)
+    max_size: int = 100  # Safety cap on hot set size
+
+
 # ------------------------------------------------------------------
 # Top-level config
 # ------------------------------------------------------------------
@@ -133,6 +142,7 @@ class PhileasConfig:
     reinforcement: ReinforcementConfig = field(default_factory=ReinforcementConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
+    hot_set: HotSetConfig = field(default_factory=HotSetConfig)
 
     # -- Derived paths --
 
@@ -209,6 +219,7 @@ def load_config(home: Path | None = None) -> PhileasConfig:
             "reinforcement": cfg.reinforcement,
             "logging": cfg.logging,
             "consolidation": cfg.consolidation,
+            "hot_set": cfg.hot_set,
         }
         for section_name, section_obj in section_map.items():
             if section_name in data:
