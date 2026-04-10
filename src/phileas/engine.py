@@ -29,6 +29,27 @@ log = get_logger()
 _MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
 
 
+def _day_aliases(iso_date: str) -> list[str]:
+    """Generate natural language aliases for a Day entity.
+
+    Given "2026-04-09", returns:
+    ["April 9", "Apr 9", "April 9 2026", "Apr 9 2026", "Thursday"]
+    """
+    d = date.fromisoformat(iso_date)
+    full_month = d.strftime("%B")       # "April"
+    short_month = d.strftime("%b")      # "Apr"
+    day = str(d.day)                    # "9" (no zero-padding)
+    year = str(d.year)                  # "2026"
+    weekday = d.strftime("%A")          # "Thursday"
+    return [
+        f"{full_month} {day}",          # "April 9"
+        f"{short_month} {day}",         # "Apr 9"
+        f"{full_month} {day} {year}",   # "April 9 2026"
+        f"{short_month} {day} {year}",  # "Apr 9 2026"
+        weekday,                        # "Thursday"
+    ]
+
+
 def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     """Days since a given datetime, with optional fallback (e.g. created_at)."""
     target = dt or fallback
@@ -160,9 +181,12 @@ class MemoryEngine:
                                 "graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}}
                             )
 
+            # 6. Link memory to Day entity in graph
+            self._link_day_entity(item.id, daily_ref)
+
             timer.extra["id"] = item.id
 
-            # 5. Queue reinforcement check to daemon (async)
+            # 7. Queue reinforcement check to daemon (async)
             self._queue_reinforcement(item.id, summary)
 
             # 6. Check for contradictions with existing memories
@@ -207,6 +231,13 @@ class MemoryEngine:
                 pass  # Best-effort; daemon may not be running
 
         threading.Thread(target=_notify, daemon=True).start()
+
+    def _link_day_entity(self, memory_id: str, iso_date: str) -> None:
+        """Create a Day entity for the given date and link the memory to it."""
+        aliases = _day_aliases(iso_date)
+        self.graph.upsert_node("Day", iso_date)
+        self.graph.set_aliases("Day", iso_date, aliases)
+        self.graph.link_memory(memory_id, "Day", iso_date)
 
     def _bg_extract_entities(self, memory_id: str, summary: str) -> None:
         """Background thread: extract entities via LLM and link them in the graph.
@@ -325,6 +356,7 @@ class MemoryEngine:
             # ----------------------------------------------------------
             candidates: dict[str, MemoryItem] = {}  # id -> item
             keyword_ids: set[str] = set()  # track keyword-matched candidates
+            graph_ids: set[str] = set()  # track graph-matched candidates
 
             # Path 1: keyword search (SQLite) — run for each query variant
             for q in queries:
@@ -369,6 +401,8 @@ class MemoryEngine:
             words = query.split()
             seen_entities: set[tuple[str, str]] = set()
 
+            day_ids: set[str] = set()  # memories from matched Day entities
+
             def _add_memories_for_entity(etype: str, ename: str) -> None:
                 """Add memories linked to an entity to the candidates pool."""
                 if (ename, etype) in seen_entities:
@@ -380,6 +414,9 @@ class MemoryEngine:
                     log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
                     return
                 for mem_id in memory_ids:
+                    graph_ids.add(mem_id)
+                    if etype == "Day":
+                        day_ids.add(mem_id)
                     if mem_id not in candidates:
                         item = self.db.get_item(mem_id)
                         if item:
@@ -468,12 +505,17 @@ class MemoryEngine:
             # ----------------------------------------------------------
             from phileas.reranker import rerank
 
-            # Cosine similarity for keyword-matched candidates
+            # Candidates validated by keyword match or graph traversal
+            # bypass cross-encoder — their relevance is structural
+            structurally_matched = keyword_ids | graph_ids
+
+            # Cosine similarity for structurally-matched candidates
             cosine_hits = self.vector.search(query, top_k=top_k * 5)
             cosine_map = {mid: sim for mid, sim in cosine_hits}
 
-            # Cross-encoder for non-keyword candidates only
-            ce_candidates = [(mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in keyword_ids]
+            # Cross-encoder for candidates not already validated by
+            # keyword match or graph traversal
+            ce_candidates = [(mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched]
             if ce_candidates:
                 reranked = rerank(query, ce_candidates)
                 raw_ce = {mem_id: score for mem_id, score in reranked}
@@ -489,18 +531,26 @@ class MemoryEngine:
                 norm_ce = {}
 
             # Build unified relevance map
+            graph_boost = self.config.recall.graph_boost
             relevance_map: dict[str, float] = {}
             for mem_id in filtered:
-                if mem_id in keyword_ids:
+                if mem_id in day_ids:
+                    # Day entity match is an exact structural constraint —
+                    # the memory happened on the queried date. High relevance.
+                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.85)
+                elif mem_id in graph_ids:
+                    # Other graph matches: use graph_boost as floor
+                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), graph_boost)
+                elif mem_id in keyword_ids:
                     relevance_map[mem_id] = cosine_map.get(mem_id, 0.0)
                 else:
                     relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
 
             # Post-rerank filter: only apply relevance_floor to
-            # cross-encoder scored items (keyword hits already passed
-            # keyword matching, so they earned their place)
+            # cross-encoder scored items (structural hits already passed
+            # keyword matching or graph traversal, so they earned their place)
             for mem_id in list(filtered.keys()):
-                if mem_id not in keyword_ids:
+                if mem_id not in structurally_matched:
                     if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
                         del filtered[mem_id]
 
@@ -820,27 +870,85 @@ class MemoryEngine:
     # ------------------------------------------------------------------
 
     def timeline(self, start_date: str, end_date: str | None = None, window: int = 0) -> list[dict]:
-        """Return memories in a date range, delegating to SQLite.
+        """Return memories linked to Day entities in a date range.
+
+        Uses graph Day entities as the primary source.
+        Falls back to SQLite daily_ref for memories not yet migrated.
 
         Args:
             start_date: Start date (YYYY-MM-DD).
             end_date: End date (optional).
             window: Days to expand range in both directions (e.g. 1 = check day before and after).
         """
-        if window > 0:
-            from datetime import timedelta
+        from datetime import timedelta
 
-            start_dt = date.fromisoformat(start_date)
-            expanded_start = (start_dt - timedelta(days=window)).isoformat()
-            if end_date:
-                end_dt = date.fromisoformat(end_date)
-                expanded_end = (end_dt + timedelta(days=window)).isoformat()
-            else:
-                expanded_end = (start_dt + timedelta(days=window)).isoformat()
-            items = self.db.get_items_by_date_range(expanded_start, expanded_end)
+        start_dt = date.fromisoformat(start_date)
+        if end_date:
+            end_dt = date.fromisoformat(end_date)
         else:
-            items = self.db.get_items_by_date_range(start_date, end_date)
-        return [_item_to_dict(item) for item in items]
+            end_dt = start_dt
+
+        if window > 0:
+            start_dt = start_dt - timedelta(days=window)
+            end_dt = end_dt + timedelta(days=window)
+
+        # Collect memory IDs from Day entities in the graph
+        memory_ids: set[str] = set()
+        current = start_dt
+        while current <= end_dt:
+            iso = current.isoformat()
+            try:
+                ids = self.graph.get_memories_about("Day", iso)
+                memory_ids.update(ids)
+            except Exception:
+                pass
+            current += timedelta(days=1)
+
+        # Fetch items from SQLite
+        items_by_id: dict[str, MemoryItem] = {}
+        for mem_id in memory_ids:
+            item = self.db.get_item(mem_id)
+            if item and item.status == "active":
+                items_by_id[item.id] = item
+
+        # Fallback: also check SQLite daily_ref for un-migrated memories
+        fallback_items = self.db.get_items_by_date_range(
+            start_dt.isoformat(), end_dt.isoformat()
+        )
+        for item in fallback_items:
+            if item.id not in items_by_id:
+                items_by_id[item.id] = item
+
+        # Sort by created_at
+        sorted_items = sorted(items_by_id.values(), key=lambda x: x.created_at)
+        return [_item_to_dict(item) for item in sorted_items]
+
+    # ------------------------------------------------------------------
+    # backfill day entities
+    # ------------------------------------------------------------------
+
+    def backfill_day_entities(self) -> dict:
+        """Create Day entities for all existing memories with daily_ref.
+
+        Idempotent — safe to run multiple times. Returns stats.
+        """
+        items = self.db.get_active_items()
+        days_seen: set[str] = set()
+        linked = 0
+
+        for item in items:
+            if not item.daily_ref:
+                continue
+            iso = item.daily_ref
+            if iso not in days_seen:
+                aliases = _day_aliases(iso)
+                self.graph.upsert_node("Day", iso)
+                self.graph.set_aliases("Day", iso, aliases)
+                days_seen.add(iso)
+            self.graph.link_memory(item.id, "Day", iso)
+            linked += 1
+
+        return {"days_created": len(days_seen), "memories_linked": linked}
 
     # ------------------------------------------------------------------
     # reflect

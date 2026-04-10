@@ -675,6 +675,22 @@ def stop_cmd():
 # ------------------------------------------------------------------
 
 
+@click.command("backfill-days")
+def backfill_days():
+    """Create Day entities in the graph for all existing memories."""
+    cfg = load_config()
+    db = Database(path=cfg.db_path)
+    vector = VectorStore(path=cfg.chroma_path)
+    graph = GraphStore(path=cfg.graph_path)
+    engine = MemoryEngine(db=db, vector=vector, graph=graph, config=cfg)
+
+    result = engine.backfill_day_entities()
+    print_success(
+        f"Backfill complete: {result['days_created']} days, "
+        f"{result['memories_linked']} memories linked"
+    )
+
+
 @click.command()
 @click.option("--recent", default=0, type=int, help="Show N most recent LLM calls.")
 def usage(recent: int):
