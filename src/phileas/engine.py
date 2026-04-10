@@ -367,20 +367,9 @@ class MemoryEngine:
             else:
                 queries = [query]
 
-            # ----------------------------------------------------------
-            # Stage 0.5: Seed candidates from hot set
-            # ----------------------------------------------------------
             candidates: dict[str, MemoryItem] = {}  # id -> item
             keyword_ids: set[str] = set()  # track keyword-matched candidates
             graph_ids: set[str] = set()  # track graph-matched candidates
-
-            for hot_item in self._hot.get_all():
-                if memory_type and hot_item.memory_type != memory_type:
-                    continue
-                if min_importance is not None and hot_item.importance < min_importance:
-                    continue
-                candidates[hot_item.id] = hot_item
-                keyword_ids.add(hot_item.id)  # bypass cross-encoder
 
             # ----------------------------------------------------------
             # Stage 1: Gather candidates from multiple paths
@@ -628,35 +617,6 @@ class MemoryEngine:
             )
 
             # ----------------------------------------------------------
-            # Person-aware boost: if the query matches a Person entity,
-            # boost profile memories and recent events about that person.
-            # ----------------------------------------------------------
-            person_memory_ids: set[str] = set()
-            person_profile_ids: set[str] = set()
-            query_person_nodes = []
-            for word in words:
-                if len(word) < 2:
-                    continue
-                for node in self.graph.search_nodes(word):
-                    if node.get("type") == "Person":
-                        query_person_nodes.append(node)
-            for node in query_person_nodes:
-                ename = node.get("name")
-                if ename:
-                    try:
-                        mem_ids = self.graph.get_memories_about("Person", ename)
-                        person_memory_ids.update(mem_ids)
-                    except Exception as e:
-                        log.debug(
-                            "person lookup failed", extra={"op": "recall", "data": {"person": ename, "error": str(e)}}
-                        )
-
-            # Identify profile memories about the matched person
-            for mem_id in person_memory_ids:
-                item = filtered.get(mem_id) or candidates.get(mem_id)
-                if item and item.memory_type == "profile":
-                    person_profile_ids.add(mem_id)
-
             # Final scoring with importance/recency as tiebreakers
             results = []
             for sel in selected:
@@ -680,14 +640,6 @@ class MemoryEngine:
                     halving_interval=self.config.reinforcement.halving_interval,
                     min_decay=self.config.reinforcement.min_decay,
                 )
-                # Person-aware boosts
-                if sel["id"] in person_profile_ids:
-                    score += 0.3  # Profile memories about queried person
-                elif sel["id"] in person_memory_ids:
-                    # Recency boost for recent events about the person
-                    days_created = _days_since(item.created_at)
-                    if days_created <= 30:
-                        score += 0.1
                 results.append(_item_to_dict(item, score))
 
             results.sort(key=lambda r: r["score"], reverse=True)
