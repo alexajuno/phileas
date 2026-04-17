@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from phileas.stats.queries import llm_summary, memory_lifecycle
+from phileas.stats.queries import consolidation_runs, llm_summary, memory_lifecycle
 
 
 @pytest.fixture
@@ -94,3 +94,19 @@ def test_memory_lifecycle_by_type(phileas_db: Path):
     assert by_type["event"]["created"] == 3
     assert by_type["event"]["active"] == 2
     assert by_type["knowledge"]["created"] == 1
+
+
+def test_consolidation_runs_from_usage(usage_db: Path):
+    conn = sqlite3.connect(usage_db)
+    conn.execute(
+        """INSERT INTO llm_usage
+        (operation, model, provider, prompt_tokens, completion_tokens, total_tokens,
+         cost_usd, latency_ms, success, error, created_at)
+        VALUES ('consolidate_cluster','claude','anthropic',500,100,600,0.05,1200,1,NULL,?)""",
+        (datetime(2026, 4, 17, tzinfo=timezone.utc).isoformat(),),
+    )
+    conn.commit()
+    conn.close()
+    out = consolidation_runs(usage_db, since=None)
+    assert out["runs"] == 1
+    assert out["total_cost_usd"] == pytest.approx(0.05)

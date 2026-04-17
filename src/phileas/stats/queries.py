@@ -90,6 +90,20 @@ def memory_lifecycle(phileas_db: Path, since: datetime | None) -> dict:
     return {"total_created": total, "by_type": [dict(r) for r in rows]}
 
 
+def consolidation_runs(usage_db: Path, since: datetime | None) -> dict:
+    """Count consolidation / reflection LLM calls and cost."""
+    clause, params = _since_clause(since)
+    where = (clause + " AND" if clause else " WHERE") + " (operation LIKE 'consolidate%' OR operation LIKE 'reflect%')"
+    sql = f"""SELECT COUNT(*) AS runs,
+                     COALESCE(SUM(cost_usd),0.0) AS total_cost_usd,
+                     COALESCE(SUM(total_tokens),0) AS total_tokens,
+                     MAX(created_at) AS last_run
+              FROM llm_usage{where}"""
+    with _connect(usage_db) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return {k: row[k] for k in row.keys()}
+
+
 def memory_timeseries(phileas_db: Path, since: datetime | None) -> list[dict]:
     where, params = _since_clause(since)
     with _connect(phileas_db) as conn:
