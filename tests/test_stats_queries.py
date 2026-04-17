@@ -67,9 +67,9 @@ def phileas_db(tmp_path: Path) -> Path:
     conn = sqlite3.connect(p)
     conn.executescript(
         """
-        CREATE TABLE memories (
+        CREATE TABLE memory_items (
             id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
             created_at TEXT NOT NULL
         );
@@ -82,7 +82,10 @@ def phileas_db(tmp_path: Path) -> Path:
         ("c", "knowledge", "active", (now - timedelta(days=3)).isoformat()),
         ("d", "event", "archived", (now - timedelta(days=5)).isoformat()),
     ]
-    conn.executemany("INSERT INTO memories (id, type, status, created_at) VALUES (?,?,?,?)", rows)
+    conn.executemany(
+        "INSERT INTO memory_items (id, memory_type, status, created_at) VALUES (?,?,?,?)",
+        rows,
+    )
     conn.commit()
     conn.close()
     return p

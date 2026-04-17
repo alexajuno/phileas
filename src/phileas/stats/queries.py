@@ -77,16 +77,16 @@ def memory_lifecycle(phileas_db: Path, since: datetime | None) -> dict:
     where, params = _since_clause(since)
     with _connect(phileas_db) as conn:
         rows = conn.execute(
-            f"""SELECT type,
+            f"""SELECT memory_type AS type,
                        COUNT(*) AS created,
                        SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,
                        SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived
-                FROM memories{where}
-                GROUP BY type
+                FROM memory_items{where}
+                GROUP BY memory_type
                 ORDER BY created DESC""",
             params,
         ).fetchall()
-        total = conn.execute(f"SELECT COUNT(*) AS c FROM memories{where}", params).fetchone()["c"]
+        total = conn.execute(f"SELECT COUNT(*) AS c FROM memory_items{where}", params).fetchone()["c"]
     return {"total_created": total, "by_type": [dict(r) for r in rows]}
 
 
@@ -108,7 +108,7 @@ def memory_timeseries(phileas_db: Path, since: datetime | None) -> list[dict]:
     where, params = _since_clause(since)
     with _connect(phileas_db) as conn:
         rows = conn.execute(
-            f"SELECT created_at, type FROM memories{where}",
+            f"SELECT created_at, memory_type AS type FROM memory_items{where}",
             params,
         ).fetchall()
     return [dict(r) | {"count": 1} for r in rows]
