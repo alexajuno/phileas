@@ -138,6 +138,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # MCP server processes and leave the daemon's graph in a broken state.
     if not graph._ensure_connected():
         log.warning("Daemon failed to initialize KuzuDB connection")
+        try:
+            engine._metrics.record_daemon("lock_contention", payload={"path": str(config.graph_path)})
+        except Exception:
+            pass
 
     # Pre-warm the reranker by importing it
     try:
@@ -192,6 +196,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     # Handle SIGTERM gracefully
     def _shutdown(signum, frame):
+        try:
+            engine._metrics.record_daemon("stop", payload={"signal": signum})
+        except Exception:
+            pass
         server.shutdown()
         _pid_path(config).unlink(missing_ok=True)
         _port_path(config).unlink(missing_ok=True)
@@ -202,6 +210,12 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     if foreground:
         print(f"Phileas daemon running on port {port} (PID {os.getpid()})")
+
+    # Record daemon start + wrap shutdown with stop event
+    try:
+        engine._metrics.record_daemon("start", payload={"pid": os.getpid(), "port": port})
+    except Exception:
+        pass
 
     # -- Install systemd timers for reflection + inference ---
     try:

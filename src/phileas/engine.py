@@ -1052,6 +1052,19 @@ class MemoryEngine:
 
             timer.extra["insights"] = len(stored)
             timer.extra["source_memories"] = len(day_memories)
+
+            try:
+                self._metrics.record_daemon(
+                    "reflect_run",
+                    payload={
+                        "date": target_date,
+                        "insights": len(stored),
+                        "source_memories": len(day_memories),
+                    },
+                )
+            except Exception:
+                pass
+
             return stored
 
     # ------------------------------------------------------------------
