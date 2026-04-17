@@ -303,3 +303,41 @@ def stats_overview(ctx, since: str, bucket: str, as_json: bool):
         ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json)
         ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json)
         ctx.invoke(stats_daemon, since=since, bucket=bucket, as_json=as_json)
+
+
+_WATCHABLE = {
+    "overview": lambda ctx, since, bucket, as_json: ctx.invoke(
+        stats_overview, since=since, bucket=bucket, as_json=as_json
+    ),
+    "llm": lambda ctx, since, bucket, as_json: ctx.invoke(stats_llm, since=since, bucket=bucket, as_json=as_json),
+    "memory": lambda ctx, since, bucket, as_json: ctx.invoke(stats_memory, since=since, bucket=bucket, as_json=as_json),
+    "graph": lambda ctx, since, bucket, as_json: ctx.invoke(stats_graph, as_json=as_json),
+    "consolidation": lambda ctx, since, bucket, as_json: ctx.invoke(
+        stats_consolidation, since=since, bucket=bucket, as_json=as_json
+    ),
+    "recall": lambda ctx, since, bucket, as_json: ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json),
+    "ingest": lambda ctx, since, bucket, as_json: ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json),
+    "daemon": lambda ctx, since, bucket, as_json: ctx.invoke(stats_daemon, since=since, bucket=bucket, as_json=as_json),
+}
+
+
+@stats.command("watch")
+@click.argument("target", default="overview", type=click.Choice(sorted(_WATCHABLE.keys())))
+@click.option("--interval", default=5, type=int, help="Seconds between refreshes.")
+@click.option("--since", default="7d", show_default=True)
+@click.option("--bucket", default="auto")
+@click.option("--json", "as_json", is_flag=True)
+@click.pass_context
+def stats_watch(ctx, target: str, interval: int, since: str, bucket: str, as_json: bool):
+    """Re-render a stats view every N seconds. Ctrl-C to exit."""
+    import time
+
+    run = _WATCHABLE[target]
+    try:
+        while True:
+            if not as_json:
+                render.console.clear()
+            run(ctx, since, bucket, as_json)
+            time.sleep(max(1, interval))
+    except KeyboardInterrupt:
+        return
