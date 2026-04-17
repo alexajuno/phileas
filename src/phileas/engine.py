@@ -96,6 +96,11 @@ class MemoryEngine:
         # Hot memory cache — always-relevant memories loaded at startup
         self._hot = HotMemorySet.build(self.db, self.config.hot_set)
 
+        # Metrics sink — best-effort, never raises into user paths
+        from phileas.stats.writer import MetricsWriter
+
+        self._metrics = MetricsWriter(self.config.home / "metrics.db")
+
     # ------------------------------------------------------------------
     # hot memory access
     # ------------------------------------------------------------------
@@ -233,6 +238,17 @@ class MemoryEngine:
             # 8. Update hot set if this memory qualifies
             self._hot.add(item)
 
+            try:
+                self._metrics.record_ingest(
+                    memory_type=memory_type,
+                    importance=importance,
+                    entity_count=len(entities or []),
+                    deduped=False,
+                    source="engine",
+                )
+            except Exception:
+                pass
+
             return result
 
     def _queue_reinforcement(self, memory_id: str, summary: str) -> None:
@@ -341,6 +357,9 @@ class MemoryEngine:
 
         Returns list of dicts with id, summary, type, importance, score.
         """
+        from time import perf_counter
+
+        _t0 = perf_counter()
         with OpTimer(
             log,
             "recall",
@@ -662,6 +681,22 @@ class MemoryEngine:
             timer.extra["results"] = len(results)
             if results:
                 timer.extra["top_score"] = round(results[0]["score"], 3)
+
+            try:
+                top1 = results[0]["score"] if results else None
+                mean = sum(r.get("score", 0.0) for r in results) / len(results) if results else None
+                self._metrics.record_recall(
+                    query_len=len(query),
+                    top_k=top_k,
+                    returned=len(results),
+                    top1_score=top1,
+                    mean_score=mean,
+                    empty=not results,
+                    hot_hit=False,
+                    latency_ms=(perf_counter() - _t0) * 1000,
+                )
+            except Exception:
+                pass
 
             return results
 
