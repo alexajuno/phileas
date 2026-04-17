@@ -581,29 +581,40 @@ class MemoryEngine:
             # Stage 3: MMR diversity selection + final scoring
             # ----------------------------------------------------------
 
-            # Build similarity matrix from embeddings for MMR
+            # Build similarity matrix from embeddings for MMR.
+            #
+            # Vectorized with numpy: pure-Python pairwise cosine over
+            # 500+ candidates × 384 dims is the dominant recall cost
+            # (~10s on CPU). Numpy does the same in ~10ms.
             candidate_ids = list(filtered.keys())
             embeddings = self.vector.get_embeddings(candidate_ids)
 
-            sim_matrix: dict[str, dict[str, float]] = {}
-            for id_a in candidate_ids:
-                sim_matrix[id_a] = {}
-                emb_a = embeddings.get(id_a)
-                if emb_a is None:
-                    continue
-                for id_b in candidate_ids:
-                    if id_a == id_b:
-                        sim_matrix[id_a][id_b] = 1.0
-                        continue
-                    emb_b = embeddings.get(id_b)
-                    if emb_b is None:
-                        sim_matrix[id_a][id_b] = 0.0
-                        continue
-                    # Cosine similarity
-                    dot = sum(a * b for a, b in zip(emb_a, emb_b))
-                    norm_a = sum(a * a for a in emb_a) ** 0.5
-                    norm_b = sum(b * b for b in emb_b) ** 0.5
-                    sim_matrix[id_a][id_b] = dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+            sim_matrix: dict[str, dict[str, float]] = {cid: {} for cid in candidate_ids}
+            valid_ids = [cid for cid in candidate_ids if cid in embeddings]
+            if valid_ids:
+                import numpy as np
+
+                emb_matrix = np.asarray([embeddings[cid] for cid in valid_ids], dtype=np.float64)
+                norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+                norms[norms == 0.0] = 1.0
+                normalized = emb_matrix / norms
+                sim_full = normalized @ normalized.T
+
+                for i, id_a in enumerate(valid_ids):
+                    row = sim_matrix[id_a]
+                    sim_row = sim_full[i]
+                    for j, id_b in enumerate(valid_ids):
+                        row[id_b] = float(sim_row[j])
+                    row[id_a] = 1.0  # exact self-similarity
+
+            # Candidates without embeddings: zero similarity to everyone,
+            # diagonal stays 1.0 so MMR still treats them as "self".
+            for cid in candidate_ids:
+                if cid not in embeddings:
+                    sim_matrix[cid][cid] = 1.0
+                    for other in candidate_ids:
+                        if other != cid and other not in sim_matrix[cid]:
+                            sim_matrix[cid][other] = 0.0
 
             # Build MMR candidates with relevance scores
             mmr_candidates = [{"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)} for mem_id in candidate_ids]

@@ -13,6 +13,40 @@ COLLECTION_NAME = "memories"
 RAW_COLLECTION_NAME = "raw_memories"
 
 
+def _zip_embeddings(chroma_result: dict) -> dict[str, list[float]]:
+    """Zip Chroma get() result into {id: embedding} safely.
+
+    Chroma may return embeddings as a numpy ndarray or a Python list, and
+    individual entries may be None for missing ids. Truthiness checks on
+    numpy arrays raise, so this helper avoids them entirely.
+
+    Always returns native Python floats (not numpy scalars). Downstream MMR
+    stages do pairwise dot products in pure Python, and numpy scalars there
+    are ~100x slower per op than plain floats.
+    """
+    ids = chroma_result.get("ids") or []
+    raw = chroma_result.get("embeddings")
+    if raw is None:
+        return {}
+    out: dict[str, list[float]] = {}
+    for i, mid in enumerate(ids):
+        if i >= len(raw):
+            break
+        emb = raw[i]
+        if emb is None:
+            continue
+        # .tolist() converts numpy arrays + scalars deeply to native Python.
+        # Falls back to list() for plain Python iterables that lack .tolist.
+        if hasattr(emb, "tolist"):
+            out[mid] = emb.tolist()
+        else:
+            try:
+                out[mid] = [float(x) for x in emb]
+            except TypeError:
+                continue
+    return out
+
+
 class VectorStore:
     def __init__(self, path: Path = DEFAULT_CHROMA_PATH):
         path.mkdir(parents=True, exist_ok=True)
@@ -73,13 +107,34 @@ class VectorStore:
         return None
 
     def get_embeddings(self, memory_ids: list[str]) -> dict[str, list[float]]:
-        """Get stored embeddings for given memory IDs. Returns {id: embedding}."""
+        """Get stored embeddings for given memory IDs. Returns {id: embedding}.
+
+        Resilient to drift between SQLite and Chroma: if some IDs are missing
+        from the vector store, returns embeddings only for the ones that exist
+        instead of raising. Without this guard a single orphan memory_item
+        brings down all of recall via Chroma's "Error finding id" error.
+
+        Note on numpy: Chroma can return embeddings as a numpy ndarray, so
+        any truthiness check (`bool(arr)`, `arr or default`) raises. Always
+        use `is None` and explicit length checks here.
+        """
         if not memory_ids:
             return {}
-        result = self._collection.get(ids=memory_ids, include=["embeddings"])
-        ids = result["ids"]
-        embeddings = result["embeddings"] if result["embeddings"] is not None else []
-        return {mid: list(emb) for mid, emb in zip(ids, embeddings) if emb is not None}
+        try:
+            result = self._collection.get(ids=memory_ids, include=["embeddings"])
+            return _zip_embeddings(result)
+        except Exception:
+            return self._get_embeddings_individually(memory_ids)
+
+    def _get_embeddings_individually(self, memory_ids: list[str]) -> dict[str, list[float]]:
+        out: dict[str, list[float]] = {}
+        for mid in memory_ids:
+            try:
+                r = self._collection.get(ids=[mid], include=["embeddings"])
+            except Exception:
+                continue
+            out.update(_zip_embeddings(r))
+        return out
 
     def delete(self, memory_id: str) -> None:
         self._collection.delete(ids=[memory_id])
