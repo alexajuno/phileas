@@ -30,6 +30,7 @@ from phileas.cli.commands import (
     update_cmd,
     usage,
 )
+from phileas.stats.cli import stats
 
 
 @click.group()
@@ -57,3 +58,4 @@ app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)
 app.add_command(backfill_days)
+app.add_command(stats)
