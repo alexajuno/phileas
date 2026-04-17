@@ -260,6 +260,35 @@ def stats_ingest(since: str, bucket: str, as_json: bool):
     render.console.print(t)
 
 
+@stats.command("daemon")
+@_shared_flags
+def stats_daemon(since: str, bucket: str, as_json: bool):
+    """Daemon health — uptime markers, errors, lock contention, runs."""
+    cfg = load_config()
+    since_dt, _, _ = _resolve_window(since)
+    metrics_db = cfg.home / "metrics.db"
+    if not metrics_db.exists():
+        click.echo("No daemon events yet.", err=True)
+        raise SystemExit(1)
+    data = queries.daemon_summary(metrics_db, since_dt)
+    if as_json:
+        click.echo(json_mod.dumps(data, default=str))
+        return
+    render.console.print(
+        render.headline(
+            f"Daemon ({since})",
+            [
+                ("Errors", str(data["errors"])),
+                ("Lock contentions", str(data["lock_contentions"])),
+                ("Consolidate runs", str(data["consolidate_runs"])),
+                ("Reflect runs", str(data["reflect_runs"])),
+                ("Last start", data["last_start"] or "—"),
+                ("Last stop", data["last_stop"] or "—"),
+            ],
+        )
+    )
+
+
 @stats.command("overview")
 @_shared_flags
 @click.pass_context
@@ -273,3 +302,4 @@ def stats_overview(ctx, since: str, bucket: str, as_json: bool):
     if (cfg.home / "metrics.db").exists():
         ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json)
         ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json)
+        ctx.invoke(stats_daemon, since=since, bucket=bucket, as_json=as_json)

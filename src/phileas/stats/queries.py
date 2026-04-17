@@ -173,6 +173,27 @@ def ingest_summary(metrics_db: Path, since: datetime | None) -> dict:
     }
 
 
+def daemon_summary(metrics_db: Path, since: datetime | None) -> dict:
+    where, params = _since_clause(since)
+    with _connect(metrics_db) as conn:
+        counts = conn.execute(
+            f"SELECT kind, COUNT(*) AS c FROM daemon_events{where} GROUP BY kind",
+            params,
+        ).fetchall()
+        last_start = conn.execute("SELECT MAX(created_at) AS ts FROM daemon_events WHERE kind='start'").fetchone()["ts"]
+        last_stop = conn.execute("SELECT MAX(created_at) AS ts FROM daemon_events WHERE kind='stop'").fetchone()["ts"]
+    by_kind = {r["kind"]: r["c"] for r in counts}
+    return {
+        "by_kind": by_kind,
+        "errors": by_kind.get("error", 0),
+        "lock_contentions": by_kind.get("lock_contention", 0),
+        "consolidate_runs": by_kind.get("consolidate_run", 0),
+        "reflect_runs": by_kind.get("reflect_run", 0),
+        "last_start": last_start,
+        "last_stop": last_stop,
+    }
+
+
 def memory_timeseries(phileas_db: Path, since: datetime | None) -> list[dict]:
     where, params = _since_clause(since)
     with _connect(phileas_db) as conn:

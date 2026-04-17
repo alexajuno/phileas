@@ -181,3 +181,34 @@ def test_ingest_summary(metrics_db: Path):
     assert out["dedup_rate"] == pytest.approx(1 / 3)
     by_type = {r["memory_type"]: r for r in out["by_type"]}
     assert by_type["event"]["count"] == 2
+
+
+def test_daemon_summary(tmp_path: Path):
+    p = tmp_path / "daemon_metrics.db"
+    conn = sqlite3.connect(p)
+    conn.executescript(
+        """CREATE TABLE daemon_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL, kind TEXT NOT NULL, payload_json TEXT
+        );"""
+    )
+    now = datetime(2026, 4, 17, tzinfo=timezone.utc)
+    rows = [
+        ((now - timedelta(hours=2)).isoformat(), "start", None),
+        ((now - timedelta(hours=1)).isoformat(), "lock_contention", None),
+        ((now - timedelta(hours=1)).isoformat(), "error", '{"err":"x"}'),
+        (now.isoformat(), "reflect_run", '{"insights": 4}'),
+    ]
+    conn.executemany(
+        "INSERT INTO daemon_events (created_at, kind, payload_json) VALUES (?,?,?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    from phileas.stats.queries import daemon_summary
+
+    out = daemon_summary(p, since=None)
+    assert out["errors"] == 1
+    assert out["lock_contentions"] == 1
+    assert out["reflect_runs"] == 1
+    assert out["last_start"] is not None
