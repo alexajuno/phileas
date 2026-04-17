@@ -356,6 +356,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 summary=mem["summary"],
                 memory_type=mem.get("memory_type", "knowledge"),
                 importance=mem.get("importance", 5),
+                raw_text=mem.get("raw_text") or text,
                 entities=mem.get("entities"),
                 relationships=mem.get("relationships"),
             )
