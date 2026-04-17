@@ -691,88 +691,10 @@ def backfill_days():
 
 
 @click.command()
-@click.option("--recent", default=0, type=int, help="Show N most recent LLM calls.")
-def usage(recent: int):
-    """Show LLM usage statistics — tokens, cost, requests by operation."""
-    try:
-        from phileas.config import load_config
-        from phileas.llm.usage import UsageTracker
+@click.option("--since", default="all", show_default=True, help="Time window: 24h, 7d, 30d, all.")
+@click.pass_context
+def usage(ctx, since: str):
+    """Alias for `phileas stats llm` — tokens, cost, requests by operation."""
+    from phileas.stats.cli import stats_llm
 
-        cfg = load_config()
-        usage_db = cfg.home / "usage.db"
-        if not usage_db.exists():
-            print_error("No usage data yet. Make some LLM calls first (e.g. phileas remember).")
-            raise SystemExit(1)
-
-        tracker = UsageTracker(usage_db)
-
-        # Summary
-        summary = tracker.get_summary()
-        from rich.table import Table
-
-        table = Table(title="LLM Usage Summary")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
-        table.add_row("Total requests", str(summary["total_requests"]))
-        table.add_row("Successful", str(summary["successful"]))
-        table.add_row("Failed", str(summary["failed"]))
-        table.add_row("Prompt tokens", f"{summary['total_prompt_tokens']:,}")
-        table.add_row("Completion tokens", f"{summary['total_completion_tokens']:,}")
-        table.add_row("Total tokens", f"{summary['total_tokens']:,}")
-        table.add_row("Total cost", f"${summary['total_cost_usd']:.4f}")
-        table.add_row("Avg latency", f"{summary['avg_latency_ms']:.0f}ms")
-        console.print(table)
-
-        # Per-operation breakdown
-        by_op = tracker.get_by_operation()
-        if by_op:
-            op_table = Table(title="By Operation")
-            op_table.add_column("Operation", style="cyan")
-            op_table.add_column("Requests", style="green")
-            op_table.add_column("Tokens", style="yellow")
-            op_table.add_column("Cost", style="green")
-            op_table.add_column("Avg ms", style="dim")
-            op_table.add_column("Fails", style="red")
-            for row in by_op:
-                op_table.add_row(
-                    row["operation"],
-                    str(row["requests"]),
-                    f"{row['total_tokens']:,}",
-                    f"${row['cost_usd']:.4f}",
-                    f"{row['avg_latency_ms']:.0f}",
-                    str(row["failures"]) if row["failures"] else "",
-                )
-            console.print(op_table)
-
-        # Recent calls
-        if recent > 0:
-            recent_calls = tracker.get_recent(limit=recent)
-            if recent_calls:
-                r_table = Table(title=f"Recent {len(recent_calls)} Calls")
-                r_table.add_column("Time", style="dim")
-                r_table.add_column("Operation", style="cyan")
-                r_table.add_column("Model")
-                r_table.add_column("Tokens", style="yellow")
-                r_table.add_column("Cost", style="green")
-                r_table.add_column("ms", style="dim")
-                r_table.add_column("OK", style="green")
-                for call in recent_calls:
-                    ts = call["created_at"][:19].replace("T", " ")
-                    ok = "[green]Y[/green]" if call["success"] else f"[red]N[/red] {call.get('error', '')[:30]}"
-                    r_table.add_row(
-                        ts,
-                        call["operation"],
-                        call["model"] or "",
-                        str(call["total_tokens"]),
-                        f"${call['cost_usd']:.4f}",
-                        f"{call['latency_ms']:.0f}",
-                        ok,
-                    )
-                console.print(r_table)
-
-        tracker.close()
-    except SystemExit:
-        raise
-    except Exception as exc:
-        print_error(str(exc))
-        raise SystemExit(1)
+    ctx.invoke(stats_llm, since=since, bucket="auto", as_json=False)
