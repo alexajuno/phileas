@@ -104,6 +104,75 @@ def consolidation_runs(usage_db: Path, since: datetime | None) -> dict:
     return {k: row[k] for k in row.keys()}
 
 
+def recall_summary(metrics_db: Path, since: datetime | None) -> dict:
+    where, params = _since_clause(since)
+    with _connect(metrics_db) as conn:
+        row = conn.execute(
+            f"""SELECT
+                COUNT(*) AS total_recalls,
+                COALESCE(AVG(top1_score), 0.0) AS avg_top1,
+                COALESCE(AVG(mean_score), 0.0) AS avg_mean,
+                COALESCE(AVG(latency_ms), 0.0) AS avg_latency_ms,
+                SUM(empty) * 1.0 / NULLIF(COUNT(*), 0) AS empty_rate,
+                SUM(hot_hit) * 1.0 / NULLIF(COUNT(*), 0) AS hot_hit_rate
+            FROM recall_events{where}""",
+            params,
+        ).fetchone()
+        lat_rows = conn.execute(
+            f"SELECT latency_ms FROM recall_events{where} ORDER BY latency_ms",
+            params,
+        ).fetchall()
+    latencies = [r["latency_ms"] for r in lat_rows if r["latency_ms"] is not None]
+
+    def _p(q: float) -> float:
+        if not latencies:
+            return 0.0
+        idx = min(len(latencies) - 1, int(q * len(latencies)))
+        return float(latencies[idx])
+
+    return {
+        "total_recalls": row["total_recalls"],
+        "avg_top1": row["avg_top1"] or 0.0,
+        "avg_mean": row["avg_mean"] or 0.0,
+        "avg_latency_ms": row["avg_latency_ms"] or 0.0,
+        "empty_rate": row["empty_rate"] or 0.0,
+        "hot_hit_rate": row["hot_hit_rate"] or 0.0,
+        "p50_latency_ms": _p(0.5),
+        "p95_latency_ms": _p(0.95),
+    }
+
+
+def ingest_summary(metrics_db: Path, since: datetime | None) -> dict:
+    where, params = _since_clause(since)
+    with _connect(metrics_db) as conn:
+        row = conn.execute(
+            f"""SELECT
+                COUNT(*) AS total_ingests,
+                COALESCE(AVG(entity_count), 0.0) AS avg_entities,
+                SUM(deduped) * 1.0 / NULLIF(COUNT(*), 0) AS dedup_rate,
+                SUM(CASE WHEN entity_count = 0 THEN 1 ELSE 0 END) * 1.0 / NULLIF(COUNT(*), 0)
+                    AS zero_entity_rate
+            FROM ingest_events{where}""",
+            params,
+        ).fetchone()
+        by_type = conn.execute(
+            f"""SELECT memory_type, COUNT(*) AS count,
+                       AVG(entity_count) AS avg_entities,
+                       SUM(deduped) * 1.0 / COUNT(*) AS dedup_rate
+                FROM ingest_events{where}
+                GROUP BY memory_type
+                ORDER BY count DESC""",
+            params,
+        ).fetchall()
+    return {
+        "total_ingests": row["total_ingests"],
+        "avg_entities": row["avg_entities"] or 0.0,
+        "dedup_rate": row["dedup_rate"] or 0.0,
+        "zero_entity_rate": row["zero_entity_rate"] or 0.0,
+        "by_type": [dict(r) for r in by_type],
+    }
+
+
 def memory_timeseries(phileas_db: Path, since: datetime | None) -> list[dict]:
     where, params = _since_clause(since)
     with _connect(phileas_db) as conn:

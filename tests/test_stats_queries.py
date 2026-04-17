@@ -113,3 +113,71 @@ def test_consolidation_runs_from_usage(usage_db: Path):
     out = consolidation_runs(usage_db, since=None)
     assert out["runs"] == 1
     assert out["total_cost_usd"] == pytest.approx(0.05)
+
+
+@pytest.fixture
+def metrics_db(tmp_path: Path) -> Path:
+    p = tmp_path / "metrics.db"
+    conn = sqlite3.connect(p)
+    conn.executescript(
+        """
+        CREATE TABLE recall_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            query_len INTEGER, top_k INTEGER, returned INTEGER,
+            top1_score REAL, mean_score REAL,
+            empty INTEGER NOT NULL, hot_hit INTEGER,
+            latency_ms REAL, stage_timings_json TEXT
+        );
+        CREATE TABLE ingest_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            memory_type TEXT, importance INTEGER,
+            entity_count INTEGER, deduped INTEGER NOT NULL, source TEXT
+        );
+        """
+    )
+    now = datetime(2026, 4, 17, tzinfo=timezone.utc).isoformat()
+    conn.executemany(
+        """INSERT INTO recall_events
+        (created_at, query_len, top_k, returned, top1_score, mean_score, empty, hot_hit, latency_ms)
+        VALUES (?,?,?,?,?,?,?,?,?)""",
+        [
+            (now, 20, 10, 5, 0.9, 0.7, 0, 1, 40.0),
+            (now, 15, 10, 0, None, None, 1, 0, 200.0),
+            (now, 30, 10, 8, 0.8, 0.6, 0, 0, 60.0),
+        ],
+    )
+    conn.executemany(
+        """INSERT INTO ingest_events
+        (created_at, memory_type, importance, entity_count, deduped, source)
+        VALUES (?,?,?,?,?,?)""",
+        [
+            (now, "event", 7, 2, 0, "mcp"),
+            (now, "event", 5, 0, 1, "mcp"),
+            (now, "knowledge", 8, 3, 0, "cli"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return p
+
+
+def test_recall_summary(metrics_db: Path):
+    from phileas.stats.queries import recall_summary
+
+    out = recall_summary(metrics_db, since=None)
+    assert out["total_recalls"] == 3
+    assert out["empty_rate"] == pytest.approx(1 / 3)
+    assert out["hot_hit_rate"] == pytest.approx(1 / 3)
+    assert out["avg_top1"] == pytest.approx((0.9 + 0.8) / 2)
+
+
+def test_ingest_summary(metrics_db: Path):
+    from phileas.stats.queries import ingest_summary
+
+    out = ingest_summary(metrics_db, since=None)
+    assert out["total_ingests"] == 3
+    assert out["dedup_rate"] == pytest.approx(1 / 3)
+    by_type = {r["memory_type"]: r for r in out["by_type"]}
+    assert by_type["event"]["count"] == 2

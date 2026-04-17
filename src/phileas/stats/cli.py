@@ -193,12 +193,83 @@ def stats_consolidation(since: str, bucket: str, as_json: bool):
     )
 
 
+@stats.command("recall")
+@_shared_flags
+def stats_recall(since: str, bucket: str, as_json: bool):
+    """Recall quality — top1, empty rate, latency, hot-hit rate."""
+    cfg = load_config()
+    since_dt, _, _ = _resolve_window(since)
+    metrics_db = cfg.home / "metrics.db"
+    if not metrics_db.exists():
+        click.echo("No recall events yet. Run some recalls first.", err=True)
+        raise SystemExit(1)
+    data = queries.recall_summary(metrics_db, since_dt)
+    if as_json:
+        click.echo(json_mod.dumps(data, default=str))
+        return
+    render.console.print(
+        render.headline(
+            f"Recall ({since})",
+            [
+                ("Queries", str(data["total_recalls"])),
+                ("Empty rate", f"{data['empty_rate']:.1%}"),
+                ("Hot-hit rate", f"{data['hot_hit_rate']:.1%}"),
+                ("Avg top-1", f"{data['avg_top1']:.3f}"),
+                ("Latency p50", f"{data['p50_latency_ms']:.0f}ms"),
+                ("Latency p95", f"{data['p95_latency_ms']:.0f}ms"),
+            ],
+        )
+    )
+
+
+@stats.command("ingest")
+@_shared_flags
+def stats_ingest(since: str, bucket: str, as_json: bool):
+    """Ingest rate, dedup rate, entity coverage by type."""
+    cfg = load_config()
+    since_dt, _, _ = _resolve_window(since)
+    metrics_db = cfg.home / "metrics.db"
+    if not metrics_db.exists():
+        click.echo("No ingest events yet.", err=True)
+        raise SystemExit(1)
+    data = queries.ingest_summary(metrics_db, since_dt)
+    if as_json:
+        click.echo(json_mod.dumps(data, default=str))
+        return
+    render.console.print(
+        render.headline(
+            f"Ingest ({since})",
+            [
+                ("Memorize calls", str(data["total_ingests"])),
+                ("Dedup rate", f"{data['dedup_rate']:.1%}"),
+                ("Zero-entity rate", f"{data['zero_entity_rate']:.1%}"),
+                ("Avg entities", f"{data['avg_entities']:.2f}"),
+            ],
+        )
+    )
+    t = Table(title="By Type")
+    for col in ("Type", "Count", "Avg entities", "Dedup rate"):
+        t.add_column(col)
+    for r in data["by_type"]:
+        t.add_row(
+            r["memory_type"] or "(null)",
+            str(r["count"]),
+            f"{(r['avg_entities'] or 0):.2f}",
+            f"{(r['dedup_rate'] or 0):.1%}",
+        )
+    render.console.print(t)
+
+
 @stats.command("overview")
 @_shared_flags
 @click.pass_context
 def stats_overview(ctx, since: str, bucket: str, as_json: bool):
     """Everything at a glance."""
+    cfg = load_config()
     ctx.invoke(stats_llm, since=since, bucket=bucket, as_json=as_json)
     ctx.invoke(stats_memory, since=since, bucket=bucket, as_json=as_json)
     ctx.invoke(stats_graph, as_json=as_json)
     ctx.invoke(stats_consolidation, since=since, bucket=bucket, as_json=as_json)
+    if (cfg.home / "metrics.db").exists():
+        ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json)
+        ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json)
