@@ -30,6 +30,31 @@ def parse_json_response(text: str) -> Any:
     return json.loads(stripped)
 
 
+def _free_ram_gb() -> float:
+    """Return available (reclaimable) RAM in GiB, or 0.0 if unreadable."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    kb = int(line.split()[1])
+                    return kb / 1024 / 1024
+    except OSError, ValueError:
+        pass
+    return 0.0
+
+
+def _resolve_auto_provider(config: LLMConfig) -> str:
+    """Pick 'claude-cli' when free RAM is plentiful, else the configured fallback.
+
+    claude-cli spawns a full Claude Code subprocess (~200-400 MB + MCP servers)
+    but bills against the user's subscription. The direct API path has no local
+    RAM cost and lower first-token latency, at a per-call fee.
+    """
+    if _free_ram_gb() >= config.auto_free_ram_gb and which("claude") is not None:
+        return "claude-cli"
+    return config.auto_fallback
+
+
 def _claude_cli_complete(
     model: str | None,
     messages: list[dict[str, Any]],
@@ -55,14 +80,19 @@ def _claude_cli_complete(
 
     cmd = ["claude", "-p", "--output-format", "json"]
     if model:
-        cmd.extend(["--model", model])
+        # litellm uses "anthropic/claude-haiku-4-5"; claude-cli wants "claude-haiku-4-5".
+        cli_model = model.split("/", 1)[1] if "/" in model else model
+        cmd.extend(["--model", cli_model])
 
+    sub_env = os.environ.copy()
+    sub_env["PHILEAS_SUBCALL"] = "1"
     result = subprocess.run(
         cmd,
         input=prompt,
         capture_output=True,
         text=True,
         timeout=120,
+        env=sub_env,
     )
 
     if result.returncode != 0 and not result.stdout.strip():
@@ -101,6 +131,9 @@ class LLMClient:
         """True when the underlying LLM config has a usable provider."""
         if self._config.provider == "claude-cli":
             return which("claude") is not None
+        if self._config.provider == "auto":
+            # Either path must be usable: claude-cli installed, or fallback configured.
+            return which("claude") is not None or self._config.model is not None
         return self._config.available
 
     def model_for(self, operation: str) -> str | None:
@@ -117,6 +150,10 @@ class LLMClient:
         """Run a chat completion and return the response text."""
         model = self._config.model_for(operation)
 
+        provider = self._config.provider
+        if provider == "auto":
+            provider = _resolve_auto_provider(self._config)
+
         start = perf_counter()
         error_msg = None
         success = True
@@ -126,7 +163,7 @@ class LLMClient:
         cost = 0.0
 
         try:
-            if self._config.provider == "claude-cli":
+            if provider == "claude-cli":
                 result = _claude_cli_complete(model, messages, max_tokens)
                 prompt_tokens = result.get("prompt_tokens", 0)
                 completion_tokens = result.get("completion_tokens", 0)
@@ -171,7 +208,7 @@ class LLMClient:
                     self._usage.record(
                         operation=operation,
                         model=model or "unknown",
-                        provider=self._config.provider,
+                        provider=provider,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         total_tokens=total_tokens,

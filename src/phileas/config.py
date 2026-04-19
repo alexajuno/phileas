@@ -43,11 +43,21 @@ class LLMOperations:
 
 @dataclass
 class LLMConfig:
-    """LLM provider configuration."""
+    """LLM provider configuration.
+
+    When provider == "auto", each call routes to claude-cli if available RAM is
+    at or above auto_free_ram_gb, otherwise to auto_fallback (typically the
+    direct API). Lets a machine with spare RAM spend the local Claude
+    subscription, and fall back to the paid API when RAM is tight and a
+    subprocess would compete for memory.
+    """
 
     provider: str | None = None
     model: str | None = None
     api_key_env: str | None = None
+    # Used only when provider == "auto".
+    auto_free_ram_gb: float = 4.0
+    auto_fallback: str = "anthropic"
     operations: LLMOperations = field(default_factory=LLMOperations)
 
     @property
