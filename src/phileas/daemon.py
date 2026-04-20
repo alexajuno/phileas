@@ -30,6 +30,9 @@ log = logging.getLogger("phileas.daemon")
 # Module-level reinforcement queue, initialized by start()
 _reinforce_queue: deque[dict] | None = None
 
+# Module-level ingest queue, initialized by start()
+_ingest_queue: deque[dict] | None = None
+
 
 def _pid_path(config: PhileasConfig) -> Path:
     return config.home / "daemon.pid"
@@ -270,6 +273,58 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     reinforce_thread = threading.Thread(target=_reinforcement_loop, daemon=True)
     reinforce_thread.start()
 
+    # -- Ingest queue (background thread) ---
+    global _ingest_queue
+    _ingest_queue = deque()
+
+    def _ingest_loop():
+        import asyncio
+        import time
+
+        from phileas.llm.extraction import extract_memories
+
+        while True:
+            if not _ingest_queue:
+                time.sleep(1)
+                continue
+            item = _ingest_queue.popleft()
+            text = item.get("text", "")
+            if not text:
+                continue
+            try:
+                memories = asyncio.run(extract_memories(engine.llm, text=text))
+                results = []
+                for mem in memories:
+                    result = engine.memorize(
+                        summary=mem["summary"],
+                        memory_type=mem.get("memory_type", "knowledge"),
+                        importance=mem.get("importance", 5),
+                        raw_text=mem.get("raw_text") or text,
+                        entities=mem.get("entities"),
+                        relationships=mem.get("relationships"),
+                    )
+                    results.append(result)
+                log.info(
+                    "ingest completed",
+                    extra={
+                        "op": "ingest",
+                        "data": {"count": len(results), "queue_depth": len(_ingest_queue)},
+                    },
+                )
+                try:
+                    engine._metrics.record_daemon("ingest_completed", payload={"count": len(results)})
+                except Exception:
+                    pass
+            except Exception as e:
+                log.info("ingest failed", extra={"op": "ingest", "data": {"error": str(e)}})
+                try:
+                    engine._metrics.record_daemon("ingest_failed", payload={"error": str(e)})
+                except Exception:
+                    pass
+
+    ingest_thread = threading.Thread(target=_ingest_loop, daemon=True)
+    ingest_thread.start()
+
     server.serve_forever()
     return port
 
@@ -296,6 +351,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "status":
         stats = engine.status()
         stats["sessions_processed"] = engine.db.get_processed_session_count()
+        stats["ingest_queue_depth"] = len(_ingest_queue) if _ingest_queue is not None else 0
         return stats
     elif method == "list":
         memory_type = params.get("memory_type")
@@ -344,24 +400,13 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "infer_graph":
         return engine.infer_graph()
     elif method == "ingest":
-        import asyncio
-
-        from phileas.llm.extraction import extract_memories
-
-        text = params["text"]
-        memories = asyncio.run(extract_memories(engine.llm, text=text))
-        results = []
-        for mem in memories:
-            result = engine.memorize(
-                summary=mem["summary"],
-                memory_type=mem.get("memory_type", "knowledge"),
-                importance=mem.get("importance", 5),
-                raw_text=mem.get("raw_text") or text,
-                entities=mem.get("entities"),
-                relationships=mem.get("relationships"),
-            )
-            results.append(result)
-        return results
+        text = params.get("text", "")
+        if not text:
+            return {"queued": False, "reason": "empty text"}
+        if _ingest_queue is None:
+            return {"queued": False, "reason": "queue not initialized"}
+        _ingest_queue.append({"text": text})
+        return {"queued": True, "queue_depth": len(_ingest_queue)}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.
