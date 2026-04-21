@@ -360,11 +360,18 @@ class GraphStore:
 
     @_locked
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
-        """Search entity nodes by name or alias using CONTAINS match."""
+        """Search entity nodes by name or alias using case-insensitive CONTAINS.
+
+        Kuzu's CONTAINS is case-sensitive by default, which made real-world
+        casing drift ("Phileas" stored, "phileas" queried) invisible to graph
+        retrieval. lower()-normalising both sides closes that gap.
+        """
         if not self._ensure_connected():
             return []
         result = self._conn.execute(
-            "MATCH (n:Entity) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q RETURN n.name AS name, n.type AS type",
+            "MATCH (n:Entity) "
+            "WHERE lower(n.name) CONTAINS lower($q) OR lower(n.aliases) CONTAINS lower($q) "
+            "RETURN n.name AS name, n.type AS type",
             parameters={"q": name_query},
         )
         results = []

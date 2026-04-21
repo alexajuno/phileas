@@ -74,6 +74,25 @@ def test_search_nodes(kuzu_path):
     gs.close()
 
 
+def test_case_insensitive_search(kuzu_path):
+    """search_nodes should match regardless of casing on name or query.
+
+    Regression: Kuzu CONTAINS is case-sensitive by default, so a user query
+    "phileas" couldn't resolve an entity stored as "Phileas". Noted in
+    feedback_entity_population as "casing drift."
+    """
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Project", "Phileas")
+    gs.upsert_node("Person", "ALEX")
+    gs.set_aliases("Person", "ALEX", ["Alex"])
+
+    assert any(h["name"] == "Phileas" for h in gs.search_nodes("phileas"))
+    assert any(h["name"] == "Phileas" for h in gs.search_nodes("PHILEAS"))
+    assert any(h["name"] == "ALEX" for h in gs.search_nodes("alex"))
+    assert any(h["name"] == "ALEX" for h in gs.search_nodes("ALex"))
+    gs.close()
+
+
 def test_non_ascii_alias_roundtrip(kuzu_path):
     """Aliases with non-ASCII characters must be findable via search_nodes.
 
