@@ -86,6 +86,11 @@ def _claude_cli_complete(
 
     sub_env = os.environ.copy()
     sub_env["PHILEAS_SUBCALL"] = "1"
+    # Force claude-cli to use the subscription (OAuth) path rather than the
+    # API-key path. Leaving ANTHROPIC_API_KEY in the env makes `claude -p`
+    # default to API-key auth, which bills against the paid API — defeats the
+    # purpose of `provider = "claude-cli"` (subscription-only).
+    sub_env.pop("ANTHROPIC_API_KEY", None)
     result = subprocess.run(
         cmd,
         input=prompt,
