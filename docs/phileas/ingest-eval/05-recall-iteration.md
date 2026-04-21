@@ -99,21 +99,86 @@ naturally. Two mitigations:
 - Lower `tolerance` for alias-resolution-tagged cases to `1` — a true
   alias hit should land at rank 1 or be considered a miss.
 
-## Planned iterations (roughly in this order)
+## Iteration 2 — expanded gold set + casing fix (2026-04-21, afternoon)
 
-1. ~~**VN alias encoding fix**~~ — shipped 2026-04-21 (finding #1).
-2. ~~**Query tokeniser cleanup**~~ — shipped 2026-04-21 (finding #2).
-3. **Grow gold-recall corpus** — add the real redacted `chị → phuongtq`
-   case (see PHI-13), plus cases that isolate each of the five PHI-11
-   dimensions in its own signal. Target ~10 cases.
-4. **Alias backfill pass** — one-shot script that re-runs entity
-   extraction over existing memories with a prompt explicitly asking for
-   kinship / nickname aliases, and merges results into
-   `Entity.aliases`. Gate by post-fix eval.
-5. **Cross-lingual entity normalization** — when a VN-named memory
-   references an EN-named entity (or vice versa), propose merge via a
-   deterministic rule (shared ABOUT neighbours + name-edit-distance).
-   Exploratory; may drop if alias coverage is enough.
+Added 4 gold-recall cases targeting the non-cross-lingual PHI-11
+dimensions:
+
+- `casing-drift-01` — query uses lowercase `phileas`, entity stored as
+  `Phileas`. Kuzu's `CONTAINS` is case-sensitive; pre-fix the case
+  **missed** with 0 results. Fix in `graph.search_nodes` (wrap both
+  sides in `lower()`) lands HIT at rank 1.
+- `type-confusion-01` — same entity stored under two types
+  (`Project` + `Tool`). Each has an ABOUT memory. `search_nodes` finds
+  both; recall returns the union. Hits at rank 1 out of the box.
+- `rel-bridge-01` — query names entity B, memories are on entity A,
+  A↔B via REL edge. Path 3 entity traversal bridges. HIT at rank 1.
+- `nickname-alias-en-01` — English alias positive control. HIT.
+
+Run `expansion-fixed` → 6/7 HIT at rank 1. Only `alias-gap-chi-01`
+"hits" by accident (embedder tone-bias, known).
+
+## Iteration 3 — pronoun / referent disambiguation (2026-04-21, evening)
+
+Trace of the live `7c2c08fd-d019-4212-a00e-233d90a62112.jsonl` session
+showed the real `chị → phuongtq` failure survives all iteration-1/2
+fixes. Root cause: the query `"đố biết chị ở trên mình nhắc đến là ai"`
+contains no literal string that matches any entity name or alias, and
+semantic search drifts to *tone-similar* memories (Chiennv rejection
+at score 0.86, not phuongtq).
+
+### Architectural change
+
+`engine.recall` stage 0 now runs a single `analyze_query` LLM call that
+returns `(queries, needs_referent_resolution, pronoun_hints)`. When the
+query is flagged ambiguous, a second `resolve_referents` call picks
+the likely Person entity from the top ~15 candidates (ranked by
+ABOUT-edge count + recency + most-recent-summary as vibe proxy).
+
+Resolved entity names flow into path 3's existing
+`_add_memories_for_entity` loop, so scoring/MMR/rerank stay unchanged.
+Runs under ~2 LLM calls per recall when ambiguous; 1 call otherwise;
+0 calls when `_skip_llm=True` (eval harness, tests).
+
+### New artefacts
+
+- `src/phileas/llm/query_rewrite.py::analyze_query` (richer replacement
+  for `rewrite_query`; legacy function kept as thin wrapper).
+- `src/phileas/llm/referent_resolve.py` — `resolve_referents` +
+  `build_person_candidates`.
+- `src/phileas/llm/prompts/query_analyze.txt`,
+  `src/phileas/llm/prompts/referent_resolve.txt`.
+- `src/phileas/graph.py::get_top_entities_by_type` — type-filtered
+  top-N by edge count.
+- `tests/test_referent_resolve.py` — 9 unit tests (mocked LLM).
+- `tests/test_recall_referent_integration.py` — 3 integration tests
+  exercising the full recall path with mocked LLM, proves phuongtq
+  surfaces for an ambiguous `chị` query against a seeded graph.
+
+### Open items
+
+- The live daemon is a long-running process. It needs a restart to
+  pick up the new code. The MCP `recall` tool will keep returning
+  pre-fix behaviour until the daemon restarts and reloads
+  `phileas.engine`.
+- The redacted real-transcript gold case (PHI-13) still hasn't landed;
+  integration tests cover the code path but don't pin the real case.
+- `build_person_candidates` is O(15 × memory_count_per_person) SQLite
+  round-trips. Cheap for now, worth batching if we expand beyond
+  Person entity types.
+
+## Planned iterations beyond #3
+
+1. **Alias backfill pass** — one-shot script that re-runs entity
+   extraction over existing memories asking for nicknames/kinship
+   aliases explicitly. Useful fallback even with referent resolution
+   in place.
+2. **Grow gold-recall corpus** — add contextual-pronoun case (prior
+   context anchoring a bare "she"), emotion/concept case, and the
+   redacted `chị → phuongtq` real-transcript regression.
+3. **Instrument the resolver** — log analyze_query + resolve_referents
+   outcomes so we can see over time what fraction of recalls get
+   flagged ambiguous and how often resolution lands the right entity.
 
 ## Closed — VN input deprecated on 2026-04-21 19:26
 

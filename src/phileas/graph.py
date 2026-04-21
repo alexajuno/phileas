@@ -617,6 +617,42 @@ class GraphStore:
         return neighbors
 
     # ------------------------------------------------------------------
+    # Referent candidates
+    # ------------------------------------------------------------------
+
+    @_locked
+    def get_top_entities_by_type(self, entity_type: str, top_n: int = 15) -> list[dict[str, Any]]:
+        """Return the top-N entities of a type, ranked by ABOUT-edge count.
+
+        Used by the recall-time referent disambiguation step: given an
+        ambiguous query like "who is she", we pass these candidates to an LLM
+        and let it pick the likely referent by vibe/recency. Recency itself
+        isn't in Kuzu (Memory dates live in SQLite), so the caller joins
+        per-entity recency in a second pass.
+        """
+        if not self._ensure_connected():
+            return []
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[:ABOUT]->(e:Entity) "
+            "WHERE e.type = $t "
+            "RETURN e.name AS name, e.aliases AS aliases, COUNT(m) AS cnt "
+            "ORDER BY cnt DESC LIMIT $n",
+            parameters={"t": entity_type, "n": int(top_n)},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "name": r[0],
+                    "type": entity_type,
+                    "aliases": r[1] or "[]",
+                    "memory_count": int(r[2]),
+                }
+            )
+        return rows
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

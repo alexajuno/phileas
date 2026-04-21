@@ -370,19 +370,40 @@ class MemoryEngine:
             min_importance=min_importance,
         ) as timer:
             # ----------------------------------------------------------
-            # Stage 0: Query expansion via LLM
+            # Stage 0: Query analysis via LLM
+            #
+            # Produces alternate phrasings and, for pronoun/kinship queries,
+            # a list of likely referent Person entities. Referents feed into
+            # path 3 below so the rest of the pipeline stays unchanged.
             # ----------------------------------------------------------
+            referent_names: list[tuple[str, str]] = []  # (type, name) pairs
             if not _skip_llm and self.llm.available:
-                from phileas.llm.query_rewrite import rewrite_query
+                from phileas.llm.query_rewrite import analyze_query
 
                 try:
-                    queries = asyncio.run(rewrite_query(self.llm, query))
-                    # Always include the original query so keyword/semantic
-                    # search can match it even if the LLM rewrites diverge.
+                    analysis = asyncio.run(analyze_query(self.llm, query))
+                    queries = list(analysis.get("queries") or [])
+                    if not queries:
+                        queries = [query]
                     if query not in queries:
                         queries.insert(0, query)
+
+                    if analysis.get("needs_referent_resolution"):
+                        from phileas.llm.referent_resolve import (
+                            build_person_candidates,
+                            resolve_referents,
+                        )
+
+                        person_candidates = build_person_candidates(self.graph, self.db, top_n=15)
+                        hints = list(analysis.get("pronoun_hints") or [])
+                        resolved = asyncio.run(resolve_referents(self.llm, query, hints, person_candidates))
+                        referent_names = [("Person", n) for n in resolved]
+                        timer.extra["referent_hints"] = hints
+                        timer.extra["referent_resolved"] = resolved
                 except Exception as e:
-                    log.debug("query rewrite failed, using original", extra={"op": "recall", "data": {"error": str(e)}})
+                    log.debug(
+                        "query analysis failed, using original", extra={"op": "recall", "data": {"error": str(e)}}
+                    )
                     queries = [query]
             else:
                 queries = [query]
@@ -484,6 +505,20 @@ class MemoryEngine:
                             "graph traversal failed",
                             extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
                         )
+
+            # Path 3b: LLM-proposed referents (pronoun / kinship resolution)
+            # Fires only when stage 0 flagged the query as ambiguous.
+            for etype, ename in referent_names:
+                _add_memories_for_entity(etype, ename)
+                try:
+                    related = self.graph.get_related_entities(etype, ename)
+                    for rel in related:
+                        _add_memories_for_entity(rel["type"], rel["name"])
+                except Exception as e:
+                    log.debug(
+                        "referent traversal failed",
+                        extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
+                    )
 
             # Path 4: semantic-to-graph bridge
             # Use top semantic hits to discover entities, then follow graph
