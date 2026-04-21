@@ -1,0 +1,78 @@
+{
+  "_doc": "Synthetic graph for alias-gap-chi-01. nga-nguyen is linked to three memories but has aliases=[] — so queries using the VN kinship term 'chị' cannot resolve to her entity. Decoy Person entities exist so the top-K is non-trivial.",
+  "memories": [
+    {
+      "id": "mem-dinner-001",
+      "summary": "Dinner with nga-nguyen at the riverside bistro; talked about the new role she started.",
+      "memory_type": "event",
+      "importance": 6,
+      "created_at": "2026-03-18T12:00:00+00:00"
+    },
+    {
+      "id": "mem-hire-002",
+      "summary": "nga-nguyen mentioned she was hiring for a junior data analyst at her team.",
+      "memory_type": "knowledge",
+      "importance": 5,
+      "created_at": "2026-03-25T09:00:00+00:00"
+    },
+    {
+      "id": "mem-birthday-003",
+      "summary": "nga-nguyen's birthday is on April 12; she likes oolong tea over coffee.",
+      "memory_type": "profile",
+      "importance": 7,
+      "created_at": "2026-04-12T17:30:00+00:00"
+    },
+    {
+      "id": "mem-decoy-lam-001",
+      "summary": "lam-pham shipped the analytics dashboard for the eval pipeline.",
+      "memory_type": "event",
+      "importance": 5,
+      "created_at": "2026-04-02T10:00:00+00:00"
+    },
+    {
+      "id": "mem-decoy-minh-001",
+      "summary": "minh-tran is the on-call engineer for the ingest service this week.",
+      "memory_type": "knowledge",
+      "importance": 4,
+      "created_at": "2026-04-15T08:00:00+00:00"
+    }
+  ],
+  "entities": [
+    {
+      "name": "nga-nguyen",
+      "type": "Person",
+      "aliases": [],
+      "props": {}
+    },
+    {
+      "name": "lam-pham",
+      "type": "Person",
+      "aliases": [],
+      "props": {}
+    },
+    {
+      "name": "minh-tran",
+      "type": "Person",
+      "aliases": [],
+      "props": {}
+    },
+    {
+      "name": "Giao",
+      "type": "Person",
+      "aliases": [],
+      "props": {}
+    }
+  ],
+  "about_edges": [
+    {"memory_id": "mem-dinner-001", "entity_type": "Person", "entity_name": "nga-nguyen"},
+    {"memory_id": "mem-hire-002", "entity_type": "Person", "entity_name": "nga-nguyen"},
+    {"memory_id": "mem-birthday-003", "entity_type": "Person", "entity_name": "nga-nguyen"},
+    {"memory_id": "mem-decoy-lam-001", "entity_type": "Person", "entity_name": "lam-pham"},
+    {"memory_id": "mem-decoy-minh-001", "entity_type": "Person", "entity_name": "minh-tran"}
+  ],
+  "rel_edges": [
+    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "nga-nguyen"},
+    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "lam-pham"},
+    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "minh-tran"}
+  ]
+}

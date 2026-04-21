@@ -1,0 +1,19 @@
+id: alias-present-01
+# Positive-control case: aliases ARE populated. Confirms the harness
+# reports hits when the graph is well-structured, so a failure on
+# alias-gap-chi-01 points at Phileas (not at the harness).
+query: "who is chị"
+prior_context: |
+  Mirror of alias-gap-chi-01, except the Person entity has the kinship
+  term 'chị' in its aliases list — so graph search should resolve it.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-promo-001
+    - mem-gift-002
+  entity_names:
+    - lan-vo
+tags:
+  - alias-resolution
+  - cross-lingual
+  - positive-control
