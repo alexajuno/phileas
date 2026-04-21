@@ -1,0 +1,15 @@
+id: vn-conversational-02-cf5dc958
+source_session: /home/ajuno/.claude/projects/-home-ajuno/d4449491-9601-456d-8c76-7b1abe142e18.jsonl
+stratum: vn-conversational
+expected_memories:
+  - summary: "Giao at a burnout-adjacent moment: 'don't know what I need anymore' — exhausted after a month without WFH, sitting in front of a project he doesn't fully understand."
+    memory_type: event
+    importance: 5
+    required_substrings: ["tired", "WFH"]
+expected_entities:
+  - { name: Giao, type: Person }
+expected_relationships: []
+notes: |
+  Ambient mental-state event. Borderline (every burnout moment recorded is a
+  lot), but "month without WFH" + "project I don't understand" is a concrete
+  contextual anchor — not just mood. Importance 5.

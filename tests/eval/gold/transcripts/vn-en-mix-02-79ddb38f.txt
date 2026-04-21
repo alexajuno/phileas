@@ -1,0 +1,103 @@
+User: Base directory for this skill: /home/ajuno/.claude/skills/wikichat
+
+# Wikichat
+
+Wiki-aware conversation memory for ~/wiki/. Check before explaining, save after teaching.
+
+## Lookup: Before Explaining Anything
+
+When about to explain a concept, term, or technique:
+
+1. Glob for `~/wiki/{topic}.md` and common variants (e.g., "JWT" → `jwt.md`, "Kubernetes" → `kubernetes.md`, `k8s.md`)
+2. If no filename match, grep `~/wiki/` for the term in file contents
+3. If found:
+   - Read the file
+   - Present the user's own notes first: "You have notes on this:"
+   - Supplement with additional context only if the user's notes are incomplete or the question goes beyond what's recorded
+   - If the file is mostly empty (just a heading), treat it as "not found" and proceed to teach
+4. If not found: answer normally, then proceed to Save
+
+Keep lookups fast — glob first, grep only if needed. Do not search the entire wiki for tangential matches.
+
+## Save: After Teaching Something New
+
+When Claude has just explained a concept that doesn't exist in ~/wiki/:
+
+1. Save to `~/wiki/{topic}.md` using kebab-case filename
+2. Mention it: "Saved to ~/wiki/{topic}.md"
+3. Follow the wiki conventions from ~/wiki/CLAUDE.md:
+   - Flat structure, no subdirectories
+   - Use `[[wiki-links]]` to connect to related existing topics
+   - kebab-case filenames
+   - Keep notes concise — capture the key insight, not a full textbook entry
+   - Match the style of existing wiki files (short bullets, personal annotations welcome)
+
+## Update: When Deepening Existing Knowledge
+
+When the user learns something new about a topic that already has a wiki file:
+
+1. Append the new knowledge to the existing file
+2. Mention it: "Updated ~/wiki/{topic}.md"
+3. Do not rewrite existing content — add to it
+
+## Interactive Learning: Building the Network
+
+When the user wants to learn interactively (or invokes wikichat for study), shift from explain-mode to **Socratic study partner** mode:
+
+### Surface Connections
+- Read multiple wiki notes and spot potential bridges between seemingly unrelated topics
+- Present as a question, not an answer: "You have [[X]] and [[Y]] — do you see how they connect?"
+- Guide with follow-up questions if they don't see it — don't just explain
+
+### Quiz & Challenge
+- Ask the user to explain a concept in their own words before supplementing
+- Challenge edge cases: "What happens when...?", "Why not just...?"
+- Build from what they know toward what they don't
+
+### Write Directly
+- For all note types: write the content directly — concise, referrable explanations
+- Include `## Related` links to connect to existing wiki nodes
+- The user can always edit/refine later
+
+### Spot Isolated Nodes
+- Notes with no outgoing `[[links]]` are islands — nudge the user to connect them
+- Notes referenced by others but never linking out may need deepening
+- Fleeting notes sitting unprocessed are candidates for a study session
+
+### Session Flow
+1. Pick a topic (user chooses or Claude suggests an isolated/under-linked node)
+2. Quiz: "What do you know about X?" or "How does X relate to Y?"
+3. Deepen: ask follow-up questions, introduce edge cases or related concepts
+4. Bridge: connect to existing wiki nodes
+5. Scaffold: create/update note for the user to write
+
+## What NOT to Do
+
+- Do not trigger on coding tasks, debugging, file operations, or git work
+- Do not save project-specific knowledge (API keys, config details, task progress)
+- Do not create hub/MOC files automatically — only individual topic files
+- Do not ask "want me to save this?" — just save and mention it
+- Do not search wiki for every message — only when about to explain a concept
+- Write all note content directly — user can refine later
+
+
+ARGUMENTS: antimatter
+
+Assistant: **Antimatter** là vật chất được tạo từ các **phản hạt** — mỗi hạt cơ bản đều có một phản hạt tương ứng với cùng khối lượng nhưng điện tích ngược lại:
+
+- Electron ↔ Positron (e⁺)
+- Proton ↔ Antiproton (p̄)
+- Neutron ↔ Antineutron (n̄)
+
+**Điểm quan trọng:**
+
+- Khi vật chất gặp phản vật chất → **annihilation** (hủy cặp) — cả hai biến mất hoàn toàn và chuyển thành năng lượng (photon), theo E = mc²
+- Đây là nguồn năng lượng hiệu quả nhất có thể — 100% khối lượng chuyển thành năng lượng (so với phản ứng hạt nhân chỉ ~0.7%)
+- Big Bang lẽ ra tạo ra lượng vật chất và phản vật chất bằng nhau, nhưng vũ trụ gần như chỉ có vật chất → đây là **baryogenesis problem**, một trong những bí ẩn lớn nhất của vật lý
+
+**Ứng dụng thực tế:**
+
+- **PET scan** (chụp y khoa) dùng positron để tạo hình ảnh cơ thể
+- CERN sản xuất và giữ phản hydrogen để nghiên cứu
+- Sci-fi hay dùng "antimatter engine" vì mật độ năng lượng cực cao, nhưng thực tế sản xuất cực kỳ tốn kém và khó lưu trữ
+Saved to `~/wiki/antimatter.md`.

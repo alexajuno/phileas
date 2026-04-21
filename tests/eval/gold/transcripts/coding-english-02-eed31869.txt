@@ -1,0 +1,99 @@
+User: Quick exploration: Check these two directories for their current setup:
+
+1. ~/personal-site — look for package.json, astro.config.*, and any content/ or docs/ directories
+2. ~/xcanny/docs — look for package.json, .vitepress/ config, and any content structure
+
+For each, report: what framework, what's already there, how mature it is, and any existing content structure. Also check ~/genai for what the project is (look at README, composer.json, package.json) to understand what kind of docs would be needed.
+
+Assistant: I'll quickly explore these three directories to understand their setup. Let me start by checking the file structures and key configuration files.
+Now let me check the actual configuration files and README content:
+Let me check the actual paths with absolute references:
+Let me read these files directly:
+Let me check the content structure and genai files more carefully:
+Good, let me get more details on the genai project structure and read the full README:
+Let me get the package.json files and check the portal/docs structure:
+Perfect! Now let me check a couple more things about the xcanny/docs setup:
+Excellent! Now I have all the information I need. Let me compile the report:
+
+## Exploration Summary
+
+### 1. ~/personal-site
+**Framework:** Astro 5.7 with Tailwind CSS v4  
+**Maturity:** Early-stage personal blog  
+**Config:**
+- `astro.config.mjs` — Static output, deployed to Vercel, Tailwind integrated
+- `tsconfig.json` present
+- Uses `@astrojs/vercel` adapter
+
+**Content Structure:**
+- `/src/content/blog/` — 12 blog posts (total ~587 lines), ranging from 23-28 lines each
+- `/src/content/projects/` — Project collection
+- `/docs/` — Plans directory (minimal)
+- Blog uses YAML frontmatter with title, date, categories, description
+
+**Notes:** Lightweight Astro setup with personal blog focus. No existing docs/ framework — just planning notes.
+
+---
+
+### 2. ~/xcanny/docs
+**Framework:** Plain Markdown (no build system)  
+**Maturity:** Documentation/planning archive  
+**What's there:**
+- No `package.json` or build tooling
+- Git repository (`.git` present)
+- 8 markdown files at root level covering design docs: public-API-design, notification-design, trending-algorithm, claim-account, email-verification, vite-manifest-cache-bug
+- `/plans/` and `/brevo-templates/` subdirectories
+- `/CLAUDE.md` (project notes)
+
+**Notes:** This is a static collection of design documents and planning notes with no web framework. Not a published docs site — more like a decision log / design spec archive.
+
+---
+
+### 3. ~/genai
+**Framework:** Full-stack generative media platform (E-Commerce/Print-on-Demand)  
+**Maturity:** Production application with multiple subsystems  
+
+**Architecture:**
+- **API** (`/api/`): Laravel 12 + Filament (admin panel)
+  - PHP 8.2+
+  - Uses Laravel Sail (Docker Compose)
+  - Includes Horizon (job queues), Sanctum (auth), JWT tokens
+  - OpenAPI spec available (`openapi.yaml`, 18KB)
+  - Existing docs: `/api/docs/` (design docs like `ai-gateway.md`, `byok-design.md`, `model-call-history.md`)
+  - No traditional API documentation built yet
+
+- **Portal** (`/portal/`): Vue 3 + TypeScript SPA with Vite
+  - Node 20.19+ or 22.12+
+  - Pinia (state), Vue Router, Bootstrap 5, vee-validate
+  - OAuth (Google, GitHub) backend redirect flow
+  - Pug templates (NOT HTML), BEM CSS methodology
+  - `/docs/` subdirectory exists with design docs
+  - Comprehensive `/CLAUDE.md` with full architecture guidelines
+
+- **Shared Docs** (`/docs/`):
+  - Design documents (product vision, input transformation, model-call-history review)
+  - Plans subdirectory
+  - Superpowers subdirectory
+
+**Notes:** Mature project with clear separation of concerns. API has OpenAPI spec and Filament admin panel. Portal has well-documented code conventions. Docs folder is design-focused, not user-facing API documentation.
+
+---
+
+## Key Insights for Documentation Needs
+
+1. **genai/api** would benefit from:
+   - Auto-generated API docs from OpenAPI spec (Swagger UI / ReDoc)
+   - Setup/deployment guides (beyond basic README)
+   - Architecture overview linking to OpenAPI spec
+
+2. **genai/portal** already has excellent developer documentation in `/portal/CLAUDE.md`
+   - May need user-facing feature docs if this is customer-facing
+
+3. **genai/docs** (design docs) is well-organized but not published
+   - Could be migrated to a documentation site for team reference
+
+4. **personal-site** is purely blog-focused
+   - No docs/API reference needed
+
+5. **xcanny/docs** is archived design docs
+   - Not a documen…

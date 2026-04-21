@@ -1,0 +1,3 @@
+User: what's the switching device shortcut for spotify_player (cli)
+
+Assistant: `D` (capital D) — switch device.

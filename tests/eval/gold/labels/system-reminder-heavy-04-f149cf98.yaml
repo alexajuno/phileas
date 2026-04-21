@@ -1,0 +1,40 @@
+id: system-reminder-heavy-04-f149cf98
+source_session: /home/ajuno/.claude/projects/-home-ajuno-genai/d416a88f-43ce-4ac1-9fda-6182cc9209a1/subagents/agent-aside_question-f8013b0e76e4627a.jsonl
+stratum: system-reminder-heavy
+expected_memories:
+- summary: Margin in ModelProviderPricing is markup on base_cost; three types — none
+    (pass-through), percentage (base_cost × (1+value)), fixed (base_cost + value).
+  memory_type: knowledge
+  importance: 6
+  required_substrings:
+  - margin
+  - base_cost
+expected_entities:
+- name: ModelProviderPricing
+  type: Class
+- name: base_cost
+  type: Field
+- name: margin_type
+  type: Field
+- name: margin_value
+  type: Field
+expected_relationships:
+- from_name: ModelProviderPricing
+  edge: HAS_FIELD
+  to_name: base_cost
+- from_name: ModelProviderPricing
+  edge: HAS_FIELD
+  to_name: margin_type
+notes: 'Same pricing topic as sr-heavy-02 but a separate Q&A ("what is margin?"),
+
+  so extraction runs independently and should produce its own memory. Dedup
+
+  between -02 and -04 is engine.memorize()''s job, not extract_memories()''s.
+
+  required_substrings locks to "margin" + "base_cost" — the column-name hook
+
+  forces the predicted summary to stay grounded in the schema rather than
+
+  drifting into generic "margin = markup" prose.
+
+  '

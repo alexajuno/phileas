@@ -1,0 +1,15 @@
+id: system-reminder-heavy-03-870db77e
+source_session: /home/ajuno/.claude/projects/-home-ajuno/958b48b5-40da-43e4-a594-1bca1b51397e/subagents/agent-aside_question-9cf2331294d233b9.jsonl
+stratum: system-reminder-heavy
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: 'Side-question subagent. Residual content: "jamber, say sth" → assistant
+
+  replies ".". Literal joke input, zero signal. Tests whether extraction
+
+  produces noise when the only "content" after the scaffolding is two words
+
+  and a period.
+
+  '

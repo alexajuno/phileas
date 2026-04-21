@@ -1,0 +1,95 @@
+User: Base directory for this skill: /home/ajuno/.claude/skills/phileas
+
+# Phileas — Companion Memory
+
+Phileas is the user's centralized memory layer. Three databases (SQLite + ChromaDB + KuzuDB) work together to store facts, find them semantically, and connect entities.
+
+## When to Memorize
+
+**CRITICAL: Memorize immediately, in the same response where the user shares something meaningful.** Do NOT wait. Do NOT batch. Do NOT plan to "save later." Sessions get compacted, context gets lost, and anything not yet memorized disappears forever.
+
+**The rule: if it would hurt to lose this information, save it NOW.**
+
+Every response in a personal conversation should ask: "Did the user just share something worth remembering?" If yes, call `mcp__phileas__memorize` in that same response, alongside your reply text. Multiple memorize calls per response is normal and expected.
+
+**Always memorize immediately:**
+- Personal facts (name, location, job, relationships, preferences)
+- Life events (moved, new job, breakup, achievement, health change)
+- Decisions and their reasoning ("chose X because Y")
+- Preferences and patterns ("prefers local-first", "hates meetings")
+- Emotional context that matters ("stressed about deadline", "excited about new project")
+- Things they're learning or working on
+- People they mention and the relationship context
+- Conversations with other people (what was said, what it meant)
+- Insights and realizations the user articulates
+- Plans and intentions ("going to invite her for coffee")
+
+**Don't memorize:**
+- Transient task details ("fix this bug", "read this file")
+- Pleasantries and filler
+
+**Anti-pattern: "I'll save this at the end of the session."** There is no guaranteed end. Save now.
+
+## How to Memorize
+
+Call the MCP tool inline, naturally. Don't announce it or ask permission.
+
+**Single memory:**
+```
+mcp__phileas__memorize(
+  summary="Started a new job at a robotics startup in Tokyo",
+  memory_type="event",
+  importance=8,
+  entities='[{"name": "Giao", "type": "Person"}, {"name": "Robotics Corp", "type": "Project"}]',
+  relationships='[{"from_name": "Giao", "from_type": "Person", "edge": "WORKS_AT", "to_name": "Robotics Corp", "to_type": "Place"}]'
+)
+```
+
+**Multiple memories at once** (use when catching up or when a single message contains several things worth saving):
+```
+mcp__phileas__memorize_batch(memories=[
+  {"summary": "...", "memory_type": "event", "importance": 7},
+  {"summary": "...", "memory_type": "reflection", "importance": 6}
+])
+```
+```
+
+### Memory Types
+
+| Type | When to use | What belongs | What does NOT belong |
+|------|-------------|--------------|----------------------|
+| `profile` | Identity, role, preferences — who they are | Facts: name, age, job, origin, current relationship status, factual history | Emotions, interpretations, feelings about the person |
+| `event` | Things that happened — what occurred | What happened, when, who was involved, what was said | Emotional analysis (put that in reflection) |
+| `knowledge` | Things they know, study, care about | Skills, advice received, topics studied | — |
+| `behavior` | Patterns, habits, work style | Recurring actions, tendencies | One-off actions (those are events) |
+| `reflection` | Higher-level inference about them | Emotional patterns, relationship dynamics, growth arcs | Raw facts (those belong in profile) |
+
+**Key rule: profiles are factual, reflections are interpretive.** Events carry the raw story. Don't mix emotions into profiles — the timeline of events and reflections will naturally shape the emotional picture without contaminating factual records.
+
+### Importance Scale (1-10)
+
+| Score | Meaning | Examples |
+|-------|---------|----------|
+| 9-10 | **Identity** | Name, role, long-term goals, close relationships |
+| 7-8 | **Significant** | Major decisions, life events, started a project |
+| 5-6 | **Notable** | Preferences, opinions, recurring patterns |
+| 3-4 | **Context** | Tried a restaurant, read an article |
+| 1-2 | **Ephemeral** | Cur…
+
+Assistant: Let me also check the daily journal for more detail.
+From Phileas, the most recent interaction with @phuongtq was the night of April 2 → early morning April 3:
+
+**Ông nhắn hỏi chị về làm PO khó không.** Chị reply nhẹ nhàng:
+- "Nghề nào chả khó :))"
+- "Chị thấy bthg thui"
+- "Nghề chọn ng mà"
+
+Rồi sau đó chuyện chuyển sang topic duy trì mối quan hệ. **Chị reply lúc 00:14 đêm 3/4**, một tin nhắn dài và chỉn chu:
+
+> "Sống chân thành và đúng đắn với mọi người là được. Còn lại là nhân duyên. Chỉ có 1 thứ em nắm giữ được là chính bản thân mình. Tạo mối quan hệ tốt với chính em cũng là 1 điều quan trọng."
+
+Ông reply: *"cũng đúng ha. chắc em muốn thử chân thành bước về phía ai đó, dù kết quả ntn cũng vui vẻ chấp nhận =))"* — reframe lại chữ "chân thành" của chị theo hướng chủ động hơn. Chị react haha — không đẩy ra, không khó chịu.
+
+Đêm đó ông cũng nhận ra pattern anticipatory anxiety của mình: sợ bị reject nhưng thực tế chị reply thoughtful hơn mong đợi. Score 0-3 — mỗi lần sợ tệ nhất thì thực tế đều ổn hơn.
+
+Tối 3/4 thì ông đi Cafe Cursor rồi, không thấy có interaction nào thêm với chị Phương.

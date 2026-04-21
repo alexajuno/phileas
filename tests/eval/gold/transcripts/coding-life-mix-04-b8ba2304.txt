@@ -1,0 +1,21 @@
+User: Find all relevant CLAUDE.md files in the codebase. I need:
+1. The root CLAUDE.md file path (if it exists)
+2. Any CLAUDE.md files in directories modified by this PR
+
+The PR modifies files in these directories:
+- app/Http/Controllers/
+- app/Http/Requests/
+- app/Http/Resources/
+- app/Models/
+- app/Services/
+- routes/
+
+Search for CLAUDE.md files in the repo root and in each of those directories. Return just the file paths that exist.
+
+Assistant: I'll search for CLAUDE.md files in the repository root and in the directories modified by this PR.
+Found one CLAUDE.md file:
+
+**Root CLAUDE.md:**
+- `/home/ajuno/teeinblue/api/CLAUDE.md`
+
+**Directories modified by PR:** No CLAUDE.md files exist in any of the modified directories (Controllers, Requests, Resources, Models, Services, or routes).

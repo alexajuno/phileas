@@ -1,0 +1,16 @@
+id: vn-en-mix-03-81ab00b8
+source_session: /home/ajuno/.claude/projects/-home-ajuno-phileas/5451f243-6705-4bef-ab0c-ff493b2fe04c.jsonl
+stratum: vn-en-mix
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  **Filter leak (another one)**: "You are analyzing a personal knowledge
+  graph to discover hidden connections and patterns..." — Phileas's graph
+  inference prompt ( or similar). My subcall filter has
+  "you are analyzing a day's worth of personal memories" but needs
+  "you are analyzing a personal knowledge graph" added too.
+
+  Action item logged under PHI-10 (sampler filter coverage).
+
+  Zero memories — same reasoning as other filter-leak cases.

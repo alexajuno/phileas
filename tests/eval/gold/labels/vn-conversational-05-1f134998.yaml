@@ -1,0 +1,13 @@
+id: vn-conversational-05-1f134998
+source_session: /home/ajuno/.claude/projects/-home-ajuno/9014dd35-e504-46f1-8876-e5e3b3ca4de8.jsonl
+stratum: vn-conversational
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Recall query: user asks whether Phileas has the 00:14 Apr 3→4 message from
+  phuongtq about "chân thành / nhân duyên". Claude confirms it IS stored
+  (scored low 0.42, not surfaced in first recall). Since the underlying
+  memory already exists, re-memorizing this conversation would duplicate.
+  The RECALL failure (low score when the user expected it surfaced) is
+  interesting for PHI-11, but not for extraction's gold set.

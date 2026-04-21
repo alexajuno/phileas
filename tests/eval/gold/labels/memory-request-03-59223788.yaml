@@ -1,0 +1,34 @@
+id: memory-request-03-59223788
+source_session: /home/ajuno/.claude/projects/-home-ajuno/e97893cd-ae84-4045-a8a1-2859163d1001.jsonl
+stratum: memory-request
+expected_memories:
+- summary: Giao scored 16/20 on Claude Code mastery quiz; weak areas are Plugins (0/2),
+    Hooks, and MCP.
+  memory_type: event
+  importance: 6
+  required_substrings:
+  - 16/20
+  - Claude Code
+expected_entities:
+- name: Giao
+  type: Person
+- name: Claude Code
+  type: Tool
+- name: Plugins
+  type: Topic
+- name: Hooks
+  type: Topic
+- name: MCP
+  type: Topic
+expected_relationships: []
+notes: 'Assessment result is a concrete event with specific weak-area information
+
+  useful for future "what should I learn next" queries. The per-question
+
+  trivia explanations (e.g., "plugin manifest is at .claude-plugin/plugin.json")
+
+  are generic Claude Code facts, not personal facts — should NOT be memorized.
+
+  The score + topic list is the signal worth keeping.
+
+  '

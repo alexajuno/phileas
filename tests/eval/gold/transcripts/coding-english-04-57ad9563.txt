@@ -1,0 +1,97 @@
+User: In the /home/ajuno/genai/api directory, I need to understand how `extra_input` is used on the Template model. Specifically:
+
+1. Read the Template model (likely app/Models/Template.php) - check if extra_input is in casts, fillable, or migration
+2. Search for all usages of `extra_input` across the codebase (grep for "extra_input")
+3. Check the template migration(s) to see if extra_input column exists
+4. Check any Filament resources, controllers, or forms that deal with templates to see if extra_input is editable anywhere
+
+Be thorough - check migrations, seeders, factories, tests, controllers, resources, and any admin panels.
+
+Assistant: I'll help you understand how `extra_input` is used on the Template model. Let me start by exploring the directory structure and then conduct a thorough search.
+Let me search for the actual app directory structure:
+Now let me search for the Template model and grep for extra_input usage:
+Perfect! Now let me search for all occurrences of "extra_input" and read the Template model:
+Excellent! Now let me read the migration file and check the other files that use extra_input:
+Now let me check the form requests and the Filament form:
+Now let me check the seeder and ProcessTask job to understand how extra_input is used:
+Let me also check if extra_input appears in the test files and the ModelSeeder:
+Let me read the TestProviderSeeder file:
+Now let me check if extra_input is in the Filament infolist and check the ModelSeeder as well:
+Perfect! Now let me check the openapi.yaml to see how extra_input is documented in the API:
+Excellent! Let me verify that the Filament form doesn't have extra_input defined (and check if there are any TODO comments):
+Let me look at the ModelProviderForm to understand the pattern:
+Perfect! Now let me create a comprehensive summary. Let me also check if there are any comments or related documentation:
+Perfect! Now I have all the information I need. Let me create a comprehensive summary:
+
+## Summary: How `extra_input` is Used on the Template Model
+
+### 1. Model Definition
+
+**File:** `/home/ajuno/genai/api/app/Models/Template.php`
+
+- **Fillable:** `extra_input` is in the `$fillable` array (line 26)
+- **Casts:** `extra_input` is cast as `'array'` in the `casts()` method (line 34)
+- **Column Type:** JSON (nullable)
+
+### 2. Database Schema
+
+**File:** `/home/ajuno/genai/api/database/migrations/2026_03_23_000001_add_extra_input_to_templates_table.php`
+
+- Column: `json('extra_input')->nullable()` added to `templates` table after `default_inputs`
+- Can be dropped via `down()` migration
+
+### 3. API Validation
+
+**Files:** 
+- `/home/ajuno/genai/api/app/Http/Requests/TemplateStoreRequest.php` (line 28)
+- `/home/ajuno/genai/api/app/Http/Requests/TemplateUpdateRequest.php` (line 28)
+
+- Validation rule: `['sometimes', 'nullable', 'array']`
+- Accepts optional array values during template creation and updates
+
+### 4. API Serialization
+
+**File:** `/home/ajuno/genai/api/app/Http/Resources/TemplateResource.php` (line 23)
+
+- Exposed in API response as part of the template resource
+
+### 5. Controller Usage
+
+**File:** `/home/ajuno/genai/api/app/Http/Controllers/TemplateController.php`
+
+- **Store (create):** Line 74 - accepts `$input['extra_input'] ?? null`
+- **Update:** Line 100 - accepts `$input['extra_input'] ?? null`
+
+### 6. How `extra_input` is Processed
+
+**File:** `/home/ajuno/genai/api/app/Jobs/ProcessTask.php` (lines 166-174)
+
+This is the **critical usage** - when a task is processed via a template:
+
+```php
+$template = $this->task->template;
+if ($template) {
+    $defaultInput = $template->default_inputs ?? [];
+    $providerExtraInputs = data_get($template->extra_input, $provider->id, []);
+    $defaultInput = array_merge($defaultInput, $providerExtraInputs);
+    $inputs = $transformProviderInput->replaceDefaultInput($defaultInput, $inputs);
+}
+
+$providerInput = $transformProviderInput->mergeExtraInput($inputs, $modelProvider->extra_input);
+```
+
+**What this does:**
+- `extra_input` on Template is **keyed by provider ID** (e.g., `$template->extra_input[provider_id]`)
+- Extracts provider-specific overrides: `data_get($template->extra_input, $provider->id, [])`
+- Merges those overrides with `default_inputs` before processing
+- This allows templates to have different input values per provider
+
+### 7. Seeder Examples
+
+**Files:** 
+- `/home/ajuno/genai/api/database/seeders/TemplateSeeder.php` (various templates)
+- `/home/ajuno/genai/api/database/seeders/TestProviderSeeder.php` (line 86)
+
+Examples of `extra_input` in templates:
+- `'extra_input' => ['quality' => 'high']` - Simple quality settings
+- `'extra_input' => ['image_size' => '2K',…

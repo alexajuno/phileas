@@ -1,0 +1,8 @@
+id: coding-life-mix-02-44a93c36
+source_session: /home/ajuno/.claude/projects/-home-ajuno/f080a0b5-0bd0-4489-a6fd-563803c5027f/subagents/agent-a38b83877377bcc6b.jsonl
+stratum: coding-life-mix
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Task-execution prompt: implement Phileas's JSONL ingestion parser (parse_session_jsonl + find_unprocessed_sessions). Code is canonical source of truth; commit records what shipped.

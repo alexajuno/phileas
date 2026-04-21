@@ -1,0 +1,21 @@
+id: vn-conversational-01-736b1fb2
+source_session: /home/ajuno/.claude/projects/-home-ajuno/f080a0b5-0bd0-4489-a6fd-563803c5027f.jsonl
+stratum: vn-conversational
+expected_memories:
+  - summary: "Giao recognised a pattern connecting Ownego-related unhappiness: salary cap (CEO blocked 18-20M), loneliness working PRs alone, feeling invisible to the 'real builder' culture, and badminton social friction — facets of the same unmet recognition."
+    memory_type: reflection
+    importance: 8
+    required_substrings: ["Ownego", "invisible"]
+expected_entities:
+  - { name: Giao, type: Person }
+  - { name: Ownego, type: Company }
+expected_relationships:
+  - { from_name: Giao, edge: WORKS_AT, to_name: Ownego }
+notes: |
+  High-signal pattern-recognition reflection. The constituent facts (salary
+  drama on 23/1, peer loneliness on 19/3, badminton drama on 24/3) are
+  presumably already in graph as individual events; the NEW memory is the
+  meta-pattern connecting them. Importance 8 (identity-adjacent).
+
+  Ownego tagged as Company rather than Place (graph has type drift between
+  Place/Company here — flagged in PHI-12).

@@ -1,0 +1,16 @@
+id: system-reminder-heavy-05-5fa42fcd
+source_session: /home/ajuno/.claude/projects/-home-ajuno/80966bfd-9b22-4d15-8676-629115b0b6a3/subagents/agent-aside_question-1cb25a1af94d095a.jsonl
+stratum: system-reminder-heavy
+expected_memories:
+  - summary: "Giao slept 10pm to 5am (approximately 7 hours) — notable improvement over the prior 2:30-3am bedtime pattern."
+    memory_type: event
+    importance: 5
+    required_substrings: ["10pm", "5am"]
+expected_entities:
+  - { name: Giao, type: Person }
+expected_relationships: []
+notes: |
+  Side-question subagent used as a /secretary sleep-note shim. Sleep events
+  are persistent timeline data (precedent: existing memory [72444a06] on
+  similar sleep events). Date of the event is anchored by the memory's
+  created_at, not the text. Zero entities beyond the user.

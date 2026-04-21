@@ -1,0 +1,9 @@
+User: call mcp__claude-in-chrome__tabs_context_mcp with createIfEmpty true
+
+Assistant: The browser extension isn't connected. Make sure:
+
+1. The **Claude browser extension** is installed in Chrome
+2. Chrome is running and you're **logged into claude.ai** with the same account
+3. If you just installed it, **restart Chrome**
+
+Once connected, I can retry the command.

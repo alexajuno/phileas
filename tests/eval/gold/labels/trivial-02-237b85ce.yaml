@@ -1,0 +1,8 @@
+id: trivial-02-237b85ce
+source_session: /home/ajuno/.claude/projects/-home-ajuno-xcanny/00fcdd62-598b-4bf0-9ee3-d152150fea72/subagents/agent-acompact-de14f809a259cac0.jsonl
+stratum: trivial
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Pure interruption sentinel.

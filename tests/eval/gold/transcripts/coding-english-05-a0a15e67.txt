@@ -1,0 +1,95 @@
+User: You are a plan document reviewer. Review the implementation plan at `/home/ajuno/genai/docs/superpowers/plans/2026-03-26-template-processing-consolidation.md` against the spec at `/home/ajuno/genai/docs/superpowers/specs/2026-03-26-template-processing-consolidation-design.md`.
+
+**Context:** Laravel 12 API project using Pest 4 for testing, Sail for Docker. The plan consolidates two duplicate processing paths (model + template) into one unified endpoint and job.
+
+**Cross-reference these files for accuracy:**
+- `api/app/Http/Controllers/BaseProcessRequestHandler.php` — the parent class both old controllers extend
+- `api/app/Http/Requests/InputProcessRequest.php` — existing request class
+- `api/app/Jobs/ModelProcessTask.php` — the base for the unified job
+- `api/app/Jobs/TemplateProcessTask.php` — has the default-merging logic
+- `api/routes/api.php` — current route definitions
+- `api/database/factories/TemplateFactory.php` — factory states
+- `api/database/factories/TaskFactory.php` — task factory
+- `api/tests/Feature/PublicTemplateTest.php` — existing test patterns
+
+**Review criteria:**
+1. **Spec coverage** — Does every spec item have a corresponding task/step?
+2. **Code correctness** — Will the code snippets actually work? Any syntax errors, wrong method signatures, missing imports?
+3. **Test completeness** — Do tests cover all scenarios from the spec (including edge cases)?
+4. **Task ordering** — Are dependencies correct? Any missing steps?
+5. **File paths** — Are all paths correct?
+6. **Commands** — Will the artisan/git commands work as written?
+
+Return: ✅ Approved or ❌ Issues Found with specific items.
+
+Assistant: I'll start by reading the plan and spec documents, then cross-reference with the actual codebase files.
+Now let me read the actual codebase files for cross-referencing.
+Now let me read the remaining cross-reference files.
+Now let me check the Template model and a few more things.
+Now let me check one more thing - the Task model to verify the `template` relationship exists.
+I now have all the information needed for a thorough review. Here is my assessment:
+
+---
+
+## Plan Review: Template & Processing Consolidation
+
+### 1. Spec Coverage
+
+| Spec Item | Plan Task | Status |
+|-----------|-----------|--------|
+| Unified POST /api/process endpoint | Task 4 | Covered |
+| ProcessRequest (mutual exclusion) | Task 2 | Covered |
+| ProcessTask (unified job) | Task 3 | Covered |
+| TemplatePolicy::view allows public | Task 1 | Covered |
+| TemplateController::index merged listing | Task 1 | Covered |
+| Template model cleanup | Task 1 | Covered |
+| Delete old controllers/jobs | Task 6 | Covered |
+| Remove public-templates routes | Task 4 | Covered |
+| Backward compat POST /process/model/{aiModel} | Task 4 + 7 | Covered |
+| Template default merging in job | Task 3 | Covered |
+| Template CRUD unchanged (create/update/delete owner-only) | Implicitly covered | OK |
+| **Edge case: soft-deleted template returns 422** | Task 5 tests | **MISSING** |
+| **Edge case: template whose model deleted -> Error status** | Task 5 tests | **MISSING** |
+| **Edge case: provider-specific extras key missing -> graceful** | Task 5 tests | **MISSING** |
+| **Edge case: public template uses requesting user's provider keys** | Task 5 tests | **MISSING** |
+| **Template default merging unit/job-level tests** | Spec section 6 | **MISSING** |
+| **Pagination with mixed owned/public - no duplicates** | Spec section 6 | **MISSING** |
+| **Regression: existing model processing unchanged** | Spec section 6 | **Partial** (backward compat test only) |
+
+---
+
+### 2. Code Correctness Issues
+
+**Issue 1 (Critical): `ProcessController::handle` type-hints `ProcessRequest` but `BaseProcessRequestHandler::process` requires `InputProcessRequest`**
+
+The parent method signature at `/home/ajuno/genai/api/app/Http/Controllers/BaseProcessRequestHandler.php:17` is:
+
+```php
+protected function process(
+    InputProcessRequest $request,
+    ...
+```
+
+The plan's `ProcessController::handle` passes a `ProcessRequest` object to `$this->process()`. Since `ProcessRequest` does not extend `InputProcessRequest`, this will fail with a type error. Either:
+- `ProcessRequest` must extend `InputProcessRequest`, or
+- The plan must update `BaseProcessRequestHandler::process` to accept `FormRequest` instead, or
+- `ProcessRequest` should extend `InputProcessRequest` and add the extra rules.
+
+**Issue 2 (Critical): `ProcessRequest` only validates `model_id`/`template_id` but loses all other input validation**
+
+The existing `InputProcessRequest` has no rules (empty array), so this is technically not a bug -- but the plan's `ProcessRequest` only has `model_id`/`template_id` rules. The spec says "Inherits the rest of input validation from existing `InputProcessRequest` or merges into one." The plan does neither -- `ProcessRequest` is a standalone `FormRequest`, not extending `InputProcessRequest`. This ties into Issue 1.
+
+**Issue 3 (Medium): Plan's `ProcessTask::handle` loads `'template'` relationship but `ModelProcessTask` does not**
+
+At plan line 395: `$this->task->load(['aiModel', 'template', 'user.providerKeys']);`
+
+The original `ModelProcessTask` at line 39 loads: `$this->task->load(['aiModel', 'user.providerKeys']);`
+
+This is not a bug -- loading `template` is intentional for the unified job -- but the plan should note this is a deliberate addition, not just a copy.
+
+**Issue 4 (Medium): Backward compat route conflict in Task 4**
+
+The plan in Task 4, Step 3 says to add:
+```php
+Route::post('/process', [ProcessController::class, 'handle']);
+Route::post('/process/model/{aiModel}', [ModelProcessController::class, 'handle'])…

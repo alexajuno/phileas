@@ -1,0 +1,23 @@
+User: là chuyện gì ấy nhỉ? t cũng k nhớ nữa. hẳn là nó đã ở đâu đó trong ~/life . phileas cần tiếp tục mở rộng database
+
+Assistant: Nhiều entries. Để tìm cụ thể hơn:
+Tìm thấy rồi. Để tổng hợp và memorize:
+OK giờ tổng hợp lại từ cả memory lẫn daily entries — đây là timeline "tại sao muốn nghỉ":
+
+**Tháng 12/2025:** Đã code cho job application rồi. Tức là trước cả salary negotiation, đã có ý muốn đi.
+
+**23/1/2026:** Salary negotiation — CTO đồng ý milestone 18-20m, nhưng CEO vào chiều xóa sạch. "Anyone is replaceable." "I can pay someone 20-25m but I won't pay you that." Không có commitment nào cho tương lai.
+
+**29/1/2026:** Nhận ra CTO không có quyền về tiền. CEO nắm tất cả.
+
+**19/3/2026:** Ngồi một mình trên project, PR không ai review, boss bảo "phải làm ngay" nhưng không review code. Push AI adoption mấy tháng mà cảm thấy "dev quèn."
+
+**24/3/2026:** Bị tránh ở sân cầu lông. "I tried at my best."
+
+Vậy nó là tổng hợp:
+1. **Lương** — bị CEO đè, không có lộ trình rõ ràng
+2. **Cô đơn trong công việc** — làm project một mình, không có peer
+3. **Không được nhìn nhận** — build nhiều nhưng invisible
+4. **Quan hệ xã hội** — badminton drama, bị tránh, cảm giác không thuộc về
+
+Blog Ownego trông ngầu, nhưng cái mày đang cảm nhận là: **mày contribute vào "real builder" culture đó, nhưng culture đó chưa nhìn thấy mày.**

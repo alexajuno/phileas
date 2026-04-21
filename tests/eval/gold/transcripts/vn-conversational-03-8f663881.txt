@@ -1,0 +1,9 @@
+User: do you know which file stores the script for this conversation in claude code?
+
+Assistant: Yep — cuộc trò chuyện này đang được lưu ở:
+
+`~/.claude/projects/-home-ajuno/7c2c08fd-d019-4212-a00e-233d90a62112.jsonl`
+
+Claude Code lưu từng session dưới dạng một file `.jsonl` (JSON Lines — mỗi dòng là một message/event), đặt trong `~/.claude/projects/<cwd-encoded>/`. Phần `-home-ajuno` là cwd `/home/ajuno` được encode lại bằng cách thay `/` thành `-`.
+
+File vừa được update lúc 16:22, khớp với thời điểm mình đang nói chuyện — đó chính là session hiện tại.

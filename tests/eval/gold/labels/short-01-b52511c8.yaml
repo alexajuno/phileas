@@ -1,0 +1,17 @@
+id: short-01-b52511c8
+source_session: /home/ajuno/.claude/projects/-home-ajuno/73404ce5-b992-40b2-a36a-8629adba978f.jsonl
+stratum: short
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: 'Trivia Q&A: "what''s the switching device shortcut for spotify_player (cli)"
+  → "D — switch device."
+
+  Not a preference, not a decision, not a fact about the user''s life. If any value
+  is
+
+  retained for future retrieval, it belongs in the FTS5 raw-text store (phase 3),
+
+  not as a semantic memory.
+
+  '

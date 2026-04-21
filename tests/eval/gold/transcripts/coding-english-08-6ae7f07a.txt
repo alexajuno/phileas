@@ -1,0 +1,96 @@
+User: You are implementing Task 12: Migration Support for the Phileas project.
+
+## Task Description
+
+Detect and handle existing `~/.phileas/` data from pre-config installations.
+
+**Files to create:**
+- `src/phileas/migrate.py`
+- `tests/test_migrate.py`
+
+### migrate.py:
+
+```python
+def detect_existing_data(home: Path) -> dict:
+    """Check for existing Phileas data in a directory."""
+    # Returns {"has_data": bool, "has_sqlite": bool, "has_chroma": bool, "has_graph": bool, "has_config": bool}
+
+def create_default_config(home: Path) -> Path:
+    """Create config.toml with defaults matching pre-config hardcoded values."""
+    # Returns path to created config file
+```
+
+### test_migrate.py:
+
+```python
+def test_detect_existing_data(tmp_path):
+    (tmp_path / "memory.db").touch()
+    (tmp_path / "chroma").mkdir()
+    (tmp_path / "graph").mkdir()
+    result = detect_existing_data(tmp_path)
+    assert result["has_data"] is True
+    assert result["has_config"] is False
+
+def test_detect_no_data(tmp_path):
+    result = detect_existing_data(tmp_path)
+    assert result["has_data"] is False
+
+def test_create_default_config(tmp_path):
+    create_default_config(tmp_path)
+    assert (tmp_path / "config.toml").exists()
+    content = (tmp_path / "config.toml").read_text()
+    assert "similarity_floor = 0.5" in content
+    assert "relevance_weight = 0.55" in content
+```
+
+### Config template for create_default_config:
+```toml
+# Phileas configuration
+# Generated during migration from pre-config installation
+
+[storage]
+home = "{home}"
+
+[recall]
+similarity_floor = 0.5
+relevance_floor = 0.15
+graph_boost = 0.5
+mmr_lambda = 0.7
+default_top_k = 10
+
+[scoring]
+relevance_weight = 0.55
+importance_weight = 0.2
+recency_weight = 0.15
+access_weight = 0.1
+
+[logging]
+level = "INFO"
+file_max_bytes = 5242880
+file_backup_count = 3
+```
+
+## Your Job
+
+1. Create `src/phileas/migrate.py`
+2. Create `tests/test_migrate.py`
+3. Run: `cd /home/ajuno/phileas && uv run pytest tests/test_migrate.py -v`
+4. Do NOT commit
+5. Report back
+
+Work from: /home/ajuno/phileas
+
+Assistant: Let me look at the project structure first to understand the codebase.
+Now let me look at the existing config.py to understand the project's config patterns.
+Now I have all the context I need. Let me create both files.
+All 7 tests pass. Here is a summary of what was done.
+
+**Files created:**
+
+- `/home/ajuno/phileas/src/phileas/migrate.py` — two public functions:
+  - `detect_existing_data(home)` — checks for `memory.db`, `chroma/`, `graph/`, and `config.toml` in the given directory and returns a dict with `has_data`, `has_sqlite`, `has_chroma`, `has_graph`, `has_config` booleans. `has_data` is True only when at least one data artifact (sqlite/chroma/graph) exists; a lone `config.toml` does not set it.
+  - `create_default_config(home)` — writes `config.toml` from the template (with `{home}` interpolated), creates parent dirs as needed, returns the config `Path`.
+
+- `/home/ajuno/phileas/tests/test_migrate.py` — 7 tests covering the three required cases from the spec plus additional edge-case coverage (partial data, config-only, parent dir creation, home path embedding).
+
+**Result:** 7/7 passed in 0.03s.

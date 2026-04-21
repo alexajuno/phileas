@@ -1,0 +1,151 @@
+User: You are implementing Task 7: JSONL ingestion parser
+
+Working directory: /home/ajuno/phileas
+
+Create `src/phileas/ingest.py`:
+
+```python
+"""JSONL conversation ingestion.
+
+Reads Claude Code conversation logs from ~/.claude/projects/*/*.jsonl.
+Extracts user and assistant messages for memory extraction.
+"""
+
+import json
+from pathlib import Path
+
+
+def parse_session_jsonl(path: Path) -> list[dict]:
+    """Parse a JSONL file and extract user/assistant messages.
+
+    Returns list of {"role": str, "content": str}.
+    """
+    messages = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") not in ("user", "assistant"):
+                continue
+
+            msg = entry.get("message", {})
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            # Content can be a string or a list of blocks
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                content = "".join(text_parts)
+
+            if content:
+                messages.append({"role": role, "content": content})
+
+    return messages
+
+
+def find_unprocessed_sessions(
+    projects_dir: Path, processed_ids: set[str]
+) -> list[dict]:
+    """Scan Claude Code projects dir for unprocessed session files.
+
+    Returns list of {"session_id": str, "path": Path}.
+    """
+    if not projects_dir.exists():
+        return []
+
+    unprocessed = []
+    for project_dir in projects_dir.iterdir():
+        if not project_dir.is_dir():
+            continue
+        for jsonl_file in project_dir.glob("*.jsonl"):
+            session_id = jsonl_file.stem
+            if session_id not in processed_ids:
+                unprocessed.append({
+                    "session_id": session_id,
+                    "path": jsonl_file,
+                })
+    return unprocessed
+```
+
+Create `tests/test_ingest.py`:
+
+```python
+"""Tests for JSONL conversation ingestion."""
+
+import json
+from pathlib import Path
+
+from phileas.ingest import parse_session_jsonl, find_unprocessed_sessions
+
+
+def _write_jsonl(path: Path, messages: list[dict]):
+    with open(path, "w") as f:
+        for msg in messages:
+            f.write(json.dumps(msg) + "\n")
+
+
+def test_parse_extracts_user_and_assistant(tmp_dir):
+    path = tmp_dir / "session.jsonl"
+    _write_jsonl(path, [
+        {"type": "system", "message": {"role": "system", "content": "You are Claude"}},
+        {"type": "user", "message": {"role": "user", "content": "Hello, I like coffee"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Nice!"}]}},
+        {"type": "progress", "data": {"type": "hookEvent"}},
+    ])
+    messages = parse_session_jsonl(path)
+    assert len(messages) == 2
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "Hello, I like coffee"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == "Nice!"
+
+
+def test_parse_handles_content_list(tmp_dir):
+    path = tmp_dir / "session.jsonl"
+    _write_jsonl(path, [
+        {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "First part. "},
+            {"type": "text", "text": "Second part."},
+        ]}},
+    ])
+    messages = parse_session_jsonl(path)
+    assert messages[0]["content"] == "First part. Second part."
+
+
+def test_find_unprocessed_sessions(tmp_dir):
+    project_dir = tmp_dir / ".claude" / "projects" / "test-project"
+    project_dir.mkdir(parents=True)
+    _write_jsonl(project_dir / "abc-123.jsonl", [
+        {"type": "user", "message": {"role": "user", "content": "hi"}, "s…
+
+Assistant: I'll create the files and run the tests as specified.
+Now I'll create the test file:
+Now I'll run the tests:
+Now I'll run the linter and formatter:
+Perfect. All steps completed successfully.
+
+## Status Report
+
+✓ Created `/home/ajuno/phileas/src/phileas/ingest.py` - JSONL conversation parser with two functions:
+  - `parse_session_jsonl()` - Extracts user/assistant messages from JSONL files, handling both string and list-based content formats
+  - `find_unprocessed_sessions()` - Scans the Claude Code projects directory for unprocessed session files
+
+✓ Created `/home/ajuno/phileas/tests/test_ingest.py` - Comprehensive test suite with 3 passing tests:
+  - Verifies user and assistant message extraction
+  - Tests handling of multi-block content (text arrays)
+  - Tests discovery of unprocessed sessions
+
+✓ All tests passing (3/3)
+
+✓ Linting passed, formatting applied (ruff reformatted the dict structure in `find_unprocessed_sessions`)
+
+Ready for Task 8. No commits made as requested.

@@ -1,0 +1,8 @@
+id: short-05-842eb86f
+source_session: /home/ajuno/.claude/projects/-home-ajuno-genai/b35e0b2b-e7db-4501-950a-c658f9a097cb.jsonl
+stratum: short
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Bare bash-stdout output (a directory path). Scaffolding leak.
