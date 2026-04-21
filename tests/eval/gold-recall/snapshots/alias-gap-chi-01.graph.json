@@ -1,78 +1,62 @@
 {
-  "_doc": "Synthetic graph for alias-gap-chi-01. nga-nguyen is linked to three memories but has aliases=[] — so queries using the VN kinship term 'chị' cannot resolve to her entity. Decoy Person entities exist so the top-K is non-trivial.",
+  "_doc": "Alias-gap negative control. Expected memories link to `nga-nguyen` via ABOUT edges but DO NOT name her in their summary text, so the only retrieval bridge from a query like 'who is chị' is alias → entity → memories. With aliases=[] on nga-nguyen, that bridge is broken. If this case hits, either the harness is wrong or something else is surfacing the memories.",
   "memories": [
     {
       "id": "mem-dinner-001",
-      "summary": "Dinner with nga-nguyen at the riverside bistro; talked about the new role she started.",
+      "summary": "Dinner at the riverside bistro; heard about the new role in fintech.",
       "memory_type": "event",
       "importance": 6,
       "created_at": "2026-03-18T12:00:00+00:00"
     },
     {
       "id": "mem-hire-002",
-      "summary": "nga-nguyen mentioned she was hiring for a junior data analyst at her team.",
+      "summary": "Heard there's an open junior data analyst seat on that fintech team.",
       "memory_type": "knowledge",
       "importance": 5,
       "created_at": "2026-03-25T09:00:00+00:00"
     },
     {
       "id": "mem-birthday-003",
-      "summary": "nga-nguyen's birthday is on April 12; she likes oolong tea over coffee.",
+      "summary": "Her birthday is on April 12; prefers oolong tea over coffee.",
       "memory_type": "profile",
       "importance": 7,
       "created_at": "2026-04-12T17:30:00+00:00"
     },
-    {
-      "id": "mem-decoy-lam-001",
-      "summary": "lam-pham shipped the analytics dashboard for the eval pipeline.",
-      "memory_type": "event",
-      "importance": 5,
-      "created_at": "2026-04-02T10:00:00+00:00"
-    },
-    {
-      "id": "mem-decoy-minh-001",
-      "summary": "minh-tran is the on-call engineer for the ingest service this week.",
-      "memory_type": "knowledge",
-      "importance": 4,
-      "created_at": "2026-04-15T08:00:00+00:00"
-    }
+    { "id": "dec-01", "summary": "Finished migrating the analytics dashboard from Redash to Metabase.", "memory_type": "event", "importance": 4, "created_at": "2026-01-05T10:00:00+00:00" },
+    { "id": "dec-02", "summary": "Switched the CI runner to GitHub-hosted large runners for faster builds.", "memory_type": "event", "importance": 4, "created_at": "2026-01-12T11:00:00+00:00" },
+    { "id": "dec-03", "summary": "Read chapter 3 of Designing Data-Intensive Applications on replication.", "memory_type": "knowledge", "importance": 3, "created_at": "2026-01-20T22:00:00+00:00" },
+    { "id": "dec-04", "summary": "Fixed a race condition in the ingest queue that dropped tail records.", "memory_type": "event", "importance": 6, "created_at": "2026-01-28T15:00:00+00:00" },
+    { "id": "dec-05", "summary": "Prefers espresso tonic in the afternoon over a second cup of coffee.", "memory_type": "behavior", "importance": 3, "created_at": "2026-02-02T13:30:00+00:00" },
+    { "id": "dec-06", "summary": "Installed Hyprland and spent the weekend porting the Sway keymap.", "memory_type": "event", "importance": 3, "created_at": "2026-02-08T19:00:00+00:00" },
+    { "id": "dec-07", "summary": "Wrote a blog draft about why linear types fit the Rust compiler better than GC.", "memory_type": "knowledge", "importance": 4, "created_at": "2026-02-14T09:00:00+00:00" },
+    { "id": "dec-08", "summary": "Signed up for a trail running event in May; 14 km with 400 m elevation.", "memory_type": "event", "importance": 4, "created_at": "2026-02-19T07:30:00+00:00" },
+    { "id": "dec-09", "summary": "Switched DNS to NextDNS on the router; blocked tracker domains by default.", "memory_type": "event", "importance": 3, "created_at": "2026-02-25T20:00:00+00:00" },
+    { "id": "dec-10", "summary": "Read a postmortem on the 2025 Cloudflare outage that wiped API traffic for 40 minutes.", "memory_type": "knowledge", "importance": 4, "created_at": "2026-03-01T11:00:00+00:00" },
+    { "id": "dec-11", "summary": "Renewed the apartment lease for another 12 months at the same rent.", "memory_type": "event", "importance": 5, "created_at": "2026-03-04T14:00:00+00:00" },
+    { "id": "dec-12", "summary": "Picked up a 1.8 kg kettlebell for hotel-room mornings while travelling.", "memory_type": "event", "importance": 2, "created_at": "2026-03-10T08:00:00+00:00" },
+    { "id": "dec-13", "summary": "Compared Pinecone, Qdrant, and Chroma — landed on Chroma for local-first.", "memory_type": "reflection", "importance": 5, "created_at": "2026-03-14T21:00:00+00:00" },
+    { "id": "dec-14", "summary": "Enabled Wayland screen-cast for Hyprland; OBS finally captures the desktop.", "memory_type": "event", "importance": 3, "created_at": "2026-03-22T10:00:00+00:00" },
+    { "id": "dec-15", "summary": "Booked a return flight to Hanoi for the long weekend in April.", "memory_type": "event", "importance": 4, "created_at": "2026-03-30T16:00:00+00:00" },
+    { "id": "dec-16", "summary": "Kept a running spreadsheet of monthly VND spending; dining is the biggest line.", "memory_type": "behavior", "importance": 3, "created_at": "2026-04-02T22:00:00+00:00" },
+    { "id": "dec-17", "summary": "Wrote a CLI wrapper around ffmpeg for quick audio extraction from screen recordings.", "memory_type": "event", "importance": 3, "created_at": "2026-04-06T15:30:00+00:00" },
+    { "id": "dec-18", "summary": "Tried a new dry-hopped lager at the craft brewery across the bridge.", "memory_type": "event", "importance": 2, "created_at": "2026-04-09T19:00:00+00:00" },
+    { "id": "dec-19", "summary": "Skimmed a paper on MMR and diversity-aware retrieval; bookmarked for later.", "memory_type": "knowledge", "importance": 4, "created_at": "2026-04-13T11:00:00+00:00" },
+    { "id": "dec-20", "summary": "Automated the home-server backup with restic to Backblaze B2.", "memory_type": "event", "importance": 4, "created_at": "2026-04-17T09:00:00+00:00" },
+    { "id": "dec-21", "summary": "Debugged a tricky React effect cleanup bug in the portal's auth hook.", "memory_type": "event", "importance": 5, "created_at": "2026-04-18T14:00:00+00:00" },
+    { "id": "dec-22", "summary": "Swapped Bose QC headphones for Sony WH-1000XM6 after the latter went on sale.", "memory_type": "event", "importance": 2, "created_at": "2026-04-19T17:00:00+00:00" },
+    { "id": "dec-23", "summary": "Read a deep-dive on pip's resolver rewrite for handling conflicting extras.", "memory_type": "knowledge", "importance": 3, "created_at": "2026-04-20T08:30:00+00:00" },
+    { "id": "dec-24", "summary": "Finished the Andor season finale; the anti-authoritarian beats landed hard.", "memory_type": "event", "importance": 3, "created_at": "2026-04-20T22:30:00+00:00" }
   ],
   "entities": [
-    {
-      "name": "nga-nguyen",
-      "type": "Person",
-      "aliases": [],
-      "props": {}
-    },
-    {
-      "name": "lam-pham",
-      "type": "Person",
-      "aliases": [],
-      "props": {}
-    },
-    {
-      "name": "minh-tran",
-      "type": "Person",
-      "aliases": [],
-      "props": {}
-    },
-    {
-      "name": "Giao",
-      "type": "Person",
-      "aliases": [],
-      "props": {}
-    }
+    {"name": "nga-nguyen", "type": "Person", "aliases": [], "props": {}},
+    {"name": "Giao", "type": "Person", "aliases": [], "props": {}}
   ],
   "about_edges": [
     {"memory_id": "mem-dinner-001", "entity_type": "Person", "entity_name": "nga-nguyen"},
     {"memory_id": "mem-hire-002", "entity_type": "Person", "entity_name": "nga-nguyen"},
-    {"memory_id": "mem-birthday-003", "entity_type": "Person", "entity_name": "nga-nguyen"},
-    {"memory_id": "mem-decoy-lam-001", "entity_type": "Person", "entity_name": "lam-pham"},
-    {"memory_id": "mem-decoy-minh-001", "entity_type": "Person", "entity_name": "minh-tran"}
+    {"memory_id": "mem-birthday-003", "entity_type": "Person", "entity_name": "nga-nguyen"}
   ],
   "rel_edges": [
-    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "nga-nguyen"},
-    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "lam-pham"},
-    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "minh-tran"}
+    {"from_type": "Person", "from_name": "Giao", "edge_type": "KNOWS", "to_type": "Person", "to_name": "nga-nguyen"}
   ]
 }

@@ -435,7 +435,12 @@ class MemoryEngine:
 
             # Path 3: graph search (KuzuDB) — word-based entity lookup
             # Also follows entity↔entity edges to discover related entities.
-            words = query.split()
+            # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
+            # plain query.split() leaves trailing "?" on the last token and
+            # breaks CONTAINS match against entity names/aliases.
+            import re
+
+            words = re.findall(r"\w+", query, flags=re.UNICODE)
             seen_entities: set[tuple[str, str]] = set()
 
             day_ids: set[str] = set()  # memories from matched Day entities

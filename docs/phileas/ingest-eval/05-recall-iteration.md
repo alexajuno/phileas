@@ -14,6 +14,41 @@
 | `alias-gap-chi-01` | alias-resolution, cross-lingual | HIT @ rank 1 | leaks through semantic search on a small decoy corpus |
 | `alias-present-01` | alias-resolution, cross-lingual, positive-control | MISS (0 results) | aliases populated but not reachable — see finding #1 |
 
+## Iteration 1 — fixes landed 2026-04-21
+
+Commits after the baseline ran (same day):
+
+- `src/phileas/graph.py` — `json.dumps(..., ensure_ascii=False)` on both
+  `set_aliases` and `upsert_node` props. Regression test
+  `tests/test_graph.py::test_non_ascii_alias_roundtrip`.
+- `src/phileas/engine.py` — `re.findall(r"\w+", query)` in path 3 instead
+  of `query.split()`. New gold-recall case `alias-present-punct-01` locks
+  the `?`-trailing query in.
+- `tests/eval/gold-recall/snapshots/alias-gap-chi-01.graph.json` —
+  decoys grown from 2 → 24, expected-memory summaries rewritten to drop
+  the entity name (so only alias → graph can bridge the query).
+
+Post-fix run
+`tests/eval/gold-recall/runs/20260421T122015Z-iso-alias-signal/`:
+
+| case | result | rank |
+| -- | -- | --: |
+| `alias-gap-chi-01` | HIT (surprising) | 1 |
+| `alias-present-01` | HIT (expected now) | 1 |
+| `alias-present-punct-01` | HIT (expected now) | 1 |
+
+Finding #1 is closed — `alias-present-01` flipped from MISS → HIT,
+confirming VN-alias graph lookup works end-to-end once the JSON
+escape stops. Finding #2 is closed — punctuation-tolerant gold case hits.
+
+Finding #3 re-opened as a new observation: even with 24 unrelated
+decoys and zero mention of `nga-nguyen` in the expected summaries,
+`alias-gap-chi-01` still retrieves those memories semantically. Root
+cause is the embedder's tone/topic bias (personal-narrative queries
+map closer to personal-narrative summaries than to
+technical/diary summaries), not anything VN-specific. See open
+question below.
+
 ## Baseline findings
 
 ### 1. Non-ASCII aliases are unreachable via graph search (real bug)
@@ -66,13 +101,11 @@ naturally. Two mitigations:
 
 ## Planned iterations (roughly in this order)
 
-1. **VN alias encoding fix** — ships finding #1 above. Unblocks every
-   cross-lingual alias case.
-2. **Query tokeniser cleanup** — finding #2. Strip punctuation before
-   graph CONTAINS.
+1. ~~**VN alias encoding fix**~~ — shipped 2026-04-21 (finding #1).
+2. ~~**Query tokeniser cleanup**~~ — shipped 2026-04-21 (finding #2).
 3. **Grow gold-recall corpus** — add the real redacted `chị → phuongtq`
-   case (see PHI-13), plus decoy padding per finding #3. Target ~10
-   cases spanning the five dimensions from `04-recall-graph-eval.md`.
+   case (see PHI-13), plus cases that isolate each of the five PHI-11
+   dimensions in its own signal. Target ~10 cases.
 4. **Alias backfill pass** — one-shot script that re-runs entity
    extraction over existing memories with a prompt explicitly asking for
    kinship / nickname aliases, and merges results into
@@ -81,6 +114,30 @@ naturally. Two mitigations:
    references an EN-named entity (or vice versa), propose merge via a
    deterministic rule (shared ABOUT neighbours + name-edit-distance).
    Exploratory; may drop if alias coverage is enough.
+
+## Open question — VN input, English embedder
+
+The default ChromaDB embedder (`all-MiniLM-L6-v2`) is overwhelmingly
+English-trained. It still retrieves personal-narrative memories for VN
+pronoun queries because topic/tone signal beats lexical signal, but
+fine-grained VN facts (dates, technical terms, named entities in the
+Vietnamese script) are almost certainly under-recalled today.
+
+Two directions worth weighing before adding more machinery:
+
+- **Translate-to-English on ingest.** Cost is one extra LLM call per
+  memory at ingest time (summaries are short; cheap). Benefit is a
+  uniform-English embedding space that the rest of the pipeline
+  already assumes. Raw transcripts stay in VN via `raw_text`.
+- **Swap the embedder for a multilingual one** (e.g.
+  `paraphrase-multilingual-MiniLM-L12-v2` or `bge-m3`). Cost is model
+  RAM + re-embedding every memory once. Benefit is native VN without
+  paying the translation tax on every future ingest.
+
+Decide against data, not intuition: before committing to either,
+build a small VN-vs-EN gold-recall subset (same memory in both
+languages, identical ABOUT edges, run both variants) and measure
+which side closes the gap.
 
 ## Out of scope
 

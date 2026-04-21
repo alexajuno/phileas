@@ -336,7 +336,7 @@ class GraphStore:
         if not self._ensure_connected():
             return
         entity_id = _entity_id(node_type, name)
-        props_str = json.dumps(props) if props else ""
+        props_str = json.dumps(props, ensure_ascii=False) if props else ""
         self._conn.execute(
             "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props",
             parameters={"id": entity_id, "name": name, "type": node_type, "props": props_str},
@@ -379,7 +379,11 @@ class GraphStore:
         if not self._ensure_connected():
             return
         entity_id = _entity_id(node_type, name)
-        aliases_str = json.dumps(aliases)
+        # ensure_ascii=False so non-ASCII aliases (e.g. Vietnamese kinship
+        # terms like "chị") stay as literal characters in the stored string.
+        # Kuzu's CONTAINS match runs against this raw value, and escaped
+        # forms like "ị" never match a query of "chị".
+        aliases_str = json.dumps(aliases, ensure_ascii=False)
         self._conn.execute(
             "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases",
             parameters={"id": entity_id, "aliases": aliases_str},
