@@ -28,7 +28,7 @@ def build_person_candidates(
     graph: GraphStore,
     db: Database,
     top_n: int = 15,
-    recent_summary_per_entity: int = 1,
+    recent_summary_per_entity: int = 3,
 ) -> list[dict[str, Any]]:
     """Gather top Person entities plus the most recent memory summary for each.
 
@@ -63,13 +63,27 @@ def build_person_candidates(
 
 
 def _format_candidates(candidates: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
+    """Render candidates as a multi-line block.
+
+    Per-candidate: header with name/type/stats, then one bullet per recent
+    summary. Handle-shaped names (e.g. "phuongtq") encode first-name +
+    initials, so the summaries carry more signal than the name itself —
+    showing several summaries helps the LLM pick on vibe rather than on
+    how "feminine" the name string looks.
+    """
+    blocks: list[str] = []
     for c in candidates:
         last = c.get("last_mentioned") or "—"
         summaries = c.get("recent_summaries") or []
-        theme = summaries[0] if summaries else "(no recent summary)"
-        lines.append(f"- {c['name']} ({c['type']}, {c['memory_count']} memories, last {last}): {theme}")
-    return "\n".join(lines) if lines else "(no candidates)"
+        header = f"- {c['name']} ({c['type']}, {c['memory_count']} memories, last {last})"
+        if not summaries:
+            blocks.append(header + ": (no recent summary)")
+            continue
+        lines = [header + ":"]
+        for s in summaries:
+            lines.append(f"    • {s}")
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks) if blocks else "(no candidates)"
 
 
 async def resolve_referents(

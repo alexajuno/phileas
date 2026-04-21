@@ -465,9 +465,18 @@ class MemoryEngine:
             seen_entities: set[tuple[str, str]] = set()
 
             day_ids: set[str] = set()  # memories from matched Day entities
+            referent_ids: set[str] = set()  # memories from LLM-resolved referents
+            # Per-memory referent rank (1 = best pick); smaller is better.
+            referent_rank: dict[str, int] = {}
 
-            def _add_memories_for_entity(etype: str, ename: str) -> None:
-                """Add memories linked to an entity to the candidates pool."""
+            def _add_memories_for_entity(etype: str, ename: str, *, referent_rank_value: int | None = None) -> None:
+                """Add memories linked to an entity to the candidates pool.
+
+                ``referent_rank_value`` tracks whether the source entity came
+                from the LLM referent-resolution step and at what rank. Smaller
+                rank = more confident. Used by scoring to keep the resolver's
+                ranking visible in the final top-K order.
+                """
                 if (ename, etype) in seen_entities:
                     return
                 seen_entities.add((ename, etype))
@@ -480,6 +489,12 @@ class MemoryEngine:
                     graph_ids.add(mem_id)
                     if etype == "Day":
                         day_ids.add(mem_id)
+                    if referent_rank_value is not None:
+                        referent_ids.add(mem_id)
+                        # Keep the best (lowest) rank seen for this memory.
+                        existing = referent_rank.get(mem_id)
+                        if existing is None or referent_rank_value < existing:
+                            referent_rank[mem_id] = referent_rank_value
                     if mem_id not in candidates:
                         item = self.db.get_item(mem_id)
                         if item:
@@ -508,8 +523,13 @@ class MemoryEngine:
 
             # Path 3b: LLM-proposed referents (pronoun / kinship resolution)
             # Fires only when stage 0 flagged the query as ambiguous.
-            for etype, ename in referent_names:
-                _add_memories_for_entity(etype, ename)
+            # Only the directly resolved entity gets the referent boost —
+            # neighbours traversed via REL edges ride the regular graph_boost,
+            # so e.g. resolving "chị" → phuongtq doesn't pull every coworker's
+            # unrelated memory to the top. Rank (1-indexed) comes from the
+            # LLM output order so the most-confident pick wins ties.
+            for idx, (etype, ename) in enumerate(referent_names, start=1):
+                _add_memories_for_entity(etype, ename, referent_rank_value=idx)
                 try:
                     related = self.graph.get_related_entities(etype, ename)
                     for rel in related:
@@ -617,6 +637,13 @@ class MemoryEngine:
                     # Day entity match is an exact structural constraint —
                     # the memory happened on the queried date. High relevance.
                     relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.85)
+                elif mem_id in referent_ids:
+                    # LLM reasoned about this referent specifically. Floor
+                    # deliberately above the 1.0 ceiling of min-max-normalised
+                    # cross-encoder scores — otherwise unrelated CE hits
+                    # routinely outrank the resolved person's memories on
+                    # normalisation artefacts alone.
+                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.95)
                 elif mem_id in graph_ids:
                     # Other graph matches: use graph_boost as floor
                     relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), graph_boost)
@@ -713,7 +740,25 @@ class MemoryEngine:
                 )
                 results.append(_item_to_dict(item, score))
 
-            results.sort(key=lambda r: r["score"], reverse=True)
+            # Referent-resolved memories rank first regardless of the
+            # compute_score blend. Otherwise importance/reinforcement on
+            # unrelated semantic hits routinely outweighs the referent
+            # floor, burying the exact memory the LLM just identified.
+            # Within the referent block, the resolver's rank leads (rank 1
+            # = most-confident pick), then compute_score breaks ties.
+            def _sort_key(r: dict) -> tuple:
+                mem_id = r["id"]
+                rank = referent_rank.get(mem_id)
+                # (group: 0 = referent / 1 = other, referent_rank or inf, -score)
+                # All default-ascending; Python's stable sort preserves MMR
+                # ordering within ties.
+                return (
+                    0 if mem_id in referent_ids else 1,
+                    rank if rank is not None else float("inf"),
+                    -r["score"],
+                )
+
+            results.sort(key=_sort_key)
 
             # Bump access counts
             for r in results:

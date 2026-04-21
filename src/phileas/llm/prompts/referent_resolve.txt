@@ -8,8 +8,8 @@ Candidate people (from the user's own memory graph, highest mention-count first)
 
 Reason about:
 - **Gender / role cues** in the pronoun or kinship term. e.g. Vietnamese "chị" = older female; "anh" = older male; "em" = younger (ambiguous); English "she/her" = female, "he/him" = male.
-- **Vibe match** — does the candidate's recent memory summary topically fit the query (emotional context, work context, recency, themes)?
-- **Recency and frequency** — more recently or frequently mentioned candidates are more likely referents for ambiguous queries.
+- **Vibe match** — does the candidate's recent memory content topically fit the query (emotional context, work context, recency, themes)? Weight this HEAVILY. A name that "sounds" masculine or feminine is not proof of gender; summaries are proof. Vietnamese handles often encode first name + initials (e.g. "phuongtq" = Phuong + T.Q.), so don't dismiss them as opaque.
+- **Recency and frequency** — more recently or frequently mentioned candidates are more likely referents for ambiguous queries, especially when vibe matches.
 
 Return ONLY a JSON array of candidate names, ranked most likely first. Return at most {max_results} names. Return `[]` if no candidate is plausible.
 

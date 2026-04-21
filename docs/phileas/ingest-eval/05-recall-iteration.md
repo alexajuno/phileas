@@ -166,6 +166,38 @@ pre-dated the new pipeline and silently disabled both query-rewrite
 flag; `engine.recall` still gates internally on `self.llm.available`,
 so keyless MCP environments are unaffected.
 
+### Follow-up — probe script + scoring fix (2026-04-21 late evening)
+
+Giao reported the MCP-routed query still failed after the _skip_llm fix.
+Built `scripts/probe_recall.py` to bypass MCP entirely: snapshots
+~/.phileas to a tempdir, builds a fresh MemoryEngine against the copy
+with the LLM enabled, and prints every stage's decision. Ran against
+the real query `đố biết chị ở trên mình nhắc đến là ai`.
+
+Three issues surfaced in sequence, each fixed in this iteration:
+
+1. **Resolver picked wrong entity** — with one summary per candidate,
+   the LLM chose `Phương` + `Ngan` over `phuongtq` because "phuongtq"
+   reads as an opaque handle next to the Vietnamese-looking alternatives.
+   Fix: `recent_summary_per_entity=1 → 3`, reformatted the candidate
+   block as multi-line bullets, and added an explicit prompt note that
+   handle-shaped names encode first name + initials.
+2. **Referent boost lost to CE normalisation** — cross-encoder scores
+   are min-max normalised to [0, 1] so the best CE hit always reaches
+   1.0 regardless of absolute quality. Raised `referent_ids` relevance
+   floor from 0.85 to 0.95 and removed the `is_referent` flag from
+   REL-edge-traversed neighbours so resolving "chị → anhnq" doesn't
+   pull every coworker.
+3. **Importance/reinforcement weight still buried the right memory** —
+   compute_score blends five signals, and a high-importance unrelated
+   memory at CE=1.0 can still beat a referent memory at relevance=0.95.
+   Final sort now prioritises referent hits by resolver rank
+   (1-indexed) before falling back to compute_score — so the LLM's
+   first pick always tops the list.
+
+After all three: the query surfaces a phuongtq memory at rank 1 on the
+live graph. Another phuongtq hit lands at rank 5 for context.
+
 ### Open items
 
 - The redacted real-transcript gold case (PHI-13) still hasn't landed;
@@ -176,6 +208,9 @@ so keyless MCP environments are unaffected.
 - Claude Code session still needs to relaunch so its MCP subprocess
   picks up the new server.py. A mere daemon restart isn't enough —
   the MCP stdio process is owned by the Claude Code session.
+- Duplicate entity problem — `phuongtq` (54 memories) and `Phương`
+  (9 memories) are the same real person split across two graph nodes.
+  Not fixed; an entity-dedup backfill is the right follow-up.
 
 ## Planned iterations beyond #3
 

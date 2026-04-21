@@ -133,10 +133,10 @@ def test_format_candidates_single_line_per_entity():
             {"name": "bob", "type": "Person", "memory_count": 2, "last_mentioned": None, "recent_summaries": []},
         ]
     ).splitlines()
-    assert len(lines) == 2
-    assert "alice" in lines[0]
-    assert "She shipped v2." in lines[0]
-    assert "no recent summary" in lines[1]
+    # Alice: 1 header + 1 summary bullet. Bob: 1 header+fallback line.
+    assert any("alice" in line and "5 memories" in line for line in lines)
+    assert any("She shipped v2." in line for line in lines)
+    assert any("bob" in line and "no recent summary" in line for line in lines)
 
 
 def test_build_person_candidates(tmp_path):
@@ -170,7 +170,9 @@ def test_build_person_candidates(tmp_path):
     assert "bob" in names
     alice = next(c for c in enriched if c["name"] == "alice")
     assert alice["memory_count"] == 3
-    assert alice["recent_summaries"] == ["alice summary 0"]
+    # Most-recent summary must lead; with 3 memories we get up to 3 summaries.
+    assert alice["recent_summaries"][0] == "alice summary 0"
+    assert len(alice["recent_summaries"]) == 3
     assert alice["last_mentioned"] == now.date().isoformat()
     db.close()
     graph.close()
