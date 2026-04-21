@@ -155,17 +155,27 @@ Runs under ~2 LLM calls per recall when ambiguous; 1 call otherwise;
   exercising the full recall path with mocked LLM, proves phuongtq
   surfaces for an ambiguous `chị` query against a seeded graph.
 
+### Follow-up — MCP recall was hard-wired to skip the LLM
+
+After shipping the resolver, testing the real transcript through MCP
+still failed. Root cause: `src/phileas/server.py:175` passed
+`_skip_llm=True` on every MCP recall call (commit `53cc816` —
+"MCP server skips LLM operations (Claude Code is the brain)"). That
+pre-dated the new pipeline and silently disabled both query-rewrite
+*and* the new referent resolver for every live recall. Dropped the
+flag; `engine.recall` still gates internally on `self.llm.available`,
+so keyless MCP environments are unaffected.
+
 ### Open items
 
-- The live daemon is a long-running process. It needs a restart to
-  pick up the new code. The MCP `recall` tool will keep returning
-  pre-fix behaviour until the daemon restarts and reloads
-  `phileas.engine`.
 - The redacted real-transcript gold case (PHI-13) still hasn't landed;
   integration tests cover the code path but don't pin the real case.
 - `build_person_candidates` is O(15 × memory_count_per_person) SQLite
   round-trips. Cheap for now, worth batching if we expand beyond
   Person entity types.
+- Claude Code session still needs to relaunch so its MCP subprocess
+  picks up the new server.py. A mere daemon restart isn't enough —
+  the MCP stdio process is owned by the Claude Code session.
 
 ## Planned iterations beyond #3
 

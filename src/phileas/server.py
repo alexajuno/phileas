@@ -172,7 +172,11 @@ def recall(
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
         min_importance: Only return memories with importance >= this value.
     """
-    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance, _skip_llm=True)
+    # Stage-0 query analysis (rewrite + optional referent resolution) runs
+    # here so ambiguous pronoun/kinship queries from the live conversation
+    # reach the right entity. Gated internally on `llm.available`, so a
+    # keyless MCP environment still works — it just skips the LLM hop.
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance)
     if not items:
         return "No relevant memories found."
 
