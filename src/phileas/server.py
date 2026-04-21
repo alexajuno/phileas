@@ -180,7 +180,9 @@ def recall(
     for item in items:
         score_str = f"score={item['score']:.2f}" if item.get("score") else ""
         imp_str = f"importance={item['importance']}"
-        meta = ", ".join(filter(None, [imp_str, score_str]))
+        created = item.get("created_at")
+        created_str = f"created={created[:10]}" if created else ""
+        meta = ", ".join(filter(None, [imp_str, score_str, created_str]))
         lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']} ({meta})")
     return "\n".join(lines)
 

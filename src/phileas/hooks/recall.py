@@ -50,8 +50,10 @@ def format_memories(memories: list[dict]) -> str:
         imp = m.get("importance", "?")
         score = m.get("score")
         score_str = f", score={score:.2f}" if isinstance(score, (int, float)) else ""
+        created = m.get("created_at")
+        created_str = f", created={created[:10]}" if isinstance(created, str) else ""
         summary = truncate(m.get("summary", ""), MAX_SUMMARY_CHARS)
-        lines.append(f"  [{mid}] [{mtype}] (imp={imp}{score_str}) {summary}")
+        lines.append(f"  [{mid}] [{mtype}] (imp={imp}{score_str}{created_str}) {summary}")
     lines.append("</phileas-recall>")
     return "\n".join(lines)
 

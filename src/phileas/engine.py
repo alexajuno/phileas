@@ -69,6 +69,7 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
         "type": item.memory_type,
         "importance": item.importance,
         "score": score,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 
