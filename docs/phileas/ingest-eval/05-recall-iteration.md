@@ -115,29 +115,25 @@ naturally. Two mitigations:
    deterministic rule (shared ABOUT neighbours + name-edit-distance).
    Exploratory; may drop if alias coverage is enough.
 
-## Open question — VN input, English embedder
+## Closed — VN input deprecated on 2026-04-21 19:26
 
-The default ChromaDB embedder (`all-MiniLM-L6-v2`) is overwhelmingly
-English-trained. It still retrieves personal-narrative memories for VN
-pronoun queries because topic/tone signal beats lexical signal, but
-fine-grained VN facts (dates, technical terms, named entities in the
-Vietnamese script) are almost certainly under-recalled today.
+Giao committed to English-only for Claude Code sessions. Forward ingest
+is guaranteed English, so neither the translate-on-ingest option nor a
+multilingual embedder swap is needed. `all-MiniLM-L6-v2` stays.
 
-Two directions worth weighing before adding more machinery:
+Scope implications:
 
-- **Translate-to-English on ingest.** Cost is one extra LLM call per
-  memory at ingest time (summaries are short; cheap). Benefit is a
-  uniform-English embedding space that the rest of the pipeline
-  already assumes. Raw transcripts stay in VN via `raw_text`.
-- **Swap the embedder for a multilingual one** (e.g.
-  `paraphrase-multilingual-MiniLM-L12-v2` or `bge-m3`). Cost is model
-  RAM + re-embedding every memory once. Benefit is native VN without
-  paying the translation tax on every future ingest.
+- The cross-lingual dimension from `04-recall-graph-eval.md` moves from
+  *primary metric* to *regression coverage for historical VN memories*.
+- The `chị → phuongtq` case (PHI-13) lands once as a read-path regression
+  for data already in the graph, then stops accumulating siblings.
+- Iteration priorities 4 (alias backfill) and 5 (cross-lingual
+  normalization) collapse into a single "backfill kinship aliases on
+  existing VN-era entities" task, gated only by the cost of being
+  wrong on historical retrieval.
 
-Decide against data, not intuition: before committing to either,
-build a small VN-vs-EN gold-recall subset (same memory in both
-languages, identical ABOUT edges, run both variants) and measure
-which side closes the gap.
+The two fixes from Iteration 1 (VN alias JSON escape, query tokenizer)
+still land — both affect any non-ASCII or punctuated input, not just VN.
 
 ## Out of scope
 
