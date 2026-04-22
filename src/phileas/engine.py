@@ -954,6 +954,10 @@ class MemoryEngine:
 
         Idempotent: checks for existing reflection marker before running.
         Returns list of stored insight dicts, or [] if skipped.
+
+        LLM reflection is best-effort: if the daemon's LLM is unavailable or
+        the call fails (e.g. no API credits), this returns [] cleanly instead
+        of crashing. Full reflection moves to agent-driven in a follow-up.
         """
         from phileas.llm.reflection import reflect_on_day
 
@@ -973,8 +977,16 @@ class MemoryEngine:
                 timer.extra["no_memories"] = True
                 return []
 
-            # Run LLM reflection
-            insights = asyncio.run(reflect_on_day(self.llm, target_date, day_memories))
+            if not self.llm.available:
+                timer.extra["skipped"] = "llm_unavailable"
+                return []
+
+            try:
+                insights = asyncio.run(reflect_on_day(self.llm, target_date, day_memories))
+            except Exception as e:
+                log.warning("reflect LLM call failed", extra={"op": "reflect", "data": {"error": str(e)[:200]}})
+                timer.extra["llm_error"] = True
+                return []
             if not insights:
                 timer.extra["no_insights"] = True
                 return []
@@ -1169,8 +1181,18 @@ class MemoryEngine:
         if not clusters:
             return 0
 
-        # Call LLM to derive facts
-        facts = asyncio.run(derive_facts(self.llm, clusters, profile_summary))
+        # Call LLM to derive facts. Best-effort: if the LLM is unavailable
+        # or the call fails (e.g. no credits), bail cleanly.
+        if not self.llm.available:
+            return 0
+        try:
+            facts = asyncio.run(derive_facts(self.llm, clusters, profile_summary))
+        except Exception as e:
+            log.warning(
+                "fact derivation LLM call failed",
+                extra={"op": "infer_graph", "data": {"error": str(e)[:200]}},
+            )
+            return 0
 
         # Store each derived fact
         facts_stored = 0

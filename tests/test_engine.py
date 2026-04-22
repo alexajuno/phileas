@@ -78,9 +78,19 @@ def test_status(tmp_dir):
     assert stats["vector_count"] == 2
 
 
+def _engine_with_llm(tmp_dir):
+    """Build an engine whose llm.available is True, so reflect() doesn't
+    short-circuit on unconfigured LLM. Actual LLM calls are expected to be
+    monkey-patched by the caller."""
+    engine = _make_engine(tmp_dir)
+    engine.config.llm.provider = "anthropic"
+    engine.config.llm.model = "anthropic/claude-haiku-4-5"
+    return engine
+
+
 def test_reflect_returns_insights(tmp_dir, monkeypatch):
     """reflect() gathers today's memories and stores insights."""
-    engine = _make_engine(tmp_dir)
+    engine = _engine_with_llm(tmp_dir)
     today = date.today().isoformat()
     kw = dict(daily_ref=today)
     engine.memorize("Set up CI/CD for project", memory_type="event", importance=7, **kw)
@@ -102,7 +112,7 @@ def test_reflect_returns_insights(tmp_dir, monkeypatch):
 
 def test_reflect_skips_if_already_reflected(tmp_dir, monkeypatch):
     """reflect() is idempotent — won't reflect twice on the same day."""
-    engine = _make_engine(tmp_dir)
+    engine = _engine_with_llm(tmp_dir)
     today = date.today().isoformat()
     engine.memorize("Something happened", memory_type="event", importance=5, daily_ref=today)
     engine.memorize("Another thing", memory_type="event", importance=5, daily_ref=today)
