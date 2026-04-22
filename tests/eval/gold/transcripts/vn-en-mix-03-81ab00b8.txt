@@ -1,0 +1,85 @@
+User: You are analyzing a personal knowledge graph to discover hidden connections and patterns.
+
+Below are recent memories and their known entity connections. Your job:
+1. Infer NEW entity↔entity relationships that aren't explicitly stated but are clearly implied
+2. Spot higher-level patterns or insights that emerge from seeing these memories together
+
+## Recent Memories
+- [reflection] (imp=6) Apr 9: Giao suy nghĩ trước sinh nhật 23 — tự hỏi 23 năm rồi mà vẫn chưa đúng người đúng lúc trong tình yêu. Nhận ra thời gian thật sự "sống" có lẽ ít hơn 23 năm — không phải mọi năm đều count.
+- [event] (imp=7) Giao chia sẻ chi tiết về mối quan hệ với @nganvt: chỉ có đúng 1 lần hẹn hò trực tiếp trước khi cô ấy đi nước ngoài. Lần đó rất tệ — xem phim hài Thái do cô ấy chọn, không ảnh, không nắm tay, không hôn, đi về buồn và giận. Breakup chính thức 2/2025 nhưng thực tế đã lay lắt từ trước — Giao nhận ra sớm hơn rằng đó không phải cách mình muốn được yêu. Cả mối quan hệ chủ yếu là tin nhắn, "sự hiện diện không trọn vẹn." Dù đã từng quan hệ thời cấp 3 nhưng gặp nhau lại cứ như người xa lạ.
+
+## Known Entities and Relationships
+(no graph data yet)
+
+## Instructions
+
+For relationships: only infer connections that are clearly implied by the evidence. Don't guess.
+For insights: look for recurring themes, behavioral patterns, evolving priorities, or connections across different life areas (work, personal, learning).
+
+Respond with ONLY a JSON object:
+{
+  "relationships": [
+    {"from_name": str, "from_type": str, "edge": str, "to_name": str, "to_type": str, "reason": str}
+  ],
+  "insights": [
+    {"summary": str, "importance": int, "memory_type": str}
+  ]
+}
+
+Rules:
+- "reason" explains why the relationship is implied (1 sentence)
+- Insights should be tagged as "inference" memory_type
+- Importance 1-10: higher for cross-cutting patterns, lower for obvious connections
+- Return empty arrays if nothing meaningful to infer
+- Don't repeat relationships that already exist in the graph context
+
+Assistant: ```json
+{
+  "relationships": [
+    {
+      "from_name": "Giao",
+      "from_type": "Person",
+      "edge": "VALUES",
+      "to_name": "Physical Presence and Embodied Connection",
+      "to_type": "Value",
+      "reason": "Both memories show Giao's unmet need for complete presence, physical affection, and face-to-face time—the opposite of what her relationship with Ngan provided"
+    },
+    {
+      "from_name": "Giao",
+      "from_type": "Person",
+      "edge": "WAS_IN_RELATIONSHIP_WITH",
+      "to_name": "Ngan",
+      "to_type": "Person",
+      "reason": "Event memory explicitly documents their relationship from high school through Feb 2025 breakup"
+    },
+    {
+      "from_name": "Ngan",
+      "from_type": "Person",
+      "edge": "WENT_ABROAD",
+      "to_name": "Overseas",
+      "to_type": "Location",
+      "reason": "Event memory identifies her departure abroad as the pivot point that shifted the relationship further toward text-based only"
+    },
+    {
+      "from_name": "Giao",
+      "from_type": "Person",
+      "edge": "REFLECTS_ON",
+      "to_name": "Quality vs Duration of Time Lived",
+      "to_type": "Life Theme",
+      "reason": "Reflection memory shows Giao questioning whether all 23 years are equally counted, suggesting a shift toward prioritizing depth and authenticity over mere duration"
+    }
+  ],
+  "insights": [
+    {
+      "summary": "Giao is learning that presence requires embodiment—her relationship with Ngan was text-dominant despite prior connection, eroding intimacy and leaving them 'strangers.' This experience is clarifying her need for complete (physical + emotional) presence in relationships.",
+      "importance": 8,
+      "memory_type": "inference"
+    },
+    {
+      "summary": "Giao is shifting from measuring life by chronological duration (23 years) to valuing depth and authenticity of experience. She's becoming faster at recognizing when relationships don't match her actual needs—early awareness of the mismatch with Ngan suggests developing clarity about what she wants.",
+      "importance": 7,
+      "memory_type": "inference"
+    }
+  ]
+}
+```

@@ -92,6 +92,13 @@ class GraphProxy:
             default=[],
         )
 
+    def get_top_entities_by_type(self, entity_type: str, top_n: int = 15) -> list[dict[str, Any]]:
+        return self._read(
+            "get_top_entities_by_type",
+            {"entity_type": entity_type, "top_n": top_n},
+            default=[],
+        )
+
     # -- Memory <-> Memory edges (MEM_REL) --
 
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:

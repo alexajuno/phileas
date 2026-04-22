@@ -23,11 +23,16 @@ from phileas.config import LLMConfig
 
 
 def parse_json_response(text: str) -> Any:
-    """Parse JSON from LLM response, stripping markdown code fences if present."""
-    # Strip ```json ... ``` or ``` ... ```
-    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip())
-    stripped = re.sub(r"\n?```\s*$", "", stripped)
-    return json.loads(stripped)
+    """Parse the first JSON value out of an LLM response.
+
+    LLMs sometimes wrap output in ```json fences AND emit trailing prose
+    after the closing fence (e.g. a brief commentary). Strip a leading
+    fence, then use raw_decode so trailing junk (closing fence, prose,
+    extra whitespace) is ignored instead of raising "Extra data".
+    """
+    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip()).lstrip()
+    value, _ = json.JSONDecoder().raw_decode(stripped)
+    return value
 
 
 def _free_ram_gb() -> float:
@@ -86,6 +91,11 @@ def _claude_cli_complete(
 
     sub_env = os.environ.copy()
     sub_env["PHILEAS_SUBCALL"] = "1"
+    # Force claude-cli to use the subscription (OAuth) path rather than the
+    # API-key path. Leaving ANTHROPIC_API_KEY in the env makes `claude -p`
+    # default to API-key auth, which bills against the paid API — defeats the
+    # purpose of `provider = "claude-cli"` (subscription-only).
+    sub_env.pop("ANTHROPIC_API_KEY", None)
     result = subprocess.run(
         cmd,
         input=prompt,

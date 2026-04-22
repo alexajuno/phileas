@@ -5,7 +5,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from phileas.config import LLMConfig, LLMOperations
-from phileas.llm import LLMClient
+from phileas.llm import LLMClient, parse_json_response
+
+
+class TestParseJsonResponse:
+    def test_plain_json(self):
+        assert parse_json_response('{"a": 1}') == {"a": 1}
+
+    def test_fenced_json(self):
+        assert parse_json_response('```json\n{"a": 1}\n```') == {"a": 1}
+
+    def test_fenced_with_trailing_prose(self):
+        """The real-world failure: LLM emits JSON + closing fence + commentary.
+
+        Seen as 'Extra data: line 4 column 1 (char 21)' from json.loads.
+        """
+        text = '```json\n{"memories": []}\n```\n\nThis interaction contains only a factual query.'
+        assert parse_json_response(text) == {"memories": []}
+
+    def test_json_with_trailing_prose_no_fence(self):
+        assert parse_json_response('{"memories": []}\n\nNote: nothing to store.') == {"memories": []}
+
+    def test_raises_when_no_json(self):
+        import json
+
+        with pytest.raises(json.JSONDecodeError):
+            parse_json_response("no json here")
+
 
 # ------------------------------------------------------------------
 # Availability
@@ -161,14 +187,19 @@ class TestExtraction:
         assert result[0]["memory_type"] == "event"
 
     @pytest.mark.asyncio
-    async def test_extract_memories_fallback(self):
-        from phileas.llm.extraction import extract_memories
+    async def test_extract_memories_raises_when_llm_unavailable(self):
+        """No LLM → raise, don't synthesize a fake memory from the raw text.
+
+        The prior fallback silently turned every raw turn into a
+        knowledge/imp=5 "memory" whenever the LLM was unconfigured. That
+        polluted the DB with raw chat dumps. The new contract: caller (daemon
+        ingest loop) catches the exception and marks the source event failed.
+        """
+        from phileas.llm.extraction import ExtractionUnavailable, extract_memories
 
         client = LLMClient(_NO_LLM_CONFIG)
-        result = await extract_memories(client, "I like Python")
-        assert len(result) == 1
-        assert result[0]["summary"] == "I like Python"
-        assert result[0]["importance"] == 5
+        with pytest.raises(ExtractionUnavailable):
+            await extract_memories(client, "I like Python")
 
 
 class TestQueryRewrite:

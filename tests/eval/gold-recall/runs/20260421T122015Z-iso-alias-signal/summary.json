@@ -1,0 +1,33 @@
+{
+  "n_queries": 3,
+  "top_k_hit_rate": 1.0,
+  "zero_result_rate": 0.0,
+  "mean_rank": 1.0,
+  "by_tag": {
+    "alias-resolution": {
+      "n": 3,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "cross-lingual": {
+      "n": 3,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "positive-control": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "punctuation-regression": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    }
+  },
+  "meta": {
+    "slug": "iso-alias-signal",
+    "timestamp": "20260421T122015Z",
+    "n_cases": 3
+  }
+}

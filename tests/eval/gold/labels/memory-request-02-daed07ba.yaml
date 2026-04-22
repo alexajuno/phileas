@@ -1,0 +1,39 @@
+id: memory-request-02-daed07ba
+source_session: /home/ajuno/.claude/projects/-home-ajuno/e994044c-bea8-45df-8a5c-08dc8b8905ef.jsonl
+stratum: memory-request
+expected_memories:
+- summary: Giao plays badminton on Wednesdays, with a 15-minute commute from home.
+  memory_type: behavior
+  importance: 6
+  required_substrings:
+  - badminton
+  - Wednesday
+expected_entities:
+- name: Giao
+  type: Person
+- name: badminton
+  type: Activity
+expected_relationships:
+- from_name: Giao
+  edge: PRACTICES
+  to_name: badminton
+notes: 'Transcript is a Secretary-skill morning briefing — mostly transient state
+
+  (weather, overdue task list, specific LC task IDs). The ONE persistent
+
+  pattern buried in the briefing''s footer is "Remember: badminton on
+
+  Wednesdays — 15min commute from home." That''s a recurring-schedule fact
+
+  worth capturing.
+
+
+  Everything else (15 overdue tasks, resume rewrite, specific task numbers)
+
+  is snapshot state that taskwarrior owns and rots fast. Zero memories for
+
+  all of it. Mis-extracting a task-list into memories would be a classic
+
+  noise signal.
+
+  '

@@ -1,0 +1,19 @@
+id: casing-drift-01
+# Entity stored with capitalized "Phileas"; query uses lowercase "phileas".
+# Before the 2026-04-21 fix, graph.search_nodes did case-sensitive CONTAINS
+# so the query couldn't reach the entity — even though this is the exact
+# drift pattern entity_population flagged as a known issue.
+query: "what's going on with phileas this week"
+prior_context: |
+  Entity recorded as "Phileas" (Project); user naturally types "phileas"
+  in the query. Expected: recall finds memories linked to the entity.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-bug-001
+    - mem-ship-002
+  entity_names:
+    - Phileas
+tags:
+  - casing-drift
+  - alias-resolution

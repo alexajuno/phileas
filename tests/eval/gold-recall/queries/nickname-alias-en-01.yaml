@@ -1,0 +1,18 @@
+id: nickname-alias-en-01
+# English nickname → full name via aliases. Structural counterpart to
+# alias-present-01 without the VN/cross-lingual dimension. Confirms the
+# alias resolution path works for everyday English shortenings.
+query: "what does Alex work on these days"
+prior_context: |
+  Entity "alexandra-chen" with aliases ["Alex", "Al"]. Memories about
+  her don't name her; only graph resolution via alias can bridge.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-launch-001
+    - mem-1on1-002
+  entity_names:
+    - alexandra-chen
+tags:
+  - alias-resolution
+  - english-positive-control

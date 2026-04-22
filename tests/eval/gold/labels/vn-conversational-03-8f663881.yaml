@@ -1,0 +1,11 @@
+id: vn-conversational-03-8f663881
+source_session: /home/ajuno/.claude/projects/-home-ajuno/7c2c08fd-d019-4212-a00e-233d90a62112.jsonl
+stratum: vn-conversational
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Trivia Q&A: "which file stores this conversation?" → Claude Code stores
+  sessions under ~/.claude/projects/<cwd-encoded>/<session-id>.jsonl. Not
+  user-specific, not a preference, not a decision — just CC architecture
+  trivia. Zero.

@@ -1,0 +1,1 @@
+User: the update for filter isn't correct. go with style similar to request history view. we allow selection on both field and direction

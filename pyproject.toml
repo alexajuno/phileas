@@ -26,6 +26,7 @@ Repository = "https://github.com/ajuno/phileas"
 
 [project.scripts]
 phileas = "phileas.cli:app"
+phileas-hook = "phileas.hooks.cli:app"
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers"]

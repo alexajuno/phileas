@@ -1,0 +1,42 @@
+id: system-reminder-heavy-01-838e6bef
+source_session: /home/ajuno/.claude/projects/-home-ajuno-genai/d416a88f-43ce-4ac1-9fda-6182cc9209a1/subagents/agent-aside_question-449ed289e02fa0f2.jsonl
+stratum: system-reminder-heavy
+expected_memories:
+- summary: ModelProviderPricing supports three margin strategies (none, percentage,
+    fixed) via margin_type and margin_value fields, with per-row granularity.
+  memory_type: knowledge
+  importance: 7
+  required_substrings:
+  - ModelProviderPricing
+  - margin
+expected_entities:
+- name: ModelProviderPricing
+  type: Class
+- name: margin_type
+  type: Field
+- name: margin_value
+  type: Field
+- name: PricingMarginType
+  type: Enum
+expected_relationships:
+- from_name: ModelProviderPricing
+  edge: HAS_FIELD
+  to_name: margin_type
+- from_name: ModelProviderPricing
+  edge: HAS_FIELD
+  to_name: margin_value
+notes: 'Side-question subagent, but the real content is concrete project-design
+
+  knowledge: the pricing table supports three margin strategies with per-row
+
+  granularity. Precedent for this kind of memory exists in the DB already
+
+  ([109fb4f5] USD-pricing migrations, [0bc35dbb] exception handler narrowing).
+
+  required_substrings picks two distinctive hooks — the class name and "margin"
+
+  — so a predicted summary that drops the class name (e.g., just "pricing has
+
+  three margin types") fails the match by design.
+
+  '

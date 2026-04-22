@@ -1,0 +1,15 @@
+id: system-reminder-heavy-02-a51d135f
+source_session: /home/ajuno/.claude/projects/-home-ajuno/9adf580d-c9c3-445e-9e7d-9c75f2451e98/subagents/agent-aside_question-9761a11750193fe1.jsonl
+stratum: system-reminder-heavy
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: 'Side-question subagent. Residual content: "/theme" → assistant explains how
+
+  to invoke the Claude Code /theme command. Not project-specific, not a user
+
+  preference (the user didn''t say "I use light mode"), just command trivia.
+
+  Zero memories.
+
+  '

@@ -1,0 +1,22 @@
+id: alias-gap-chi-01
+# Synthetic stand-in for the `chị → phuongtq` failure (PHI-11). Names and
+# context are fictional; the structural bug (alias=[] on a linked Person
+# entity, cross-lingual pronoun referent) is preserved verbatim from the
+# real case. Replace with a redacted version of the 2026-04-21 transcript
+# once the harness has been validated on this case.
+query: "who is chị"
+prior_context: |
+  Earlier in the session the user referred to someone only as 'chị'
+  (Vietnamese kinship term for older female). Her name was never said
+  aloud. The graph holds an unnamed Person entity with no aliases set.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-dinner-001
+    - mem-hire-002
+    - mem-birthday-003
+  entity_names:
+    - nga-nguyen
+tags:
+  - alias-resolution
+  - cross-lingual

@@ -1,0 +1,18 @@
+id: coding-life-mix-01-8d902954
+source_session: /home/ajuno/.claude/projects/-home-ajuno/088e8d02-a9d0-485d-9a8c-717b0a6ec5bf.jsonl
+stratum: coding-life-mix
+expected_memories:
+  - summary: "Giao flagged that Phileas went silent for ~5 days (Apr 14 → Apr 21) — no new memories stored for the weekend or recent days, indicating the ingest/memorize cycle may have stopped firing."
+    memory_type: knowledge
+    importance: 7
+    required_substrings: ["Phileas", "gap"]
+expected_entities:
+  - { name: Giao, type: Person }
+  - { name: Phileas, type: Project }
+expected_relationships: []
+notes: |
+  Real user feedback on Phileas's own operational state: expected continuous
+  recall, observed a multi-day silence. Important because it's a system-health
+  observation worth remembering for future debugging ("we saw a similar gap
+  on Apr 21"). Borderline between knowledge and reflection; knowledge feels
+  right because it's factual (the gap happened) rather than interpretive.

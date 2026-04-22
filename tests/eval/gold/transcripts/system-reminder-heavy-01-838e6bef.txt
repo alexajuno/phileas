@@ -1,0 +1,32 @@
+User: <system-reminder>This is a side question from the user. You must answer this question directly in a single response.
+
+IMPORTANT CONTEXT:
+- You are a separate, lightweight agent spawned to answer this one question
+- The main agent is NOT interrupted - it continues working independently in the background
+- You share the conversation context but are a completely separate instance
+- Do NOT reference being interrupted or what you were "previously doing" - that framing is incorrect
+
+CRITICAL CONSTRAINTS:
+- You have NO tools available - you cannot read files, run commands, search, or take any actions
+- This is a one-off response - there will be no follow-up turns
+- You can ONLY provide information based on what you already know from the conversation context
+- NEVER say things like "Let me try...", "I'll now...", "Let me check...", or promise to take any action
+- If you don't know the answer, say so - do not offer to look it up or investigate
+
+Simply answer the question with the information you have.</system-reminder>
+
+does current system support multiple margin strategy?
+
+Assistant: Yes, the `ModelProviderPricing` model supports three margin strategies via the `PricingMarginType` enum:
+
+- **None** — pass-through, user pays `base_cost` exactly
+- **Percentage** — user pays `base_cost * (1 + margin_value)` (e.g., 30% markup)
+- **Fixed** — user pays `base_cost + margin_value` (e.g., +$0.01 flat)
+
+Each `model_provider_pricing` row has its own `margin_type` and `margin_value`, so you can set different strategies per model+provider+operation combination. For example:
+
+- Flux 2 T2I via fal.ai → `margin_type: none` (pass-through at $0.03)
+- Clarity Upscale via fal.ai → `margin_type: percentage`, `margin_value: 0.30` (30% markup on the resolution-based cost)
+- Some other model → `margin_type: fixed`, `margin_value: 0.005` ($0.005 flat fee on top)
+
+So yes, **per-row granularity** — you're not locked into one strategy globally.

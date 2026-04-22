@@ -1,0 +1,19 @@
+id: type-confusion-01
+# Same conceptual entity split across two types (extraction sometimes calls
+# Phileas a Project, sometimes a Tool). Memories get linked to different
+# nodes based on which extraction pass ran. Recall should surface the union
+# so the user isn't penalised for the extractor's inconsistency.
+query: "phileas logs and metrics"
+prior_context: |
+  Graph has both (Project, phileas) and (Tool, phileas) nodes. One
+  memory is linked to the Project node, one to the Tool node. Expected
+  recall returns both.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-proj-001
+    - mem-tool-002
+  entity_names:
+    - phileas
+tags:
+  - type-confusion

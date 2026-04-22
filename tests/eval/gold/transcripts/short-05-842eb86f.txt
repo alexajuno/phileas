@@ -1,0 +1,1 @@
+User: <bash-stdout>/home/ajuno/genai</bash-stdout><bash-stderr></bash-stderr>

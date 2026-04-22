@@ -1,0 +1,20 @@
+id: alias-present-punct-01
+# Regression for the `query.split()` tokenizer bug: a trailing "?" used to
+# leave the last token as "chị?" which no CONTAINS match could find in
+# aliases. After the re.findall(r"\w+") switch in engine.recall, this case
+# should hit just like alias-present-01.
+query: "who is chị?"
+prior_context: |
+  Same shape as alias-present-01 but with a trailing question mark on the
+  query. Exists to lock the punctuation fix in place.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-promo-001
+    - mem-gift-002
+  entity_names:
+    - lan-vo
+tags:
+  - alias-resolution
+  - cross-lingual
+  - punctuation-regression

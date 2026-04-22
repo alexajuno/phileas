@@ -74,6 +74,44 @@ def test_search_nodes(kuzu_path):
     gs.close()
 
 
+def test_case_insensitive_search(kuzu_path):
+    """search_nodes should match regardless of casing on name or query.
+
+    Regression: Kuzu CONTAINS is case-sensitive by default, so a user query
+    "phileas" couldn't resolve an entity stored as "Phileas". Noted in
+    feedback_entity_population as "casing drift."
+    """
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Project", "Phileas")
+    gs.upsert_node("Person", "ALEX")
+    gs.set_aliases("Person", "ALEX", ["Alex"])
+
+    assert any(h["name"] == "Phileas" for h in gs.search_nodes("phileas"))
+    assert any(h["name"] == "Phileas" for h in gs.search_nodes("PHILEAS"))
+    assert any(h["name"] == "ALEX" for h in gs.search_nodes("alex"))
+    assert any(h["name"] == "ALEX" for h in gs.search_nodes("ALex"))
+    gs.close()
+
+
+def test_non_ascii_alias_roundtrip(kuzu_path):
+    """Aliases with non-ASCII characters must be findable via search_nodes.
+
+    Regression: json.dumps default ensure_ascii=True used to escape Vietnamese
+    characters into \\uXXXX before they hit Kuzu, so CONTAINS match against a
+    raw query term never fired. Seen on 2026-04-21 as the `chị → phuongtq`
+    resolution failure.
+    """
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Person", "lan-vo")
+    gs.set_aliases("Person", "lan-vo", ["chị", "chị Lan"])
+
+    # The kinship term alone must match the entity via alias CONTAINS.
+    hits = gs.search_nodes("chị")
+    names = {h["name"] for h in hits}
+    assert "lan-vo" in names, f"VN alias should round-trip; got {names!r}"
+    gs.close()
+
+
 def test_get_related_entities(kuzu_path):
     """Entity↔entity traversal should discover connected entities."""
     gs = GraphStore(path=kuzu_path)

@@ -1,0 +1,16 @@
+id: vn-conversational-04-d5d17652
+source_session: /home/ajuno/.claude/projects/-home-ajuno/e25d2e08-ef62-48ed-9575-8b947ce6c718.jsonl
+stratum: vn-conversational
+expected_memories:
+  - summary: "Emotional arc preparing the first tech talk (Happy Bug Day, hbd-talk repo): tired → proud → anxious → acceptance → 'liều đi' (boldness). First real public presentation of personal AI engineering work."
+    memory_type: reflection
+    importance: 7
+    required_substrings: ["tech talk", "Happy Bug Day"]
+expected_entities:
+  - { name: Giao, type: Person }
+  - { name: hbd-talk, type: Project }
+expected_relationships: []
+notes: |
+  Identity-milestone reflection — first tech talk, specific emotional arc
+  worth remembering. Known entities: hbd-talk (already in existing graph per
+  recall hints).

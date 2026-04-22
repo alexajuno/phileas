@@ -1,0 +1,8 @@
+id: coding-life-mix-05-30b86719
+source_session: /home/ajuno/.claude/projects/-home-ajuno-teeinblue-api/33625afe-eb0a-4168-8cc8-7d9388ad0fee/subagents/agent-af2cc79a01bd89c8c.jsonl
+stratum: coding-life-mix
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  PR-review confidence scoring for a specific dead-code concern. One-off review output, not a durable decision about the user or project.

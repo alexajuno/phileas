@@ -1,0 +1,188 @@
+User: Base directory for this skill: /home/ajuno/claude-howto/.claude/skills/lesson-quiz
+
+# Lesson Quiz
+
+Interactive quiz that tests understanding of a specific Claude Code lesson with 8-10 questions, provides per-question feedback, and identifies areas to review.
+
+## Instructions
+
+### Step 1: Determine the Lesson
+
+If the user provided a lesson as an argument (e.g., `/lesson-quiz hooks` or `/lesson-quiz 03`), map it to the lesson directory:
+
+**Lesson mapping:**
+- `01`, `slash-commands`, `commands` → 01-slash-commands
+- `02`, `memory` → 02-memory
+- `03`, `skills` → 03-skills
+- `04`, `subagents`, `agents` → 04-subagents
+- `05`, `mcp` → 05-mcp
+- `06`, `hooks` → 06-hooks
+- `07`, `plugins` → 07-plugins
+- `08`, `checkpoints`, `checkpoint` → 08-checkpoints
+- `09`, `advanced`, `advanced-features` → 09-advanced-features
+- `10`, `cli` → 10-cli
+
+If no argument was provided, present a selection prompt using AskUserQuestion:
+
+**Question 1** (header: "Lesson"):
+"Which lesson do you want to quiz on?"
+Options:
+1. "Slash Commands (01)" — Custom commands, skills, frontmatter, arguments
+2. "Memory (02)" — CLAUDE.md, memory hierarchy, rules, auto memory
+3. "Skills (03)" — Progressive disclosure, auto-invocation, SKILL.md
+4. "Subagents (04)" — Task delegation, agent config, isolation
+
+**Question 2** (header: "Lesson"):
+"Which lesson do you want to quiz on? (continued)"
+Options:
+1. "MCP (05)" — External integration, transport, servers, tool search
+2. "Hooks (06)" — Event automation, PreToolUse, exit codes, JSON I/O
+3. "Plugins (07)" — Bundled solutions, marketplace, plugin.json
+4. "More lessons..." — Checkpoints, Advanced Features, CLI
+
+If "More lessons..." is selected, present:
+
+**Question 3** (header: "Lesson"):
+"Select your lesson:"
+Options:
+1. "Checkpoints (08)" — Rewind, restore, safe experimentation
+2. "Advanced Features (09)" — Planning, permissions, print mode, thinking
+3. "CLI Reference (10)" — Flags, output formats, scripting, piping
+
+### Step 2: Read the Lesson Content
+
+Read the lesson README.md file to refresh context:
+- Read file: `<lesson-directory>/README.md`
+
+Then use the question bank from `references/question-bank.md` for that lesson. The question bank provides 10 pre-written questions per lesson with correct answers and explanations.
+
+### Step 3: Present the Quiz
+
+Ask the user about quiz timing context:
+
+Use AskUserQuestion (header: "Timing"):
+"When are you taking this quiz relative to the lesson?"
+Options:
+1. "Before (pre-test)" — I haven't read the lesson yet, testing my prior knowledge
+2. "During (progress check)" — I'm partway through the lesson
+3. "After (mastery check)" — I've completed the lesson and want to verify understanding
+
+This context affects how the results are framed (see Step 5).
+
+### Step 4: Present Questions in Rounds
+
+Present 10 questions from the question bank in rounds of 2 questions each (5 rounds total). Each question uses AskUserQuestion with the question text and 3-4 answer options.
+
+**IMPORTANT**: Use AskUserQuestion with max 4 options per question, 2 questions per round.
+
+For each round, present 2 questions. After all 5 rounds, proceed to scoring.
+
+**Question format per round:**
+
+Each question from the question bank has:
+- `question`: The question text
+- `options`: 3-4 answer choices (one correct, labeled in the bank)
+- `correct`: The correct answer label
+- `explanation`: Why the answer is correct
+- `category`: "conceptual" or "practical"
+
+Present each question using AskUserQuestion. Record the user's answer for each.
+
+### Step 5: Score and Present Results
+
+After all rounds, calculate the score and present results.
+
+**Scoring:**
+- Each correct answer = 1 point
+- Total possible = 10 points
+
+**Grade scale:**
+- 9-10: Mastered — Excellent understanding
+- 7-8: Proficient — Good grasp, minor gaps
+- 5-6: Developing — Fundamentals understood, needs review
+- 3-4: Beginning — Significant gaps, review recommended
+- 0-2: Not yet — Start from the beginning of this lesson
+
+**Output format:**
+
+```markdown
+## Lesson Quiz…
+
+Assistant: All 10 lessons — that's ambitious! Let me grab the question bank and we'll do a speed round: 2 key questions per lesson, 20 total.
+All 10 lessons, 20 questions total (2 per lesson). Let me first ask about timing.
+Mastery check it is. Let's go! 5 rounds, 4 questions each.
+
+**Round 1/5 — Slash Commands & Memory**
+**Round 2/5 — Skills & Subagents**
+**Round 3/5 — MCP & Hooks**
+**Round 4/5 — Plugins & Checkpoints**
+**Round 5/5 — Advanced Features & CLI**
+---
+
+## All-Lessons Quiz Results
+
+**Score: 16/20** — Proficient
+
+**Quiz timing**: After the lessons (mastery check)
+**Breakdown**: 8/10 conceptual correct, 8/10 practical correct
+
+### Per-Question Results
+
+| # | Lesson | Question (short) | Your Answer | Result |
+|---|--------|-----------------|-------------|--------|
+| 1 | Slash Commands | $ARGUMENTS syntax | $ARGUMENTS | Correct |
+| 2 | Slash Commands | Live shell output injection | !`command` syntax | Correct |
+| 3 | Memory | Hierarchy levels & priority | 7 levels, Managed Policy | Correct |
+| 4 | Memory | Path-specific rules | src/api/CLAUDE.md | **Incorrect** |
+| 5 | Skills | Progressive disclosure levels | Metadata, instructions, resources | Correct |
+| 6 | Skills | Skill in isolated subagent | context: fork + agent | Correct |
+| 7 | Subagents | Main advantage | Separate context window | Correct |
+| 8 | Subagents | isolation: worktree | Own git worktree | Correct |
+| 9 | MCP | Transport protocols | HTTP recommended | Correct |
+| 10 | MCP | claude mcp serve | Tests connections | **Incorrect** |
+| 11 | Hooks | Four hook types | Pre, Post, Error, Filter | **Incorrect** |
+| 12 | Hooks | Exit code 2 | Blocking error | Correct |
+| 13 | Plugins | Plugin manifest location | plugin.yaml in root | **Incorrect** |
+| 14 | Plugins | Plugin root env var | idk | **Incorrect** (skipped) |
+| 15 | Checkpoints | Rewind options | 5 options | Correct |
+| 16 | Checkpoints | Bash rm not tracked | Not tracked | Correct |
+| 17 | Advanced | 6 permission modes | Correct list | Correct |
+| 18 | Advanced | opusplan alias | Opus plans, Sonnet executes | Correct |
+| 19 | CLI | Two primary modes | REPL + Print mode | Correct |
+| 20 | CLI | Pipe + JSON output | cat \| claude -p --output-format json | Correct |
+
+### Incorrect Answers — Review These
+
+**Q4: Path-specific rules scoping**
+- Your answer: Put the rule in `src/api/CLAUDE.md`
+- Correct: Add `paths: src/api/**` YAML frontmatter to a `.claude/rules/*.md` file
+- Why: While `src/api/CLAUDE.md` works for general memory, the `.claude/rules/` directory with `paths:` frontmatter is the dedicated mechanism for path-scoped rules
+
+**Q10: What does `claude mcp serve` do?**
+- Your answer: Tests MCP server connections
+- Correct: Makes Claude Code itself act as an MCP server for other applications
+- Why: It turns Claude Code into an MCP server, enabling multi-agent orchestration where other tools can call Claude
+
+**Q11: Four hook types**
+- Your answer: Pre, Post, Error, Filter
+- Correct: **Command, HTTP, Prompt, and Agent** hooks
+- Why: Those are the 4 *types* of hooks (how they execute). Pre/Post are *events* (when they fire), not types
+
+**Q13: Plugin manifest**
+- Your answer: plugin.yaml in the root
+- Correct: `.claude-plugin/plugin.json`
+- Why: The manifest lives inside a `.claude-plugin/` directory and is JSON, not YAML
+
+**Q14: Plugin root env var**
+- Correct: `${CLAUDE_PLUGIN_ROOT}` — resolves to the plugin's installed directory for portable path references
+
+---
+
+### Mastery check: 16/20
+
+Strong showing — you nailed Slash Commands, Skills, Subagents, Checkpoints, Advanced Features, and CLI. Your weak spots are **Plugins** (0/2) and specific details in **Hooks** and **MCP**. These are all topics in your "Review" tier from the assessment.
+
+Recommended focus:
+- Re-read `~/claude-howto/07-plugins/` — especially the plugin directory structure
+- Remember: hook *types* (command/http/prompt/agent) vs hook *events* (PreToolUse/PostToolUse/Stop...)
+- `claude mcp serve` = Claude becomes a server, not a…

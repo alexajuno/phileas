@@ -1,0 +1,58 @@
+{
+  "n_queries": 7,
+  "top_k_hit_rate": 1.0,
+  "zero_result_rate": 0.0,
+  "mean_rank": 1.0,
+  "by_tag": {
+    "alias-resolution": {
+      "n": 5,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "casing-drift": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "cross-lingual": {
+      "n": 3,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "english-positive-control": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "graph-traversal": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "positive-control": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "punctuation-regression": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "rel-edge-bridge": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    },
+    "type-confusion": {
+      "n": 1,
+      "hit_rate": 1.0,
+      "zero_result_rate": 0.0
+    }
+  },
+  "meta": {
+    "slug": "expansion-fixed",
+    "timestamp": "20260421T155316Z",
+    "n_cases": 7
+  }
+}

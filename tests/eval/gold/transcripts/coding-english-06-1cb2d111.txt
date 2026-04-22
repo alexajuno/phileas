@@ -1,0 +1,128 @@
+User: I need to add markdown rendering for post details and comment bodies in a Vue 3 app. Explore the following:
+
+1. Check if `marked`, `markdown-it`, or any markdown library is already installed in either `app/package.json` or `admin/package.json`
+2. Check if `DOMPurify` or any HTML sanitizer is already installed
+3. Look at how the admin app's `admin/src/utils/markdown.ts` works — it already exists
+4. Check the existing `formattedBody` computed in both CommentItem components to understand how @mentions are processed (the mention format differs between app and admin):
+   - `app/src/components/comment/CommentItem/CommentItem.vue` — uses `displayBody` with `@Name` format
+   - `admin/src/components/common/CommentItem.vue` — uses `@[member:ID|Name]` format
+5. Check if there's a markdown editor component or any markdown-related component in either app
+
+Report all findings with file paths and relevant code snippets.
+
+Assistant: I'll explore the codebase systematically to check for markdown libraries, sanitizers, and existing markdown utilities.
+Now let me check the app and admin package.json files, and look for any markdown-related components:
+Perfect! Now let me check for editor components and check if DOMPurify is installed:
+Great! Now let me read the MarkdownEditor component:
+Now let me check if there are any post/comment display components that use markdown:
+Let me read those changelog components to see the current markdown usage:
+Let me check more of the PostDetail component and look for how details are formatted:
+Now let me get the formattedDetails computation:
+Perfect! Now I have all the information needed. Let me compile the comprehensive report:
+
+## Exploration Report: Markdown Rendering in Vue 3 Apps
+
+Based on my thorough exploration of the xcanny codebase, here are the findings:
+
+---
+
+### 1. Markdown Libraries Status
+
+**Both apps have `marked` installed:**
+- **App** (`app/package.json`): `"marked": "^17.0.1"`
+- **Admin** (`admin/package.json`): `"marked": "^17.0.1"`
+
+**Admin also has Milkdown (full WYSIWYG editor):**
+- `@milkdown/core`: `^7.18.0`
+- `@milkdown/preset-gfm`: `^7.18.0`
+- `@milkdown/preset-commonmark`: `^7.18.0`
+- `@milkdown/vue`: `^7.18.0`
+- `@milkdown/crepe`: (used in the MarkdownEditor component)
+- Additional plugins: `plugin-history`, `plugin-listener`, `plugin-upload`
+
+---
+
+### 2. HTML Sanitizer Status
+
+**DOMPurify is installed in admin only:**
+- `/home/ajuno/xcanny/admin/node_modules/dompurify/package.json` exists (v3.3.1)
+- Not in app's package.json
+
+**Note:** Both apps currently use **basic inline sanitization** (removing `<script>` tags and event handlers via regex) rather than DOMPurify.
+
+---
+
+### 3. Existing Markdown Utilities
+
+#### **Admin: `/home/ajuno/xcanny/admin/src/utils/markdown.ts`**
+```typescript
+import { marked } from 'marked'
+
+marked.setOptions({
+  breaks: true,
+  gfm: true
+})
+
+export function renderMarkdown(content: string): string {
+  const html = marked.parse(content) as string
+  
+  // Basic sanitization - same as app frontend
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/on\w+="[^"]*"/gi, '')
+    .replace(/on\w+='[^']*'/gi, '')
+}
+```
+
+---
+
+### 4. Markdown Editor Component
+
+#### **Admin: `/home/ajuno/xcanny/admin/src/components/ui/MarkdownEditor.vue`**
+- Uses **Milkdown Crepe** (WYSIWYG editor)
+- Props: `modelValue: string`
+- Emits: `update:modelValue`
+- Features:
+  - Image upload via button, paste, and drag-drop
+  - Configured with `Crepe.Feature.ImageBlock`
+  - Uses `@milkdown/plugin-upload` for paste/drop handling
+  - Custom image uploader calls `/uploads/images` API endpoint
+  - Destroys and recreates editor when `modelValue` prop changes externally
+- Dark theme CSS variables configured
+
+---
+
+### 5. Comment Body Formatting
+
+Both apps process comment bodies with mentions, but **use different mention formats**:
+
+#### **App: `/home/ajuno/xcanny/app/src/components/comment/CommentItem/CommentItem.vue`**
+```typescript
+const formattedBody = computed(() => {
+  const text = props.comment.displayBody || props.comment.body
+  
+  // Escape HTML to prevent XSS
+  let escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+  
+  // Wrap @mentions in styled spans using actual mention names
+  // Format: @Name (from displayBody field)
+  if (props.comment.mentions && props.comment.mentions.length > 0) {
+    for (const mention of props.comment.mentions) {
+      const escapedName = mention.name
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const regex = new RegExp(`@${escapedName}(?!\\w)`, 'g')
+      escaped = escaped.replace(regex, `<span class="mention">@${mention.name}</span>`)
+    }
+  }
+  
+  return linkifyText(escaped)
+})
+```
+- Uses `displayBody` field with `@Name` mention format
+- Wraps mentions in `<span class="mention">`
+- Passes through `linkifyText()` utility
+- **No markdown renderi…

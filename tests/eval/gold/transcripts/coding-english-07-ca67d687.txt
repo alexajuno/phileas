@@ -1,0 +1,135 @@
+User: You are implementing Task 4 of the Admin Member Investigation feature for a Laravel/Filament platform admin panel.
+
+**Context:** Tasks 1-3 are done. Now you need to create a new CommentsResource — a top-level sidebar entry for browsing all comments across workspaces.
+
+**IMPORTANT:** Use `vendor/bin/sail` for all commands.
+
+**IMPORTANT PATTERN:** Follow the exact same structure as the existing PostResource. Look at these existing files for the pattern:
+- `app/Filament/PlatformAdmin/Resources/Posts/PostResource.php`
+- `app/Filament/PlatformAdmin/Resources/Posts/Tables/PostsTable.php`
+- `app/Filament/PlatformAdmin/Resources/Posts/Pages/ListPosts.php`
+
+**Task: Create CommentsResource with list page**
+
+**Step 1: Create test file `tests/Feature/PlatformAdmin/ListCommentsTest.php`**
+
+```php
+<?php
+
+use App\Models\Board;
+use App\Models\Comment;
+use App\Models\Member;
+use App\Models\PlatformAdmin;
+use App\Models\Post;
+use App\Models\Workspace;
+use Filament\Facades\Filament;
+
+beforeEach(function () {
+    $this->admin = PlatformAdmin::factory()->create();
+    Filament::setCurrentPanel(Filament::getPanel('platform-admin'));
+    $this->actingAs($this->admin, 'platform-admin');
+});
+
+it('can render the comments list page', function () {
+    $this->get(route('filament.platform-admin.resources.comments.index'))
+        ->assertSuccessful();
+});
+
+it('displays comments with post and workspace info', function () {
+    $workspace = Workspace::factory()->create();
+    $board = Board::factory()->for($workspace)->create();
+    $member = Member::factory()->for($workspace)->create();
+    $post = Post::factory()->for($board)->for($member)->create();
+    $comment = Comment::factory()->for($post)->for($member)->create();
+
+    $this->get(route('filament.platform-admin.resources.comments.index'))
+        ->assertSuccessful()
+        ->assertSee($member->name);
+});
+
+it('can filter comments by spam status', function () {
+    $workspace = Workspace::factory()->create();
+    $board = Board::factory()->for($workspace)->create();
+    $member = Member::factory()->for($workspace)->create();
+    $post = Post::factory()->for($board)->for($member)->create();
+
+    $normal = Comment::factory()->for($post)->for($member)->create(['body' => 'Normal comment']);
+    $spam = Comment::factory()->for($post)->for($member)->create([
+        'body' => 'Spam comment',
+        'marked_spam_at' => now(),
+        'marked_spam_by' => $member->id,
+    ]);
+
+    $this->get(route('filament.platform-admin.resources.comments.index'))
+        ->assertSuccessful();
+});
+```
+
+**Step 2: Run test to verify it fails (route doesn't exist yet)**
+
+**Step 3: Create `app/Filament/PlatformAdmin/Resources/Comments/Tables/CommentsTable.php`**
+
+```php
+<?php
+
+namespace App\Filament\PlatformAdmin\Resources\Comments\Tables;
+
+use App\Filament\PlatformAdmin\Resources\Members\MemberResource;
+use App\Filament\PlatformAdmin\Resources\Posts\PostResource;
+use App\Models\Workspace;
+use Filament\Tables\Columns\IconColumn;
+use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\Filter;
+use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Filters\TernaryFilter;
+use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+
+class CommentsTable
+{
+    public static function configure(Table $table): Table
+    {
+        return $table
+            ->modifyQueryUsing(fn (Builder $query) => $query->includingSpam()->with(['post.board.workspace', 'member']))
+            ->columns([
+                TextColumn::make('body')
+                    ->limit(100)
+                    ->wrap()
+                    ->searchable(),
+                TextColumn::make('post.title')
+                    ->label('Post')
+                    ->limit(40)
+                    ->url(fn ($record): string => PostResource::getUrl('view', ['record' => $record->post])),
+                TextColumn::make('post.board.workspace.name')
+                    ->label('Workspace'),
+                TextColumn::make('member.name')…
+
+Assistant: I'll implement the CommentsResource step by step, following the existing PostResource pattern.
+
+**Step 1: Create the test file**
+Let me also check the MemberResource navigation sort and the Comment model.
+Members is at sort 3. I'll put Comments at 3 and bump Members to 4. Now let me check the Comment model's relationships and factory.
+Good. Now let me create all the files.
+Now bump MemberResource navigation sort from 3 to 4 since Comments takes sort 3.
+Now let me check if PostResource has a `view` page (since CommentsTable links to it):
+Good, ViewPost exists. Now run the tests.
+All 3 tests pass. Now run Pint on the dirty files and commit.
+Task 4 is complete. Here's what was done:
+
+**Files created:**
+
+1. `/home/ajuno/xcanny/api/tests/Feature/PlatformAdmin/ListCommentsTest.php` -- 3 tests covering page rendering, comment display with post/workspace info, and spam filtering.
+
+2. `/home/ajuno/xcanny/api/app/Filament/PlatformAdmin/Resources/Comments/CommentResource.php` -- Top-level Filament resource with chat bubble icon, navigation sort 3, read-only (no create/edit/delete).
+
+3. `/home/ajuno/xcanny/api/app/Filament/PlatformAdmin/Resources/Comments/Tables/CommentsTable.php` -- Table with columns for body, post title (linked to PostResource view), workspace name, author (linked to MemberResource view), internal flag, spam badge, and created_at. Filters for workspace, spam, and internal notes. Uses `includingSpam()` to bypass the `HasSpamTracking` global scope so admins see all comments.
+
+4. `/home/ajuno/xcanny/api/app/Filament/PlatformAdmin/Resources/Comments/Pages/ListComments.php` -- Standard Filament list page.
+
+**File modified:**
+
+5. `/home/ajuno/xcanny/api/app/Filament/PlatformAdmin/Resources/Members/MemberResource.php` -- Bumped `$navigationSort` from 3 to 4 so Comments (sort 3) appears between Posts (sort 2) and Members (sort 4) in the sidebar.
+
+**Navigation order:** Workspaces (1) > Posts (2) > Comments (3) > Members (4) > Platform Admins (10)
+
+All 3 tests pass. Pint ran clean. Committed as `f3449d4`.

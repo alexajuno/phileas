@@ -1,0 +1,20 @@
+id: rel-bridge-01
+# Query mentions entity B (`kuzu`). B has no memories. But B is connected
+# via a REL edge to A (`phileas`), which has memories. Recall should bridge
+# B → A via get_related_entities and surface A's memories.
+query: "what did I do with kuzu"
+prior_context: |
+  Graph has Phileas and Kuzu entities connected by a REL edge
+  (phileas USES kuzu). Memories about Kuzu usage are linked to Phileas,
+  not to Kuzu directly. Expected: REL traversal finds them.
+tolerance: 5
+expected:
+  memory_ids:
+    - mem-phi-kuzu-001
+    - mem-phi-kuzu-002
+  entity_names:
+    - Phileas
+    - Kuzu
+tags:
+  - rel-edge-bridge
+  - graph-traversal

@@ -1,0 +1,8 @@
+id: short-06-fdeeb6eb
+source_session: /home/ajuno/.claude/projects/-home-ajuno-genai/539bf0d8-5bd1-49b5-ada2-9e78189ad23d.jsonl
+stratum: short
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Design-feedback sentence. Terse task input without durable user insight; the feature lives in a PR/commit, not memory.

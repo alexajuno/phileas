@@ -1,0 +1,43 @@
+id: memory-request-01-fbee11cc
+source_session: /home/ajuno/.claude/projects/-home-ajuno-genai/3cc5b125-6167-4f61-aecc-4ca78bfd3a5d.jsonl
+stratum: memory-request
+expected_memories:
+- summary: BaseModal.vue in the portal project uses Bootstrap 5's Modal class, which
+    provides focus trapping, Esc-to-close, and focus restoration — no extra work needed.
+  memory_type: knowledge
+  importance: 6
+  required_substrings:
+  - BaseModal
+  - Bootstrap
+expected_entities:
+- name: BaseModal.vue
+  type: File
+- name: Bootstrap
+  type: Tool
+- name: portal
+  type: Project
+expected_relationships:
+- from_name: BaseModal.vue
+  edge: USES
+  to_name: Bootstrap
+- from_name: BaseModal.vue
+  edge: PART_OF
+  to_name: portal
+notes: 'User''s question explicitly names `@portal/src/components/base/BaseModal.vue`
+
+  — "portal" is in the input text, so extraction should pick it up as the
+
+  project entity. Further resolution (portal → genai-portal → qikify) is
+
+  graph-normalization territory; the raw entity "portal" is what the
+
+  extractor should produce from text alone.
+
+
+  Lots of tangential content (native-vs-custom modal comparison, dialog tag
+
+  advice) is present but is NOT project-specific — those are generic web
+
+  facts that shouldn''t become memories.
+
+  '

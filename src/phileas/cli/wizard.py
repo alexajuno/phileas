@@ -130,6 +130,72 @@ def _find_phileas_command() -> str | None:
     return shutil.which("phileas")
 
 
+# -- Claude Code hooks --------------------------------------------------
+
+# Each hook entry uses `phileas-hook <name>` so settings.json doesn't depend on
+# any absolute path inside the user's machine. The matching console script is
+# declared in pyproject.toml under [project.scripts].
+HOOK_COMMANDS = {
+    "UserPromptSubmit": "phileas-hook recall",
+    "Stop": "phileas-hook memorize",
+}
+
+
+def _hook_already_present(entries: list, command: str) -> bool:
+    """Return True if any hook in `entries` already runs `command` (any matcher)."""
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        for hook in entry.get("hooks", []) or []:
+            if isinstance(hook, dict) and hook.get("command", "").strip() == command:
+                return True
+    return False
+
+
+def _install_hooks() -> tuple[bool, str]:
+    """Merge Phileas hook entries into ~/.claude/settings.json.
+
+    Returns (changed, message). `changed` is True when the file was modified;
+    False when all entries were already present (idempotent re-run) or when the
+    write failed. `message` describes what happened for display.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            return False, f"could not read {settings_path}: {exc}"
+        if not isinstance(settings, dict):
+            return False, f"{settings_path} is not a JSON object -- refusing to overwrite"
+    else:
+        settings = {}
+
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        return False, "settings.json `hooks` field is not an object -- refusing to overwrite"
+
+    changed = False
+    for event, command in HOOK_COMMANDS.items():
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            return False, f"settings.json `hooks.{event}` is not a list -- refusing to overwrite"
+        if _hook_already_present(entries, command):
+            continue
+        entries.append({"hooks": [{"type": "command", "command": command}]})
+        changed = True
+
+    if not changed:
+        return False, "hook entries already present"
+
+    try:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write {settings_path}: {exc}"
+
+    return True, f"updated {settings_path}"
+
+
 def _download_embedding_model() -> bool:
     """Download the sentence-transformers embedding model. Returns True on success."""
     try:
@@ -252,13 +318,16 @@ def run_wizard() -> None:
         console.print("[bold]Configuring Claude Code integration...[/bold]")
         if _wire_claude_code(home):
             mcp_path = Path.home() / ".claude" / ".mcp.json"
-            console.print(f"  [green]Done[/green] -- updated {mcp_path}")
-            console.print("  [dim]Restart Claude Code to pick up the change.[/dim]")
+            console.print(f"  MCP   [green]OK[/green] -- updated {mcp_path}")
         else:
-            console.print("  [yellow]Could not write MCP config automatically.[/yellow]")
-            console.print("  Add this to ~/.claude/.mcp.json manually:")
-            console.print()
-            console.print('  [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
+            console.print("  MCP   [yellow]could not write MCP config automatically[/yellow]")
+            console.print("        Add this to ~/.claude/.mcp.json manually:")
+            console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
+
+        changed, msg = _install_hooks()
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Hooks {marker} -- {msg}")
+        console.print("  [dim]Restart Claude Code to pick up MCP + hook changes.[/dim]")
 
     # 6. Download models
     console.print()

@@ -1,0 +1,8 @@
+id: short-02-3ef1e2ca
+source_session: /home/ajuno/.claude/projects/-home-ajuno/c4e9072f-078e-4ee3-8f0c-7474fa40d97e.jsonl
+stratum: short
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: |
+  Two-word edit instruction + 'Done.' acknowledgement. Disabled plugins — no user fact.

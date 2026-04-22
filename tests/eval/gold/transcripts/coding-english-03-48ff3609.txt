@@ -1,0 +1,66 @@
+User: You are implementing Tasks 9 and 10 for Zettelgraph: Clusters Page and Orphans Page.
+
+## Task 9: Clusters Page
+
+**File to create:** `client/src/pages/ClustersPage.tsx`
+**File to modify:** `client/src/App.tsx` — import ClustersPage, route at /clusters
+
+### ClustersPage.tsx
+
+- Fetches `/api/clusters` (re-fetches when graph data changes via useGraphData)
+- Builds a `nodeColorOverride: Map<string, string>` mapping each note to its cluster color
+- Uses a palette of 10 colors: `['#ef4444','#3b82f6','#22c55e','#eab308','#a855f7','#ec4899','#14b8a6','#f97316','#06b6d4','#8b5cf6']`
+- Renders ForceGraph with the color override
+- Shows a legend in the bottom-left (absolute positioned, bg-gray-900/90) showing top 10 clusters with colored dots and labels
+- Clicking a node opens the sidebar (NoteSidebar)
+
+## Task 10: Orphans Page
+
+**File to create:** `client/src/pages/OrphansPage.tsx`
+**File to modify:** `client/src/App.tsx` — import OrphansPage, route at /orphans
+
+### OrphansPage.tsx
+
+- Fetches `/api/orphans` (re-fetches when graph data changes)
+- Builds a `nodeColorOverride: Map<string, string>`:
+  - Orphan notes: `#ef4444` (red)
+  - Everything else: `#1f2937` (dimmed gray)
+- Renders ForceGraph with the color override
+- Shows orphan count in top-left (absolute, bg-gray-900/90): "{N} orphaned notes"
+- Clicking a node opens the sidebar
+
+## Context
+
+Working in ~/zettelgraph/. These components exist and should be imported:
+- `ForceGraph` from `../components/graph/ForceGraph` — accepts `data`, `onNodeClick`, `nodeColorOverride`
+- `NoteSidebar` from `../components/sidebar/NoteSidebar` — accepts `detail`, `onClose`, `onNavigate`
+- `useGraphData` from `../hooks/useGraphData`
+- `useNoteDetail` from `../hooks/useNoteDetail`
+- Types from `@zettelgraph/shared`: `ClusterData`, `GraphNode`
+
+## Your Job
+
+1. Create ClustersPage.tsx
+2. Create OrphansPage.tsx
+3. Update App.tsx with both routes
+4. Commit: `git commit -m "feat: clusters + orphans pages — community visualization and orphan detection"`
+5. Report back
+
+Work from: ~/zettelgraph/
+
+Assistant: I'll start by examining the existing codebase to understand the patterns used in other pages.
+Now let me check what `getOrphans` returns.
+Now I have everything I need. Let me create the files.
+Now update App.tsx to replace the placeholders with the real pages.
+Let me verify the final state of App.tsx and run a type check before committing.
+Type check passed with no errors. Now let me commit.
+Done. Here is what was implemented:
+
+**Created files:**
+- `/home/ajuno/zettelgraph/client/src/pages/ClustersPage.tsx` — Fetches `/api/clusters` (re-fetches on graph data change), builds a `nodeColorOverride` map assigning each note its cluster color from a 10-color palette, renders ForceGraph with the override, shows a legend (bottom-left, `bg-gray-900/90`) with top 10 clusters (colored dot + label + count), and opens NoteSidebar on node click.
+- `/home/ajuno/zettelgraph/client/src/pages/OrphansPage.tsx` — Fetches `/api/orphans` (re-fetches on graph data change), builds a `nodeColorOverride` map coloring orphans `#ef4444` (red) and everything else `#1f2937` (dimmed gray), renders ForceGraph with the override, shows orphan count (top-left, `bg-gray-900/90`), and opens NoteSidebar on node click.
+
+**Modified file:**
+- `/home/ajuno/zettelgraph/client/src/App.tsx` — Imported both pages and replaced the placeholder routes at `/clusters` and `/orphans`.
+
+TypeScript type-check passed cleanly. Committed as `da4d236`.

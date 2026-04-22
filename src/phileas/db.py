@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from phileas.models import MemoryItem
+from phileas.models import Event, MemoryItem
 
 
 def _locked(method):
@@ -50,10 +50,21 @@ CREATE TABLE IF NOT EXISTS processed_sessions (
     processed_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    extraction_status TEXT NOT NULL DEFAULT 'pending',
+    extraction_error TEXT,
+    memory_count INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_tier ON memory_items(tier);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
+CREATE INDEX IF NOT EXISTS idx_events_status ON events(extraction_status);
+CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at);
 """
 
 
@@ -61,6 +72,7 @@ MIGRATIONS = [
     "ALTER TABLE memory_items ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE memory_items ADD COLUMN last_reinforced TEXT",
     "ALTER TABLE memory_items ADD COLUMN raw_text TEXT",
+    "ALTER TABLE memory_items ADD COLUMN source_event_id TEXT REFERENCES events(id)",
 ]
 
 
@@ -94,8 +106,8 @@ class Database:
                (id, summary, memory_type, importance, tier, status,
                 access_count, last_accessed, daily_ref,
                 consolidated_into, reinforcement_count, last_reinforced,
-                raw_text, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                raw_text, source_event_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -110,6 +122,7 @@ class Database:
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
                 item.raw_text,
+                item.source_event_id,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
@@ -339,6 +352,110 @@ class Database:
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
             raw_text=row["raw_text"] if "raw_text" in row.keys() else None,
+            source_event_id=row["source_event_id"] if "source_event_id" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+
+    # --- Events (raw ingested turns) ---
+
+    @_locked
+    def save_event(self, event: Event) -> None:
+        self.conn.execute(
+            """INSERT OR REPLACE INTO events
+               (id, text, received_at, extraction_status, extraction_error, memory_count)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                event.id,
+                event.text,
+                event.received_at.isoformat(),
+                event.extraction_status,
+                event.extraction_error,
+                event.memory_count,
+            ),
+        )
+        self.conn.commit()
+
+    @_locked
+    def get_event(self, event_id: str) -> Event | None:
+        row = self.conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        if not row:
+            return None
+        return Event(
+            id=row["id"],
+            text=row["text"],
+            received_at=datetime.fromisoformat(row["received_at"]),
+            extraction_status=row["extraction_status"],
+            extraction_error=row["extraction_error"],
+            memory_count=row["memory_count"],
+        )
+
+    @_locked
+    def mark_event_extracted(self, event_id: str, memory_count: int) -> None:
+        self.conn.execute(
+            "UPDATE events SET extraction_status = 'extracted', memory_count = ?, extraction_error = NULL WHERE id = ?",
+            (memory_count, event_id),
+        )
+        self.conn.commit()
+
+    @_locked
+    def mark_event_failed(self, event_id: str, error: str) -> None:
+        self.conn.execute(
+            "UPDATE events SET extraction_status = 'failed', extraction_error = ? WHERE id = ?",
+            (error, event_id),
+        )
+        self.conn.commit()
+
+    @_locked
+    def get_pending_events(self, limit: int = 100) -> list[Event]:
+        rows = self.conn.execute(
+            """SELECT * FROM events
+               WHERE extraction_status IN ('pending', 'failed')
+               ORDER BY received_at ASC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [
+            Event(
+                id=row["id"],
+                text=row["text"],
+                received_at=datetime.fromisoformat(row["received_at"]),
+                extraction_status=row["extraction_status"],
+                extraction_error=row["extraction_error"],
+                memory_count=row["memory_count"],
+            )
+            for row in rows
+        ]
+
+    @_locked
+    def get_event_counts(self) -> dict:
+        rows = self.conn.execute(
+            """SELECT extraction_status, COUNT(*) as n FROM events GROUP BY extraction_status"""
+        ).fetchall()
+        return {row["extraction_status"]: row["n"] for row in rows}
+
+    @_locked
+    def get_failed_events(self, limit: int = 1000) -> list[Event]:
+        rows = self.conn.execute(
+            "SELECT * FROM events WHERE extraction_status = 'failed' ORDER BY received_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            Event(
+                id=row["id"],
+                text=row["text"],
+                received_at=datetime.fromisoformat(row["received_at"]),
+                extraction_status=row["extraction_status"],
+                extraction_error=row["extraction_error"],
+                memory_count=row["memory_count"],
+            )
+            for row in rows
+        ]
+
+    @_locked
+    def reset_event_to_pending(self, event_id: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE events SET extraction_status = 'pending', extraction_error = NULL WHERE id = ?",
+            (event_id,),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0

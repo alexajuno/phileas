@@ -30,6 +30,9 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
+EventExtractionStatus = Literal["pending", "extracted", "failed", "skipped"]
+
+
 @dataclass
 class MemoryItem:
     """A structured memory. The core unit of Phileas."""
@@ -47,5 +50,18 @@ class MemoryItem:
     reinforcement_count: int = 0  # how many similar memories arrived after this one
     last_reinforced: datetime | None = None
     raw_text: str | None = None  # verbatim source text (conversation snippet, etc.)
+    source_event_id: str | None = None  # FK to events.id — ingested turn this memory was extracted from
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
+
+
+@dataclass
+class Event:
+    """A raw ingested conversation turn. Memories are extracted from (and reference) events."""
+
+    id: str = field(default_factory=_uuid)
+    text: str = ""
+    received_at: datetime = field(default_factory=_now)
+    extraction_status: EventExtractionStatus = "pending"
+    extraction_error: str | None = None
+    memory_count: int = 0  # number of memories produced by extraction

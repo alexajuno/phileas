@@ -1,0 +1,28 @@
+{
+  "n_queries": 2,
+  "top_k_hit_rate": 0.5,
+  "zero_result_rate": 0.5,
+  "mean_rank": 1.0,
+  "by_tag": {
+    "alias-resolution": {
+      "n": 2,
+      "hit_rate": 0.5,
+      "zero_result_rate": 0.5
+    },
+    "cross-lingual": {
+      "n": 2,
+      "hit_rate": 0.5,
+      "zero_result_rate": 0.5
+    },
+    "positive-control": {
+      "n": 1,
+      "hit_rate": 0.0,
+      "zero_result_rate": 1.0
+    }
+  },
+  "meta": {
+    "slug": "baseline",
+    "timestamp": "20260421T120234Z",
+    "n_cases": 2
+  }
+}

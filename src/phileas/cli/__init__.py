@@ -22,6 +22,7 @@ from phileas.cli.commands import (
     recall,
     reflect,
     remember,
+    retry_events,
     serve,
     show,
     start,
@@ -58,4 +59,5 @@ app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)
 app.add_command(backfill_days)
+app.add_command(retry_events)
 app.add_command(stats)

@@ -677,6 +677,25 @@ def stop_cmd():
 # ------------------------------------------------------------------
 
 
+@click.command("retry-events")
+@click.argument("event_ids", nargs=-1)
+def retry_events(event_ids: tuple[str, ...]):
+    """Retry failed events (re-run extraction).
+
+    With no args, requeues every event in `failed` state. Pass one or more
+    event-id prefixes to retry specific events. Requires the daemon.
+    """
+    resp = _daemon_call("retry_events", {"event_ids": list(event_ids) if event_ids else None})
+    if not resp:
+        print_error("daemon not running — start it with `phileas start`")
+        raise SystemExit(1)
+    if not resp.get("ok"):
+        print_error(resp.get("error") or "unknown error")
+        raise SystemExit(1)
+    result = resp.get("result", {})
+    print_success(f"Requeued {result.get('queued', 0)} event(s); queue depth={result.get('queue_depth', 0)}")
+
+
 @click.command("backfill-days")
 def backfill_days():
     """Create Day entities in the graph for all existing memories."""

@@ -1,0 +1,19 @@
+id: coding-english-03-48ff3609
+stratum: coding-english
+expected_memories: []
+expected_entities: []
+expected_relationships: []
+notes: 'Coding-english stratum — exploration / task-execution / review output.
+
+  No user-level decision, preference, or identity fact in the transcript.
+
+  Per the principle established across the stratum: code is the canonical
+
+  source of truth for API/endpoint/model inventory; commits record what
+
+  shipped; wiki captures durable technique. Phileas should stay silent on
+
+  these.
+
+  '
+source_session: /home/ajuno/.claude/projects/-home-ajuno/c5c984f3-643d-43e4-9f89-288c90745829/subagents/agent-a070da8dd21750e7f.jsonl

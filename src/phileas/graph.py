@@ -336,7 +336,7 @@ class GraphStore:
         if not self._ensure_connected():
             return
         entity_id = _entity_id(node_type, name)
-        props_str = json.dumps(props) if props else ""
+        props_str = json.dumps(props, ensure_ascii=False) if props else ""
         self._conn.execute(
             "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props",
             parameters={"id": entity_id, "name": name, "type": node_type, "props": props_str},
@@ -360,11 +360,18 @@ class GraphStore:
 
     @_locked
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
-        """Search entity nodes by name or alias using CONTAINS match."""
+        """Search entity nodes by name or alias using case-insensitive CONTAINS.
+
+        Kuzu's CONTAINS is case-sensitive by default, which made real-world
+        casing drift ("Phileas" stored, "phileas" queried) invisible to graph
+        retrieval. lower()-normalising both sides closes that gap.
+        """
         if not self._ensure_connected():
             return []
         result = self._conn.execute(
-            "MATCH (n:Entity) WHERE n.name CONTAINS $q OR n.aliases CONTAINS $q RETURN n.name AS name, n.type AS type",
+            "MATCH (n:Entity) "
+            "WHERE lower(n.name) CONTAINS lower($q) OR lower(n.aliases) CONTAINS lower($q) "
+            "RETURN n.name AS name, n.type AS type",
             parameters={"q": name_query},
         )
         results = []
@@ -379,7 +386,11 @@ class GraphStore:
         if not self._ensure_connected():
             return
         entity_id = _entity_id(node_type, name)
-        aliases_str = json.dumps(aliases)
+        # ensure_ascii=False so non-ASCII aliases (e.g. Vietnamese kinship
+        # terms like "chị") stay as literal characters in the stored string.
+        # Kuzu's CONTAINS match runs against this raw value, and escaped
+        # forms like "ị" never match a query of "chị".
+        aliases_str = json.dumps(aliases, ensure_ascii=False)
         self._conn.execute(
             "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases",
             parameters={"id": entity_id, "aliases": aliases_str},
@@ -604,6 +615,42 @@ class GraphStore:
             neighbors.append({"id": row[0], "label": "Memory", "direction": "in"})
 
         return neighbors
+
+    # ------------------------------------------------------------------
+    # Referent candidates
+    # ------------------------------------------------------------------
+
+    @_locked
+    def get_top_entities_by_type(self, entity_type: str, top_n: int = 15) -> list[dict[str, Any]]:
+        """Return the top-N entities of a type, ranked by ABOUT-edge count.
+
+        Used by the recall-time referent disambiguation step: given an
+        ambiguous query like "who is she", we pass these candidates to an LLM
+        and let it pick the likely referent by vibe/recency. Recency itself
+        isn't in Kuzu (Memory dates live in SQLite), so the caller joins
+        per-entity recency in a second pass.
+        """
+        if not self._ensure_connected():
+            return []
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[:ABOUT]->(e:Entity) "
+            "WHERE e.type = $t "
+            "RETURN e.name AS name, e.aliases AS aliases, COUNT(m) AS cnt "
+            "ORDER BY cnt DESC LIMIT $n",
+            parameters={"t": entity_type, "n": int(top_n)},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "name": r[0],
+                    "type": entity_type,
+                    "aliases": r[1] or "[]",
+                    "memory_count": int(r[2]),
+                }
+            )
+        return rows
 
     # ------------------------------------------------------------------
     # Stats

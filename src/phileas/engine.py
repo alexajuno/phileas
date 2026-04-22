@@ -69,6 +69,7 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
         "type": item.memory_type,
         "importance": item.importance,
         "score": score,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 
@@ -123,9 +124,13 @@ class MemoryEngine:
         tier: int = 2,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
-        raw_text: str | None = None,
+        source_event_id: str | None = None,
     ) -> dict:
         """Store a memory across all three backends.
+
+        `summary` is the canonical, AI-written fact. The raw source turn lives in
+        the `events` table; pass `source_event_id` to reference it. Memories
+        MUST NOT contain raw verbatim text — that's what events are for.
 
         Returns a dict with keys: id, summary.
         """
@@ -154,24 +159,20 @@ class MemoryEngine:
                 else:
                     importance = 5
 
-            # 3. Create and persist MemoryItem
+            # 3. Create and persist MemoryItem (summary only — raw lives in events)
             item = MemoryItem(
                 summary=summary,
                 memory_type=memory_type,
                 importance=importance,
                 tier=tier,
                 daily_ref=daily_ref,
-                raw_text=raw_text,
+                source_event_id=source_event_id,
             )
 
             self.db.save_item(item)
 
             # 4. Add to ChromaDB (with type metadata for future filtering)
             self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
-
-            # 4b. Store raw text in separate ChromaDB collection for verbatim retrieval
-            if raw_text:
-                self.vector.add_raw(item.id, raw_text, metadata={"memory_type": memory_type})
 
             # 5. Link entities and relationships in KuzuDB
             if entities:
@@ -369,19 +370,40 @@ class MemoryEngine:
             min_importance=min_importance,
         ) as timer:
             # ----------------------------------------------------------
-            # Stage 0: Query expansion via LLM
+            # Stage 0: Query analysis via LLM
+            #
+            # Produces alternate phrasings and, for pronoun/kinship queries,
+            # a list of likely referent Person entities. Referents feed into
+            # path 3 below so the rest of the pipeline stays unchanged.
             # ----------------------------------------------------------
+            referent_names: list[tuple[str, str]] = []  # (type, name) pairs
             if not _skip_llm and self.llm.available:
-                from phileas.llm.query_rewrite import rewrite_query
+                from phileas.llm.query_rewrite import analyze_query
 
                 try:
-                    queries = asyncio.run(rewrite_query(self.llm, query))
-                    # Always include the original query so keyword/semantic
-                    # search can match it even if the LLM rewrites diverge.
+                    analysis = asyncio.run(analyze_query(self.llm, query))
+                    queries = list(analysis.get("queries") or [])
+                    if not queries:
+                        queries = [query]
                     if query not in queries:
                         queries.insert(0, query)
+
+                    if analysis.get("needs_referent_resolution"):
+                        from phileas.llm.referent_resolve import (
+                            build_person_candidates,
+                            resolve_referents,
+                        )
+
+                        person_candidates = build_person_candidates(self.graph, self.db, top_n=15)
+                        hints = list(analysis.get("pronoun_hints") or [])
+                        resolved = asyncio.run(resolve_referents(self.llm, query, hints, person_candidates))
+                        referent_names = [("Person", n) for n in resolved]
+                        timer.extra["referent_hints"] = hints
+                        timer.extra["referent_resolved"] = resolved
                 except Exception as e:
-                    log.debug("query rewrite failed, using original", extra={"op": "recall", "data": {"error": str(e)}})
+                    log.debug(
+                        "query analysis failed, using original", extra={"op": "recall", "data": {"error": str(e)}}
+                    )
                     queries = [query]
             else:
                 queries = [query]
@@ -434,13 +456,27 @@ class MemoryEngine:
 
             # Path 3: graph search (KuzuDB) — word-based entity lookup
             # Also follows entity↔entity edges to discover related entities.
-            words = query.split()
+            # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
+            # plain query.split() leaves trailing "?" on the last token and
+            # breaks CONTAINS match against entity names/aliases.
+            import re
+
+            words = re.findall(r"\w+", query, flags=re.UNICODE)
             seen_entities: set[tuple[str, str]] = set()
 
             day_ids: set[str] = set()  # memories from matched Day entities
+            referent_ids: set[str] = set()  # memories from LLM-resolved referents
+            # Per-memory referent rank (1 = best pick); smaller is better.
+            referent_rank: dict[str, int] = {}
 
-            def _add_memories_for_entity(etype: str, ename: str) -> None:
-                """Add memories linked to an entity to the candidates pool."""
+            def _add_memories_for_entity(etype: str, ename: str, *, referent_rank_value: int | None = None) -> None:
+                """Add memories linked to an entity to the candidates pool.
+
+                ``referent_rank_value`` tracks whether the source entity came
+                from the LLM referent-resolution step and at what rank. Smaller
+                rank = more confident. Used by scoring to keep the resolver's
+                ranking visible in the final top-K order.
+                """
                 if (ename, etype) in seen_entities:
                     return
                 seen_entities.add((ename, etype))
@@ -453,6 +489,12 @@ class MemoryEngine:
                     graph_ids.add(mem_id)
                     if etype == "Day":
                         day_ids.add(mem_id)
+                    if referent_rank_value is not None:
+                        referent_ids.add(mem_id)
+                        # Keep the best (lowest) rank seen for this memory.
+                        existing = referent_rank.get(mem_id)
+                        if existing is None or referent_rank_value < existing:
+                            referent_rank[mem_id] = referent_rank_value
                     if mem_id not in candidates:
                         item = self.db.get_item(mem_id)
                         if item:
@@ -478,6 +520,25 @@ class MemoryEngine:
                             "graph traversal failed",
                             extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
                         )
+
+            # Path 3b: LLM-proposed referents (pronoun / kinship resolution)
+            # Fires only when stage 0 flagged the query as ambiguous.
+            # Only the directly resolved entity gets the referent boost —
+            # neighbours traversed via REL edges ride the regular graph_boost,
+            # so e.g. resolving "chị" → phuongtq doesn't pull every coworker's
+            # unrelated memory to the top. Rank (1-indexed) comes from the
+            # LLM output order so the most-confident pick wins ties.
+            for idx, (etype, ename) in enumerate(referent_names, start=1):
+                _add_memories_for_entity(etype, ename, referent_rank_value=idx)
+                try:
+                    related = self.graph.get_related_entities(etype, ename)
+                    for rel in related:
+                        _add_memories_for_entity(rel["type"], rel["name"])
+                except Exception as e:
+                    log.debug(
+                        "referent traversal failed",
+                        extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
+                    )
 
             # Path 4: semantic-to-graph bridge
             # Use top semantic hits to discover entities, then follow graph
@@ -576,6 +637,13 @@ class MemoryEngine:
                     # Day entity match is an exact structural constraint —
                     # the memory happened on the queried date. High relevance.
                     relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.85)
+                elif mem_id in referent_ids:
+                    # LLM reasoned about this referent specifically. Floor
+                    # deliberately above the 1.0 ceiling of min-max-normalised
+                    # cross-encoder scores — otherwise unrelated CE hits
+                    # routinely outrank the resolved person's memories on
+                    # normalisation artefacts alone.
+                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.95)
                 elif mem_id in graph_ids:
                     # Other graph matches: use graph_boost as floor
                     relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), graph_boost)
@@ -672,7 +740,25 @@ class MemoryEngine:
                 )
                 results.append(_item_to_dict(item, score))
 
-            results.sort(key=lambda r: r["score"], reverse=True)
+            # Referent-resolved memories rank first regardless of the
+            # compute_score blend. Otherwise importance/reinforcement on
+            # unrelated semantic hits routinely outweighs the referent
+            # floor, burying the exact memory the LLM just identified.
+            # Within the referent block, the resolver's rank leads (rank 1
+            # = most-confident pick), then compute_score breaks ties.
+            def _sort_key(r: dict) -> tuple:
+                mem_id = r["id"]
+                rank = referent_rank.get(mem_id)
+                # (group: 0 = referent / 1 = other, referent_rank or inf, -score)
+                # All default-ascending; Python's stable sort preserves MMR
+                # ordering within ties.
+                return (
+                    0 if mem_id in referent_ids else 1,
+                    rank if rank is not None else float("inf"),
+                    -r["score"],
+                )
+
+            results.sort(key=_sort_key)
 
             # Bump access counts
             for r in results:
@@ -1293,10 +1379,14 @@ class MemoryEngine:
         """Aggregate stats from all three backends."""
         counts = self.db.get_counts()
         graph_stats = self.graph.get_stats()
+        event_counts = self.db.get_event_counts()
         return {
             **counts,
             "vector_count": self.vector.count(),
             "raw_vector_count": self.vector.raw_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],
+            "events_extracted": event_counts.get("extracted", 0),
+            "events_pending": event_counts.get("pending", 0),
+            "events_failed": event_counts.get("failed", 0),
         }

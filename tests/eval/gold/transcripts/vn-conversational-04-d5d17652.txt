@@ -1,0 +1,21 @@
+User: ê, kể lại toàn bộ quá trình cảm xúc của t khi chuẩn bị cho "happy bug day" đi
+
+Assistant: Đây, timeline cảm xúc của mày với Happy Bug Day:
+
+---
+
+**23/3 — Được gọi vào:** BTC kêu họp, bắt đầu tham gia tổ chức. Lúc này chưa có topic rõ ràng.
+
+**24/3 — Áp lực deadline:** Phải finish mọi thứ và propose cho BTC trước ngày 25. Submit topic: *"Context Engineering: Managing Claude, A caching bug in production and AI companion."* Cảm giác gấp gáp.
+
+**24-25/3 — Build từ zero:** Viết script, tạo 10 cái SVG (architecture, HAR mocks, cascade debug, root cause chain, Claude setup, secretary demo, zettelgraph wiki, memory approaches, phileas memory). Rewrite kiến trúc thành storytelling "follow the request." Merge debugging + AI thành narrative xen kẽ. Restructure Part 2 quanh skill+MCP, Part 3 thành personal vision về AI companion memory. **Exhausting — hút hết năng lượng.** Sáng 24/3 ngồi từ 7:49 đến 11:19 liên tục.
+
+**Giữa quá trình — Vừa mệt vừa tự hào:** Dù thấy bài chưa hoàn chỉnh, nhưng cũng cảm nhận được niềm vui và tự hào. **Lần đầu tiên chuẩn bị một tech talk thật sự.** Published lên github.com/alexajuno/hbd-talk.
+
+**26/3 (hôm nay) — Lo lắng và tự ti:** Ngại vì mình khác mọi người — bỏ 3 củ mua Claude Max, xài AI quá nhiều. Sợ lên nói xong người ta nhìn mình kỳ kỳ. "Mọi người không hề giống mình." Cảm giác outsider.
+
+**26/3 — Rồi lại lật ngược:** "Bị ghét sẵn rồi thì còn gì phải mất." Nhớ lại motto "cứ liều đi." Nhận ra qua Phileas, mình đang làm AI engineering thật — không phải chơi chơi. Tự hào với cái title "just dev" — dev everything.
+
+---
+
+Tóm lại: **mệt → tự hào → lo lắng → chấp nhận → liều.** Một vòng cảm xúc rất thật cho lần đầu đứng lên chia sẻ cái mình thật sự tin vào.

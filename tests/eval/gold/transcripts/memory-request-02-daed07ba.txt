@@ -1,0 +1,104 @@
+User: Base directory for this skill: /home/ajuno/.claude/skills/secretary
+
+# Secretary
+
+Personal secretary — schedule, tasks, and reflections.
+
+## Subcommands
+
+| Command | Mode | Reference |
+|---------|------|-----------|
+| `/secretary` or `/secretary morning` | Morning briefing | [morning.md](references/morning.md) |
+| `/secretary evening` | Evening recap | [evening.md](references/evening.md) |
+| `/secretary weekly` | Weekly reflection | [weekly.md](references/weekly.md) |
+| `/secretary tasks` | Task dashboard | [task-management.md](references/task-management.md) |
+| `/secretary time` | Time portfolio | [time.md](references/time.md) |
+
+## Routing
+
+1. Parse the argument (default: `morning`)
+2. Read the corresponding reference file
+3. Follow its data-gathering and output instructions exactly
+
+## Tools Required
+
+- **Bash** — run `task` (Taskwarrior) commands, `scripts/fetch_weather.sh`, and `checklist` commands
+- **Google Calendar MCP** — `mcp__google-calendar__list-events` for schedule data
+- **Google Workspace MCP** — `mcp__google-workspace__create_task`, `mcp__google-workspace__list_tasks` for phone notification sync
+- **Read** — daily entries from `~/life/daily/` (weekly mode)
+- **Write** — weekly reflection to `~/life/weekly/` (weekly mode)
+
+## Checklists
+
+The `checklist` CLI (`~/checklist`) manages personal routine checklists. The secretary should be aware of available checklists and surface them when contextually relevant — not just during morning briefings.
+
+- Run `checklist list` to see available checklists
+- When a checklist matches the current context (e.g., "leaving-for-office" when the user is about to leave, "before-bed" during evening), offer to run it with `checklist run <name>`
+- The user has a timestamp hook on every prompt, so you always know the current time — use it to judge relevance
+
+## Scheduling
+
+Set up via `/scheduler:schedule-add`:
+- Morning briefing: daily at chosen time
+- Evening recap: daily at chosen time
+- Weekly reflection: Sunday evening at chosen time
+
+
+ARGUMENTS: morning
+
+Assistant: Now let me gather all the data sources in parallel.
+# Good morning! Wednesday, April 1
+
+## Weather
+
+**Now:** 22.8°C (feels 25.7°C) — Overcast, 83% humidity
+
+| Date | High | Low | Conditions | Rain |
+|------|------|-----|------------|------|
+| Today | 24.9°C | 22.8°C | Thunderstorm | 88% |
+| Thu | 30.7°C | 22.0°C | Light showers | 8% |
+| Fri | 32.6°C | 23.6°C | Overcast | 11% |
+
+High chance of thunderstorms today — bring an umbrella if heading out.
+
+## Calendar
+
+*(Google Calendar MCP not available — check your phone for today's events.)*
+
+## Tasks
+
+### Due Today (4)
+| # | P | Task |
+|---|---|------|
+| 15 | **H** | Passport registration (hộ chiếu) via VNeID |
+| 13 | **H** | Apply to 5 remote roles |
+| 22 | M | Khai báo nơi cư trú on VNeID (after landlord rewrites contract) |
+| 25 | — | Binary Search (LC 704) +binary-search |
+
+### Overdue (12 more beyond today's)
+The big ones piling up:
+- **Rewrite resume for remote audience** (H, 2 days overdue)
+- **Arc.dev / We Work Remotely / YC profiles** (M, 3 days overdue)
+- **GenAI project** — credit system, API docs, UI (M, 5 days overdue)
+- **LeetCode review** (L, 4 days overdue)
+- **Screenshot for cư trú declaration** (M, 1 day overdue)
+
+### Coming Up (next 3 days)
+| # | Due | Task |
+|---|-----|------|
+| 23 | Today+16h | Retry driving license integration to VNeID |
+| 19 | Fri | Check income sources on eTax — ghost entries |
+| 26 | Today+16h | Search a 2D Matrix (LC 74) |
+| 27 | Thu | Koko Eating Bananas (LC 875) |
+| 28 | Thu | Find Min in Rotated Sorted Array (LC 153) |
+
+## Suggested Focus
+
+You've got 15 overdue tasks — the backlog is growing. Today's a Wednesday workday, so here's a suggested priority:
+
+1. **Resume rewrite** — highest priority, 2 days overdue, blocks the job applications
+2. **Apply to 5 remote roles** — due today, but depends on the resume
+3. **VNeID tasks** (passport + cư trú) — quick administrative wins if the app cooperates
+4. **LC 704 Binary Search** — lighter task, good for a break between heavier work
+
+Remember: badminton on Wednesdays — 15min commute from home. Plan your evening accordingly.
