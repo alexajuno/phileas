@@ -161,14 +161,19 @@ class TestExtraction:
         assert result[0]["memory_type"] == "event"
 
     @pytest.mark.asyncio
-    async def test_extract_memories_fallback(self):
-        from phileas.llm.extraction import extract_memories
+    async def test_extract_memories_raises_when_llm_unavailable(self):
+        """No LLM → raise, don't synthesize a fake memory from the raw text.
+
+        The prior fallback silently turned every raw turn into a
+        knowledge/imp=5 "memory" whenever the LLM was unconfigured. That
+        polluted the DB with raw chat dumps. The new contract: caller (daemon
+        ingest loop) catches the exception and marks the source event failed.
+        """
+        from phileas.llm.extraction import ExtractionUnavailable, extract_memories
 
         client = LLMClient(_NO_LLM_CONFIG)
-        result = await extract_memories(client, "I like Python")
-        assert len(result) == 1
-        assert result[0]["summary"] == "I like Python"
-        assert result[0]["importance"] == 5
+        with pytest.raises(ExtractionUnavailable):
+            await extract_memories(client, "I like Python")
 
 
 class TestQueryRewrite:

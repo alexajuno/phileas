@@ -18,8 +18,6 @@ from pathlib import Path
 
 from phileas.hooks._client import call_daemon, truncate
 
-MAX_TEXT_CHARS = 8000
-MAX_TURN_CHARS = 4000
 TIMEOUT_SECONDS = 5.0
 
 
@@ -81,15 +79,14 @@ def gather_last_exchange(transcript_path: Path) -> str:
     if not user_text and not assistant_parts:
         return ""
 
-    user_text = truncate(user_text, MAX_TURN_CHARS)
-    assistant_text = truncate("\n".join(reversed(assistant_parts)), MAX_TURN_CHARS)
+    assistant_text = "\n".join(reversed(assistant_parts))
 
     pieces = []
     if user_text:
         pieces.append(f"User: {user_text}")
     if assistant_text:
         pieces.append(f"Assistant: {assistant_text}")
-    return truncate("\n\n".join(pieces), MAX_TEXT_CHARS)
+    return "\n\n".join(pieces)
 
 
 def format_ok(result: object) -> str:

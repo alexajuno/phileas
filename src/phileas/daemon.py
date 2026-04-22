@@ -288,37 +288,55 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
                 time.sleep(1)
                 continue
             item = _ingest_queue.popleft()
-            text = item.get("text", "")
-            if not text:
+            event_id = item.get("event_id")
+            if not event_id:
+                continue
+            event = db.get_event(event_id)
+            if not event or not event.text:
                 continue
             try:
-                memories = asyncio.run(extract_memories(engine.llm, text=text))
-                results = []
+                memories = asyncio.run(extract_memories(engine.llm, text=event.text))
+                count = 0
                 for mem in memories:
-                    result = engine.memorize(
+                    engine.memorize(
                         summary=mem["summary"],
                         memory_type=mem.get("memory_type", "knowledge"),
                         importance=mem.get("importance", 5),
-                        raw_text=mem.get("raw_text") or text,
                         entities=mem.get("entities"),
                         relationships=mem.get("relationships"),
+                        source_event_id=event.id,
                     )
-                    results.append(result)
+                    count += 1
+                db.mark_event_extracted(event.id, memory_count=count)
                 log.info(
                     "ingest completed",
                     extra={
                         "op": "ingest",
-                        "data": {"count": len(results), "queue_depth": len(_ingest_queue)},
+                        "data": {
+                            "event_id": event.id,
+                            "count": count,
+                            "queue_depth": len(_ingest_queue),
+                        },
                     },
                 )
                 try:
-                    engine._metrics.record_daemon("ingest_completed", payload={"count": len(results)})
+                    engine._metrics.record_daemon(
+                        "ingest_completed",
+                        payload={"event_id": event.id, "count": count},
+                    )
                 except Exception:
                     pass
             except Exception as e:
-                log.info("ingest failed", extra={"op": "ingest", "data": {"error": str(e)}})
+                db.mark_event_failed(event.id, error=str(e))
+                log.warning(
+                    "ingest failed — event marked failed, no memory written",
+                    extra={"op": "ingest", "data": {"event_id": event.id, "error": str(e)}},
+                )
                 try:
-                    engine._metrics.record_daemon("ingest_failed", payload={"error": str(e)})
+                    engine._metrics.record_daemon(
+                        "ingest_failed",
+                        payload={"event_id": event.id, "error": str(e)},
+                    )
                 except Exception:
                     pass
 
@@ -405,8 +423,12 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return {"queued": False, "reason": "empty text"}
         if _ingest_queue is None:
             return {"queued": False, "reason": "queue not initialized"}
-        _ingest_queue.append({"text": text})
-        return {"queued": True, "queue_depth": len(_ingest_queue)}
+        from phileas.models import Event
+
+        event = Event(text=text)
+        engine.db.save_event(event)
+        _ingest_queue.append({"event_id": event.id})
+        return {"queued": True, "event_id": event.id, "queue_depth": len(_ingest_queue)}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.

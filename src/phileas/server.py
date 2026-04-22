@@ -56,21 +56,20 @@ def memorize(
     daily_ref: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
-    raw_text: str | None = None,
 ) -> str:
     """Store a memory about the user.
 
-    Claude Code extracts the memory and calls this to persist it.
+    Write `summary` as an objective, AI-written fact — never paste raw
+    conversation verbatim. Raw turns belong in the events table (auto-ingested
+    via the Stop hook); memories *reference* events, they don't contain them.
 
     Args:
-        summary: What to remember (1-2 sentences).
+        summary: What to remember (1-2 sentences, in your own words).
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
         importance: Importance score 1-10 (10 = most important).
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
         entities: List or JSON string of {"name": str, "type": str} objects to link in the graph.
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
-        raw_text: Verbatim conversation snippet or source text that this memory was extracted from.
-            Stored separately for raw retrieval — keeps details that summaries lose.
     """
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
@@ -82,7 +81,6 @@ def memorize(
         daily_ref=daily_ref,
         entities=parsed_entities,
         relationships=parsed_relationships,
-        raw_text=raw_text,
     )
 
     return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"

@@ -124,9 +124,13 @@ class MemoryEngine:
         tier: int = 2,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
-        raw_text: str | None = None,
+        source_event_id: str | None = None,
     ) -> dict:
         """Store a memory across all three backends.
+
+        `summary` is the canonical, AI-written fact. The raw source turn lives in
+        the `events` table; pass `source_event_id` to reference it. Memories
+        MUST NOT contain raw verbatim text — that's what events are for.
 
         Returns a dict with keys: id, summary.
         """
@@ -155,24 +159,20 @@ class MemoryEngine:
                 else:
                     importance = 5
 
-            # 3. Create and persist MemoryItem
+            # 3. Create and persist MemoryItem (summary only — raw lives in events)
             item = MemoryItem(
                 summary=summary,
                 memory_type=memory_type,
                 importance=importance,
                 tier=tier,
                 daily_ref=daily_ref,
-                raw_text=raw_text,
+                source_event_id=source_event_id,
             )
 
             self.db.save_item(item)
 
             # 4. Add to ChromaDB (with type metadata for future filtering)
             self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
-
-            # 4b. Store raw text in separate ChromaDB collection for verbatim retrieval
-            if raw_text:
-                self.vector.add_raw(item.id, raw_text, metadata={"memory_type": memory_type})
 
             # 5. Link entities and relationships in KuzuDB
             if entities:
