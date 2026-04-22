@@ -29,11 +29,12 @@ from pathlib import Path
 
 from phileas.hooks.memorize import gather_last_exchange
 
-# Signatures of Phileas's own internal LLM prompts. If the last user turn
-# starts with one of these, the original session was a `claude -p` sub-call
-# made by Phileas itself — the real Stop hook guards against ingesting these
-# via PHILEAS_SUBCALL=1, so they should never reach extract_memories() in
-# production and must be excluded from the eval set too.
+# Signatures of Phileas's own internal LLM prompts. Historical: older eval
+# sessions were recorded while Phileas still spawned `claude -p` sub-calls for
+# its own extraction/contradiction/etc. prompts. Those sub-call transcripts
+# must be excluded from the eval set so we don't train or evaluate on
+# Phileas's own prompts. Kept post-migration for backward compat with
+# pre-migration eval data.
 _PHILEAS_PROMPT_STARTS = (
     "extract discrete memories from",
     "extract entities and relationships",

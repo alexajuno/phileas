@@ -1,4 +1,4 @@
-"""LLM client with pluggable providers: litellm or claude-cli.
+"""LLM client over litellm.
 
 Usage:
     from phileas.config import LLMConfig
@@ -7,6 +7,12 @@ Usage:
     client = LLMClient(config)
     if client.available:
         result = await client.complete("extraction", messages)
+
+This module is scheduled for removal as Phileas migrates to a fully
+agent-driven, MCP-tool architecture (see plan:
+~/.claude/plans/will-subagent-work-on-compiled-curry.md). Any new LLM-powered
+capability should be shipped as an MCP tool pair the host Claude drives, not
+as a new `client.complete(...)` call.
 """
 
 from __future__ import annotations
@@ -14,8 +20,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
-from shutil import which
 from time import perf_counter
 from typing import Any
 
@@ -35,102 +39,8 @@ def parse_json_response(text: str) -> Any:
     return value
 
 
-def _free_ram_gb() -> float:
-    """Return available (reclaimable) RAM in GiB, or 0.0 if unreadable."""
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemAvailable:"):
-                    kb = int(line.split()[1])
-                    return kb / 1024 / 1024
-    except OSError, ValueError:
-        pass
-    return 0.0
-
-
-def _resolve_auto_provider(config: LLMConfig) -> str:
-    """Pick 'claude-cli' when free RAM is plentiful, else the configured fallback.
-
-    claude-cli spawns a full Claude Code subprocess (~200-400 MB + MCP servers)
-    but bills against the user's subscription. The direct API path has no local
-    RAM cost and lower first-token latency, at a per-call fee.
-    """
-    if _free_ram_gb() >= config.auto_free_ram_gb and which("claude") is not None:
-        return "claude-cli"
-    return config.auto_fallback
-
-
-def _claude_cli_complete(
-    model: str | None,
-    messages: list[dict[str, Any]],
-    max_tokens: int = 1024,
-) -> dict:
-    """Run a completion via `claude -p --bare`.
-
-    Returns {"text": str, "prompt_tokens": int, "completion_tokens": int,
-             "total_tokens": int}.
-    """
-    # Build prompt from messages (flatten to single string)
-    parts = []
-    for msg in messages:
-        role = msg.get("role", "user").upper()
-        content = msg.get("content", "")
-        if role == "USER":
-            parts.append(content)
-        elif role == "SYSTEM":
-            parts.append(f"[System: {content}]")
-        else:
-            parts.append(f"[{role}: {content}]")
-    prompt = "\n\n".join(parts)
-
-    cmd = ["claude", "-p", "--output-format", "json"]
-    if model:
-        # litellm uses "anthropic/claude-haiku-4-5"; claude-cli wants "claude-haiku-4-5".
-        cli_model = model.split("/", 1)[1] if "/" in model else model
-        cmd.extend(["--model", cli_model])
-
-    sub_env = os.environ.copy()
-    sub_env["PHILEAS_SUBCALL"] = "1"
-    # Force claude-cli to use the subscription (OAuth) path rather than the
-    # API-key path. Leaving ANTHROPIC_API_KEY in the env makes `claude -p`
-    # default to API-key auth, which bills against the paid API — defeats the
-    # purpose of `provider = "claude-cli"` (subscription-only).
-    sub_env.pop("ANTHROPIC_API_KEY", None)
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=sub_env,
-    )
-
-    if result.returncode != 0 and not result.stdout.strip():
-        raise RuntimeError(f"claude-cli failed (exit {result.returncode}): {result.stderr[:300]}")
-
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError, ValueError:
-        # Fallback: treat stdout as plain text (old behavior)
-        return {"text": result.stdout.strip(), "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-
-    text = data.get("result", "")
-    usage = data.get("usage", {})
-    prompt_tokens = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
-    completion_tokens = usage.get("output_tokens", 0)
-    cost = data.get("total_cost_usd", 0.0)
-
-    return {
-        "text": text,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
-        "cost_usd": cost,
-    }
-
-
 class LLMClient:
-    """LLM client supporting litellm and claude-cli providers."""
+    """Thin wrapper around litellm for Phileas's daemon-side LLM calls."""
 
     def __init__(self, config: LLMConfig, usage_tracker: Any | None = None) -> None:
         self._config = config
@@ -138,12 +48,7 @@ class LLMClient:
 
     @property
     def available(self) -> bool:
-        """True when the underlying LLM config has a usable provider."""
-        if self._config.provider == "claude-cli":
-            return which("claude") is not None
-        if self._config.provider == "auto":
-            # Either path must be usable: claude-cli installed, or fallback configured.
-            return which("claude") is not None or self._config.model is not None
+        """True when both provider and model are configured."""
         return self._config.available
 
     def model_for(self, operation: str) -> str | None:
@@ -160,10 +65,6 @@ class LLMClient:
         """Run a chat completion and return the response text."""
         model = self._config.model_for(operation)
 
-        provider = self._config.provider
-        if provider == "auto":
-            provider = _resolve_auto_provider(self._config)
-
         start = perf_counter()
         error_msg = None
         success = True
@@ -173,15 +74,6 @@ class LLMClient:
         cost = 0.0
 
         try:
-            if provider == "claude-cli":
-                result = _claude_cli_complete(model, messages, max_tokens)
-                prompt_tokens = result.get("prompt_tokens", 0)
-                completion_tokens = result.get("completion_tokens", 0)
-                total_tokens = result.get("total_tokens", 0)
-                cost = result.get("cost_usd", 0.0)
-                return result["text"]
-
-            # Default: litellm
             from litellm import acompletion
 
             api_key = os.environ.get(self._config.api_key_env) if self._config.api_key_env else None
@@ -194,14 +86,12 @@ class LLMClient:
                 api_key=api_key,
             )
 
-            # Extract usage from response
             usage = getattr(response, "usage", None)
             if usage:
                 prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
                 completion_tokens = getattr(usage, "completion_tokens", 0) or 0
                 total_tokens = getattr(usage, "total_tokens", 0) or 0
 
-            # Extract cost if litellm provides it
             cost = getattr(response, "_hidden_params", {}).get("response_cost", 0.0) or 0.0
 
             return response.choices[0].message.content
@@ -218,7 +108,7 @@ class LLMClient:
                     self._usage.record(
                         operation=operation,
                         model=model or "unknown",
-                        provider=provider,
+                        provider=self._config.provider or "unknown",
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         total_tokens=total_tokens,

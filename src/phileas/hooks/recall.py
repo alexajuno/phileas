@@ -12,7 +12,6 @@ the recall is broken than to silently miss memory context.
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 from phileas.hooks._client import call_daemon, truncate
@@ -69,13 +68,6 @@ def format_error(msg: str) -> str:
 
 
 def main() -> int:
-    # Skip when invoked inside a Phileas-initiated `claude -p` sub-process.
-    # The sub-claude only needs to run the exact extraction/contradiction prompt
-    # it was given -- injecting recall context would bloat the prompt and risk
-    # feeding poisoned memories back into Phileas.
-    if os.environ.get("PHILEAS_SUBCALL") == "1":
-        return 0
-
     prompt = read_prompt()
     if not prompt:
         return 0

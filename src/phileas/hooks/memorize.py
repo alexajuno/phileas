@@ -12,7 +12,6 @@ daemon never rots silently.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -110,12 +109,6 @@ def format_error(msg: str) -> str:
 
 
 def main() -> int:
-    # Skip when invoked inside a Phileas-initiated `claude -p` sub-process.
-    # Phileas's LLM client sets PHILEAS_SUBCALL=1 so this hook doesn't re-feed
-    # Phileas its own extraction/contradiction prompts (which would loop).
-    if os.environ.get("PHILEAS_SUBCALL") == "1":
-        return 0
-
     payload = read_payload()
     transcript = payload.get("transcript_path")
     if not transcript:

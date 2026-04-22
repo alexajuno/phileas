@@ -79,7 +79,7 @@ class TestLLMClientModelFor:
 class TestLLMClientComplete:
     @pytest.mark.asyncio
     @patch("litellm.acompletion", new_callable=AsyncMock)
-    async def test_llm_client_complete(self, mock_acompletion):
+    async def test_llm_client_complete(self, mock_acompletion, monkeypatch):
         """Mocked acompletion returns expected content through the client."""
         # Arrange: build a mock response matching litellm's shape
         mock_message = MagicMock()
@@ -89,6 +89,9 @@ class TestLLMClientComplete:
         mock_response = MagicMock()
         mock_response.choices = [mock_choice]
         mock_acompletion.return_value = mock_response
+
+        # Deterministic env regardless of dev shell.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         config = LLMConfig(
             provider="anthropic",
