@@ -146,18 +146,11 @@ class MemoryEngine:
             if daily_ref is None:
                 daily_ref = date.today().isoformat()
 
-            # 2. Auto-score importance via LLM if caller didn't provide one
+            # 2. Default importance when caller didn't provide one. Agent-driven
+            # callers should always supply `importance`; this fallback exists
+            # for legacy paths that don't yet.
             if importance is None:
-                if self.llm.available:
-                    from phileas.llm.importance import score_importance
-
-                    try:
-                        importance = asyncio.run(score_importance(self.llm, summary, memory_type))
-                    except Exception as e:
-                        log.warning("auto-importance failed", extra={"op": "importance", "data": {"error": str(e)}})
-                        importance = 5
-                else:
-                    importance = 5
+                importance = 5
 
             # 3. Create and persist MemoryItem (summary only — raw lives in events)
             item = MemoryItem(
@@ -208,33 +201,13 @@ class MemoryEngine:
             # 7. Queue reinforcement check to daemon (async)
             self._queue_reinforcement(item.id, summary)
 
-            # 6. Check for contradictions with existing memories
+            # 6. Contradiction check is now agent-driven: the host Claude can
+            # call `recall` before memorize and decide for itself whether the
+            # new memory supersedes anything. The daemon stays LLM-free.
             result: dict = {"id": item.id, "summary": item.summary}
-            if self.llm.available:
-                from phileas.llm.contradiction import detect_contradictions
 
-                related = self.recall(item.summary, top_k=5, _skip_llm=True)
-                if related:
-                    try:
-                        contradiction = asyncio.run(
-                            detect_contradictions(
-                                self.llm,
-                                new_memory=item.summary,
-                                existing_memories=related,
-                            )
-                        )
-                        if contradiction.get("contradicts"):
-                            result["contradiction"] = contradiction
-                    except Exception as e:
-                        log.debug("contradiction check failed", extra={"op": "memorize", "data": {"error": str(e)}})
-
-            # 7. Background entity extraction if caller provided none
-            if not entities and self.llm.available:
-                threading.Thread(
-                    target=self._bg_extract_entities,
-                    args=(item.id, item.summary),
-                    daemon=True,
-                ).start()
+            # 7. Entity extraction is agent-driven too: callers should pass
+            # `entities` / `relationships` when they have them.
 
             # 8. Update hot set if this memory qualifies
             self._hot.add(item)
@@ -272,72 +245,6 @@ class MemoryEngine:
         self.graph.set_aliases("Day", iso_date, aliases)
         self.graph.link_memory(memory_id, "Day", iso_date)
 
-    def _bg_extract_entities(self, memory_id: str, summary: str) -> None:
-        """Background thread: extract entities via LLM and link them in the graph.
-
-        Only does graph operations (no SQLite/ChromaDB) to avoid cross-thread
-        issues with internal SQLite connections in dependencies like ChromaDB.
-        Graph writes proxy through the daemon when KuzuDB is locked.
-        """
-        try:
-            from phileas.llm.extraction import extract_entities
-
-            result = asyncio.run(extract_entities(self.llm, summary))
-            entities = result.get("entities", [])
-            relationships = result.get("relationships", [])
-
-            if not entities and not relationships:
-                return
-
-            # Link entities directly in graph — avoids update() which touches
-            # SQLite/ChromaDB and triggers cross-thread sqlite3 errors.
-            for entity in entities:
-                name = entity.get("name")
-                etype = entity.get("type")
-                if name and etype:
-                    self.graph.upsert_node(etype, name)
-                    self.graph.link_memory(memory_id, etype, name)
-
-            for rel in relationships:
-                from_name = rel.get("from_name")
-                from_type = rel.get("from_type")
-                edge = rel.get("edge")
-                to_name = rel.get("to_name")
-                to_type = rel.get("to_type")
-                if from_name and from_type and edge and to_name and to_type:
-                    self.graph.upsert_node(from_type, from_name)
-                    self.graph.upsert_node(to_type, to_name)
-                    try:
-                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                    except Exception as e:
-                        log.debug(
-                            "bg graph edge failed",
-                            extra={"op": "bg_entity_extract", "data": {"edge": edge, "error": str(e)}},
-                        )
-
-            log.info(
-                "bg entity extraction",
-                extra={
-                    "op": "bg_entity_extract",
-                    "data": {
-                        "memory_id": memory_id,
-                        "entities": len(entities),
-                        "relationships": len(relationships),
-                    },
-                },
-            )
-        except Exception as e:
-            log.warning(
-                "bg entity extraction failed",
-                extra={
-                    "op": "bg_entity_extract",
-                    "data": {
-                        "memory_id": memory_id,
-                        "error": str(e),
-                    },
-                },
-            )
-
     # ------------------------------------------------------------------
     # recall
     # ------------------------------------------------------------------
@@ -369,44 +276,12 @@ class MemoryEngine:
             memory_type=memory_type,
             min_importance=min_importance,
         ) as timer:
-            # ----------------------------------------------------------
-            # Stage 0: Query analysis via LLM
-            #
-            # Produces alternate phrasings and, for pronoun/kinship queries,
-            # a list of likely referent Person entities. Referents feed into
-            # path 3 below so the rest of the pipeline stays unchanged.
-            # ----------------------------------------------------------
-            referent_names: list[tuple[str, str]] = []  # (type, name) pairs
-            if not _skip_llm and self.llm.available:
-                from phileas.llm.query_rewrite import analyze_query
-
-                try:
-                    analysis = asyncio.run(analyze_query(self.llm, query))
-                    queries = list(analysis.get("queries") or [])
-                    if not queries:
-                        queries = [query]
-                    if query not in queries:
-                        queries.insert(0, query)
-
-                    if analysis.get("needs_referent_resolution"):
-                        from phileas.llm.referent_resolve import (
-                            build_person_candidates,
-                            resolve_referents,
-                        )
-
-                        person_candidates = build_person_candidates(self.graph, self.db, top_n=15)
-                        hints = list(analysis.get("pronoun_hints") or [])
-                        resolved = asyncio.run(resolve_referents(self.llm, query, hints, person_candidates))
-                        referent_names = [("Person", n) for n in resolved]
-                        timer.extra["referent_hints"] = hints
-                        timer.extra["referent_resolved"] = resolved
-                except Exception as e:
-                    log.debug(
-                        "query analysis failed, using original", extra={"op": "recall", "data": {"error": str(e)}}
-                    )
-                    queries = [query]
-            else:
-                queries = [query]
+            # Query analysis (alternate phrasings, pronoun referent resolution)
+            # is now the host agent's job — if it wants richer recall it calls
+            # this tool multiple times with rewritten queries. The daemon
+            # stays LLM-free.
+            queries = [query]
+            referent_names: list[tuple[str, str]] = []
 
             candidates: dict[str, MemoryItem] = {}  # id -> item
             keyword_ids: set[str] = set()  # track keyword-matched candidates
