@@ -20,6 +20,7 @@ const POLL_MS = 20_000;
 export function MemoryList({ initialDay, initialItems }: Props) {
   const [day, setDay] = useState(initialDay);
   const [items, setItems] = useState<MemoryItem[]>(initialItems);
+  const [selectedType, setSelectedType] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,6 +81,7 @@ export function MemoryList({ initialDay, initialItems }: Props) {
       setLastLoaded(new Date());
       return;
     }
+    setSelectedType(null);
     load(day);
   }, [day, load]);
 
@@ -102,6 +104,21 @@ export function MemoryList({ initialDay, initialItems }: Props) {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [isToday, day, load]);
+
+  const visibleItems = useMemo(
+    () =>
+      selectedType
+        ? items.filter((m) => m.memory_type === selectedType)
+        : items,
+    [items, selectedType],
+  );
+
+  // Clear the filter automatically if no items match (e.g. after a reload).
+  useEffect(() => {
+    if (selectedType && visibleItems.length === 0) {
+      setSelectedType(null);
+    }
+  }, [selectedType, visibleItems.length]);
 
   const lastLoadedLabel = useMemo(
     () =>
@@ -136,7 +153,11 @@ export function MemoryList({ initialDay, initialItems }: Props) {
         </div>
       </div>
 
-      <StatsStrip items={items} />
+      <StatsStrip
+        items={items}
+        selectedType={selectedType}
+        onSelect={setSelectedType}
+      />
 
       {error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -149,7 +170,7 @@ export function MemoryList({ initialDay, initialItems }: Props) {
       ) : (
         <ul className="space-y-2.5">
           <AnimatePresence initial={false}>
-            {items.map((m, i) => (
+            {visibleItems.map((m, i) => (
               <motion.li
                 key={m.id}
                 layout
