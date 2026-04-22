@@ -30,9 +30,6 @@ log = logging.getLogger("phileas.daemon")
 # Module-level reinforcement queue, initialized by start()
 _reinforce_queue: deque[dict] | None = None
 
-# Module-level ingest queue, initialized by start()
-_ingest_queue: deque[dict] | None = None
-
 
 def _pid_path(config: PhileasConfig) -> Path:
     return config.home / "daemon.pid"
@@ -273,75 +270,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     reinforce_thread = threading.Thread(target=_reinforcement_loop, daemon=True)
     reinforce_thread.start()
 
-    # -- Ingest queue (background thread) ---
-    global _ingest_queue
-    _ingest_queue = deque()
-
-    def _ingest_loop():
-        import asyncio
-        import time
-
-        from phileas.llm.extraction import extract_memories
-
-        while True:
-            if not _ingest_queue:
-                time.sleep(1)
-                continue
-            item = _ingest_queue.popleft()
-            event_id = item.get("event_id")
-            if not event_id:
-                continue
-            event = db.get_event(event_id)
-            if not event or not event.text:
-                continue
-            try:
-                memories = asyncio.run(extract_memories(engine.llm, text=event.text))
-                count = 0
-                for mem in memories:
-                    engine.memorize(
-                        summary=mem["summary"],
-                        memory_type=mem.get("memory_type", "knowledge"),
-                        importance=mem.get("importance", 5),
-                        entities=mem.get("entities"),
-                        relationships=mem.get("relationships"),
-                        source_event_id=event.id,
-                    )
-                    count += 1
-                db.mark_event_extracted(event.id, memory_count=count)
-                log.info(
-                    "ingest completed",
-                    extra={
-                        "op": "ingest",
-                        "data": {
-                            "event_id": event.id,
-                            "count": count,
-                            "queue_depth": len(_ingest_queue),
-                        },
-                    },
-                )
-                try:
-                    engine._metrics.record_daemon(
-                        "ingest_completed",
-                        payload={"event_id": event.id, "count": count},
-                    )
-                except Exception:
-                    pass
-            except Exception as e:
-                db.mark_event_failed(event.id, error=str(e))
-                log.warning(
-                    "ingest failed — event marked failed, no memory written",
-                    extra={"op": "ingest", "data": {"event_id": event.id, "error": str(e)}},
-                )
-                try:
-                    engine._metrics.record_daemon(
-                        "ingest_failed",
-                        payload={"event_id": event.id, "error": str(e)},
-                    )
-                except Exception:
-                    pass
-
-    ingest_thread = threading.Thread(target=_ingest_loop, daemon=True)
-    ingest_thread.start()
+    # Note: daemon-side LLM extraction was removed during the agent-driven
+    # migration. Events land in the `events` table as `pending` and are
+    # drained by the host Claude Code session via the `pending_events` /
+    # `mark_event_extracted` MCP tools.
 
     server.serve_forever()
     return port
@@ -369,7 +301,9 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "status":
         stats = engine.status()
         stats["sessions_processed"] = engine.db.get_processed_session_count()
-        stats["ingest_queue_depth"] = len(_ingest_queue) if _ingest_queue is not None else 0
+        event_counts = engine.db.get_event_counts()
+        stats["events_pending"] = event_counts.get("pending", 0)
+        stats["events_failed"] = event_counts.get("failed", 0)
         return stats
     elif method == "list":
         memory_type = params.get("memory_type")
@@ -418,20 +352,20 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "infer_graph":
         return engine.infer_graph()
     elif method == "ingest":
+        # Store the raw turn as a pending event. The host Claude Code session
+        # drains pending events via the `pending_events` / `mark_event_extracted`
+        # MCP tools — no LLM call happens inside the daemon anymore.
         text = params.get("text", "")
         if not text:
             return {"queued": False, "reason": "empty text"}
-        if _ingest_queue is None:
-            return {"queued": False, "reason": "queue not initialized"}
         from phileas.models import Event
 
         event = Event(text=text)
         engine.db.save_event(event)
-        _ingest_queue.append({"event_id": event.id})
-        return {"queued": True, "event_id": event.id, "queue_depth": len(_ingest_queue)}
+        pending_count = engine.db.get_event_counts().get("pending", 0)
+        return {"queued": True, "event_id": event.id, "queue_depth": pending_count}
     elif method == "retry_events":
-        if _ingest_queue is None:
-            return {"queued": 0, "reason": "queue not initialized"}
+        # Reset failed events to pending so the host agent can pick them up.
         event_ids = params.get("event_ids")
         if event_ids:
             events = [engine.db.get_event(eid) for eid in event_ids]
@@ -441,9 +375,11 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         queued = 0
         for event in events:
             if engine.db.reset_event_to_pending(event.id):
-                _ingest_queue.append({"event_id": event.id})
                 queued += 1
-        return {"queued": queued, "queue_depth": len(_ingest_queue)}
+        pending_count = engine.db.get_event_counts().get("pending", 0)
+        return {"queued": queued, "queue_depth": pending_count}
+    elif method == "event_counts":
+        return engine.db.get_event_counts()
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.
