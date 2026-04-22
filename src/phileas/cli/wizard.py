@@ -222,33 +222,6 @@ def _download_reranker_model() -> bool:
         return False
 
 
-def _test_llm_connection(provider: str, model: str, api_key_env: str | None) -> bool:
-    """Send a tiny completion to verify the LLM is reachable. Returns True on success."""
-    import asyncio
-
-    from phileas.config import LLMConfig
-    from phileas.llm import LLMClient
-
-    config = LLMConfig(provider=provider, model=model, api_key_env=api_key_env)
-    client = LLMClient(config)
-
-    async def _ping() -> str:
-        return await client.complete(
-            operation="extraction",
-            messages=[{"role": "user", "content": "Say hello in one word."}],
-            max_tokens=16,
-        )
-
-    try:
-        console.print(f"  Testing LLM connection ([cyan]{provider}/{model}[/cyan]) ...")
-        result = asyncio.run(_ping())
-        console.print(f"  [green]OK[/green] -- model responded: {result.strip()[:60]}")
-        return True
-    except Exception as exc:
-        console.print(f"  [yellow]LLM test failed[/yellow] -- {exc}")
-        return False
-
-
 # -- Main wizard ------------------------------------------------------
 
 
@@ -335,12 +308,7 @@ def run_wizard() -> None:
     _download_embedding_model()
     _download_reranker_model()
 
-    # 7. Test LLM connection (standalone/both only)
-    if use_standalone and provider:
-        console.print()
-        _test_llm_connection(provider, model, api_key_env)  # type: ignore[arg-type]
-
-    # 8. Done
+    # 7. Done
     console.print()
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()

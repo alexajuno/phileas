@@ -10,7 +10,6 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from datetime import date, datetime, timezone
 
@@ -18,7 +17,6 @@ from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.hot import HotMemorySet
-from phileas.llm import LLMClient
 from phileas.logging import OpTimer, get_logger
 from phileas.models import MemoryItem
 from phileas.scoring import compute_score, mmr_select
@@ -86,13 +84,11 @@ class MemoryEngine:
         self.graph = graph
         self.config = config if config is not None else load_config()
 
-        # Usage tracking
+        # Usage tracking (records daemon op metrics; no LLM dependency)
         from phileas.llm.usage import UsageTracker
 
         usage_db = self.config.home / "usage.db"
         self._usage_tracker = UsageTracker(usage_db)
-
-        self.llm = LLMClient(self.config.llm, usage_tracker=self._usage_tracker)
 
         # Hot memory cache — always-relevant memories loaded at startup
         self._hot = HotMemorySet.build(self.db, self.config.hot_set)
@@ -950,95 +946,18 @@ class MemoryEngine:
     # ------------------------------------------------------------------
 
     def reflect(self, target_date: str | None = None) -> list[dict]:
-        """Reflect on a day's memories and store insights.
+        """Deprecated: daemon-side LLM reflection was removed.
 
-        Idempotent: checks for existing reflection marker before running.
-        Returns list of stored insight dicts, or [] if skipped.
-
-        LLM reflection is best-effort: if the daemon's LLM is unavailable or
-        the call fails (e.g. no API credits), this returns [] cleanly instead
-        of crashing. Full reflection moves to agent-driven in a follow-up.
+        Reflections are now agent-driven: the host Claude reads the day's
+        memories (via `timeline` or MCP tools) and writes reflections back
+        via `memorize(memory_type="reflection", ...)`. This method stays as
+        a stub so the systemd cron job and existing callers don't error;
+        it returns [] immediately.
         """
-        from phileas.llm.reflection import reflect_on_day
-
         target_date = target_date or date.today().isoformat()
-
         with OpTimer(log, "reflect", date=target_date) as timer:
-            # Check idempotency: look for a reflection marker in the day's memories
-            day_items = self.db.get_items_by_date_range(target_date)
-            for item in day_items:
-                if item.summary.startswith("[Daily reflection"):
-                    timer.extra["skipped"] = True
-                    return []
-
-            # Gather the day's memories
-            day_memories = self.timeline(target_date, window=0)
-            if not day_memories:
-                timer.extra["no_memories"] = True
-                return []
-
-            if not self.llm.available:
-                timer.extra["skipped"] = "llm_unavailable"
-                return []
-
-            try:
-                insights = asyncio.run(reflect_on_day(self.llm, target_date, day_memories))
-            except Exception as e:
-                log.warning("reflect LLM call failed", extra={"op": "reflect", "data": {"error": str(e)[:200]}})
-                timer.extra["llm_error"] = True
-                return []
-            if not insights:
-                timer.extra["no_insights"] = True
-                return []
-
-            # Store each insight as a memory
-            stored = []
-            source_ids = [m["id"] for m in day_memories]
-            for ins in insights:
-                result = self.memorize(
-                    summary=ins["summary"],
-                    memory_type=ins.get("type", "reflection"),
-                    importance=ins["importance"],
-                    daily_ref=target_date,
-                )
-                stored.append(result)
-                # Link insight to source memories in graph
-                for src_id in source_ids[:10]:
-                    try:
-                        self.graph.link_memory_to_memory(result["id"], "DERIVED_FROM", src_id)
-                    except Exception as e:
-                        log.debug(
-                            "graph DERIVED_FROM link failed",
-                            extra={"op": "reflect", "data": {"error": str(e)}},
-                        )
-
-            # Store marker to prevent duplicate reflection
-            self.memorize(
-                summary=(
-                    f"[Daily reflection {target_date}] Processed"
-                    f" {len(day_memories)} memories, produced {len(stored)} insights."
-                ),
-                memory_type="knowledge",
-                importance=1,
-                daily_ref=target_date,
-            )
-
-            timer.extra["insights"] = len(stored)
-            timer.extra["source_memories"] = len(day_memories)
-
-            try:
-                self._metrics.record_daemon(
-                    "reflect_run",
-                    payload={
-                        "date": target_date,
-                        "insights": len(stored),
-                        "source_memories": len(day_memories),
-                    },
-                )
-            except Exception:
-                pass
-
-            return stored
+            timer.extra["skipped"] = "agent_driven"
+            return []
 
     # ------------------------------------------------------------------
     # infer_graph
@@ -1055,218 +974,15 @@ class MemoryEngine:
         Uses a marker memory to track the last inference time.
         Returns {"facts_derived": N, "entities_filled": N, "memories_processed": N}.
         """
+        # Deprecated: daemon-side fact derivation and entity gap-fill both
+        # required an LLM. Moved to agent-driven: the host Claude calls the
+        # relevant MCP tools (recall, about, timeline) to explore recent
+        # memories and writes derived facts / entity updates via memorize()
+        # and relate(). This stub keeps the systemd timer callable without
+        # a crash.
         with OpTimer(log, "infer_graph") as timer:
-            if not self.llm.available:
-                timer.extra["skipped"] = "llm_unavailable"
-                return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
-
-            # Find last inference marker
-            active = self.db.get_active_items()
-            last_inference_time = None
-            for item in active:
-                if item.summary.startswith("[Fact inference"):
-                    last_inference_time = item.created_at
-                    break
-
-            # Get memories since last inference (or last 24h if first run)
-            if last_inference_time:
-                since = last_inference_time.isoformat()
-            else:
-                from datetime import timedelta
-
-                since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-
-            recent = self.db.get_items_since(since, limit=100)
-            recent = [m for m in recent if not m.summary.startswith("[") and m.importance >= 3]
-
-            if not recent:
-                timer.extra["skipped"] = "no_new_memories"
-                return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
-
-            # -- Pass 1: Fact derivation --
-            facts_derived = self._pass_fact_derivation(recent)
-
-            # -- Pass 2: Entity gap fill --
-            entities_filled = self._pass_entity_gap_fill(recent)
-
-            # Store marker
-            self.memorize(
-                summary=(
-                    f"[Fact inference] Processed {len(recent)} memories, "
-                    f"derived {facts_derived} facts, filled {entities_filled} entity gaps."
-                ),
-                memory_type="knowledge",
-                importance=1,
-                daily_ref=date.today().isoformat(),
-            )
-
-            timer.extra["memories_processed"] = len(recent)
-            timer.extra["facts_derived"] = facts_derived
-            timer.extra["entities_filled"] = entities_filled
-            return {
-                "facts_derived": facts_derived,
-                "entities_filled": entities_filled,
-                "memories_processed": len(recent),
-            }
-
-    def _pass_fact_derivation(self, recent: list[MemoryItem]) -> int:
-        """Pass 1: Build recall clusters for each recent memory, then derive facts."""
-        from phileas.llm.fact_derivation import derive_facts
-
-        # Build profile summary for LLM context
-        profile_items = self.db.get_items_by_type("profile")[:5]
-        profile_summary = (
-            "\n".join(f"- {p.summary[:200]}" for p in profile_items if not p.summary.startswith("["))
-            or "(no profile data)"
-        )
-
-        # Build clusters: for each recent memory, recall related older memories
-        # Use the full summary as query to get the richest recall context,
-        # plus entity names for graph-connected memories.
-        clusters = []
-        recent_ids = {m.id for m in recent}
-        for mem in recent:
-            related: list[dict] = []
-            related_ids: set[str] = set()
-
-            # Primary recall: use summary as query (full pipeline)
-            try:
-                recalled = self.recall(mem.summary, top_k=10, _skip_llm=True)
-                for r in recalled:
-                    rid = r["id"]
-                    if rid not in recent_ids and rid not in related_ids:
-                        related.append(r)
-                        related_ids.add(rid)
-            except Exception:
-                pass
-
-            # Secondary: recall by entity names for graph-connected memories
-            entities = self.graph.get_entities_for_memory(mem.id)
-            for ent in entities:
-                name = ent.get("name")
-                if not name:
-                    continue
-                try:
-                    recalled = self.recall(name, top_k=5, _skip_llm=True)
-                    for r in recalled:
-                        rid = r["id"]
-                        if rid not in recent_ids and rid not in related_ids:
-                            related.append(r)
-                            related_ids.add(rid)
-                except Exception:
-                    continue
-
-            if related:
-                clusters.append(
-                    {
-                        "new": {
-                            "summary": mem.summary,
-                            "type": mem.memory_type,
-                            "importance": mem.importance,
-                        },
-                        "related": [
-                            {
-                                "summary": r["summary"],
-                                "type": r["type"],
-                                "importance": r["importance"],
-                            }
-                            for r in related[:10]  # Cap related per cluster
-                        ],
-                    }
-                )
-
-        # Cap total clusters to keep prompt manageable
-        clusters = clusters[:15]
-
-        if not clusters:
-            return 0
-
-        # Call LLM to derive facts. Best-effort: if the LLM is unavailable
-        # or the call fails (e.g. no credits), bail cleanly.
-        if not self.llm.available:
-            return 0
-        try:
-            facts = asyncio.run(derive_facts(self.llm, clusters, profile_summary))
-        except Exception as e:
-            log.warning(
-                "fact derivation LLM call failed",
-                extra={"op": "infer_graph", "data": {"error": str(e)[:200]}},
-            )
-            return 0
-
-        # Store each derived fact
-        facts_stored = 0
-        for fact in facts:
-            result = self.memorize(
-                summary=fact["summary"],
-                memory_type=fact["memory_type"],
-                importance=fact["importance"],
-                daily_ref=date.today().isoformat(),
-            )
-            if not result.get("deduplicated"):
-                facts_stored += 1
-                log.info(
-                    "derived fact",
-                    extra={
-                        "op": "infer_graph",
-                        "data": {
-                            "summary": fact["summary"],
-                            "reasoning": fact.get("reasoning", ""),
-                        },
-                    },
-                )
-
-        return facts_stored
-
-    def _pass_entity_gap_fill(self, recent: list[MemoryItem]) -> int:
-        """Pass 2: Find memories with sparse entity links and extract entities."""
-        from phileas.llm.extraction import extract_entities
-
-        filled = 0
-        for mem in recent:
-            entities = self.graph.get_entities_for_memory(mem.id)
-            if len(entities) >= 2:
-                continue  # Already has enough entities
-
-            try:
-                result = asyncio.run(extract_entities(self.llm, mem.summary))
-                new_entities = result.get("entities", [])
-                new_relationships = result.get("relationships", [])
-
-                for entity in new_entities:
-                    name = entity.get("name")
-                    etype = entity.get("type")
-                    if name and etype:
-                        self.graph.upsert_node(etype, name)
-                        self.graph.link_memory(mem.id, etype, name)
-
-                for rel in new_relationships:
-                    from_name = rel.get("from_name")
-                    from_type = rel.get("from_type")
-                    edge = rel.get("edge")
-                    to_name = rel.get("to_name")
-                    to_type = rel.get("to_type")
-                    if from_name and from_type and edge and to_name and to_type:
-                        self.graph.upsert_node(from_type, from_name)
-                        self.graph.upsert_node(to_type, to_name)
-                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-
-                if new_entities:
-                    filled += 1
-                    log.info(
-                        "entity gap filled",
-                        extra={
-                            "op": "infer_graph",
-                            "data": {
-                                "memory_id": mem.id,
-                                "entities_added": len(new_entities),
-                            },
-                        },
-                    )
-            except Exception:
-                continue
-
-        return filled
+            timer.extra["skipped"] = "agent_driven"
+            return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
 
     # ------------------------------------------------------------------
     # status

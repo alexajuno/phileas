@@ -220,39 +220,30 @@ def test_cli_init(tmp_dir, monkeypatch):
 
 
 # ------------------------------------------------------------------
-# ingest (without LLM — should fail gracefully)
+# ingest / consolidate / contradictions — deprecated after the move to
+# agent-driven architecture. CLI exits non-zero with a deprecation note.
 # ------------------------------------------------------------------
 
 
-def test_cli_ingest_no_llm(tmp_dir, monkeypatch):
+def test_cli_ingest_deprecated(tmp_dir, monkeypatch):
     runner = _runner_with_home(tmp_dir, monkeypatch)
     result = runner.invoke(app, ["ingest", "some text to ingest"])
-    assert result.exit_code == 1
-    assert "LLM not configured" in result.stderr
+    assert result.exit_code != 0
+    assert "deprecated" in result.stderr.lower()
 
 
-# ------------------------------------------------------------------
-# consolidate (without LLM — should fail gracefully)
-# ------------------------------------------------------------------
-
-
-def test_cli_consolidate_no_llm(tmp_dir, monkeypatch):
+def test_cli_consolidate_deprecated(tmp_dir, monkeypatch):
     runner = _runner_with_home(tmp_dir, monkeypatch)
     result = runner.invoke(app, ["consolidate"])
-    assert result.exit_code == 1
-    assert "LLM not configured" in result.stderr
+    assert result.exit_code != 0
+    assert "deprecated" in result.stderr.lower()
 
 
-# ------------------------------------------------------------------
-# contradictions (without LLM — should fail gracefully)
-# ------------------------------------------------------------------
-
-
-def test_cli_contradictions_no_llm(tmp_dir, monkeypatch):
+def test_cli_contradictions_deprecated(tmp_dir, monkeypatch):
     runner = _runner_with_home(tmp_dir, monkeypatch)
     result = runner.invoke(app, ["contradictions"])
-    assert result.exit_code == 1
-    assert "LLM not configured" in result.stderr
+    assert result.exit_code != 0
+    assert "deprecated" in result.stderr.lower()
 
 
 # ------------------------------------------------------------------
