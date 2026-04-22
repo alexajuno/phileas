@@ -5,7 +5,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from phileas.config import LLMConfig, LLMOperations
-from phileas.llm import LLMClient
+from phileas.llm import LLMClient, parse_json_response
+
+
+class TestParseJsonResponse:
+    def test_plain_json(self):
+        assert parse_json_response('{"a": 1}') == {"a": 1}
+
+    def test_fenced_json(self):
+        assert parse_json_response('```json\n{"a": 1}\n```') == {"a": 1}
+
+    def test_fenced_with_trailing_prose(self):
+        """The real-world failure: LLM emits JSON + closing fence + commentary.
+
+        Seen as 'Extra data: line 4 column 1 (char 21)' from json.loads.
+        """
+        text = '```json\n{"memories": []}\n```\n\nThis interaction contains only a factual query.'
+        assert parse_json_response(text) == {"memories": []}
+
+    def test_json_with_trailing_prose_no_fence(self):
+        assert parse_json_response('{"memories": []}\n\nNote: nothing to store.') == {"memories": []}
+
+    def test_raises_when_no_json(self):
+        import json
+
+        with pytest.raises(json.JSONDecodeError):
+            parse_json_response("no json here")
+
 
 # ------------------------------------------------------------------
 # Availability

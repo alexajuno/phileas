@@ -432,3 +432,30 @@ class Database:
             """SELECT extraction_status, COUNT(*) as n FROM events GROUP BY extraction_status"""
         ).fetchall()
         return {row["extraction_status"]: row["n"] for row in rows}
+
+    @_locked
+    def get_failed_events(self, limit: int = 1000) -> list[Event]:
+        rows = self.conn.execute(
+            "SELECT * FROM events WHERE extraction_status = 'failed' ORDER BY received_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            Event(
+                id=row["id"],
+                text=row["text"],
+                received_at=datetime.fromisoformat(row["received_at"]),
+                extraction_status=row["extraction_status"],
+                extraction_error=row["extraction_error"],
+                memory_count=row["memory_count"],
+            )
+            for row in rows
+        ]
+
+    @_locked
+    def reset_event_to_pending(self, event_id: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE events SET extraction_status = 'pending', extraction_error = NULL WHERE id = ?",
+            (event_id,),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0

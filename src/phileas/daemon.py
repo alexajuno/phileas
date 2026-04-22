@@ -429,6 +429,21 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         engine.db.save_event(event)
         _ingest_queue.append({"event_id": event.id})
         return {"queued": True, "event_id": event.id, "queue_depth": len(_ingest_queue)}
+    elif method == "retry_events":
+        if _ingest_queue is None:
+            return {"queued": 0, "reason": "queue not initialized"}
+        event_ids = params.get("event_ids")
+        if event_ids:
+            events = [engine.db.get_event(eid) for eid in event_ids]
+            events = [e for e in events if e is not None]
+        else:
+            events = engine.db.get_failed_events()
+        queued = 0
+        for event in events:
+            if engine.db.reset_event_to_pending(event.id):
+                _ingest_queue.append({"event_id": event.id})
+                queued += 1
+        return {"queued": queued, "queue_depth": len(_ingest_queue)}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.
