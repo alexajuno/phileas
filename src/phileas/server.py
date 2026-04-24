@@ -273,14 +273,18 @@ def relate(
 
 
 @mcp.tool()
-def about(name: str, entity_type: str | None = None) -> str:
-    """Get all memories connected to an entity in the knowledge graph.
+def about(name: str, entity_type: str | None = None, expand: bool = False) -> str:
+    """Get memories connected to an entity in the knowledge graph.
 
     Args:
         name: Name of the entity to look up (e.g., "Giao", "React").
         entity_type: Optional type filter (e.g., "Person", "Technology").
+        expand: If True, also include memories about neighboring entities
+            reached via REL edges (WORKS_AT, KNOWS, BUILDS, …). Default
+            False — for hub entities (the user, close collaborators)
+            one-hop fanout covers most of the DB. Use sparingly.
     """
-    items = engine.about(name, entity_type=entity_type)
+    items = engine.about(name, entity_type=entity_type, expand=expand)
     if not items:
         return f"No memories found for '{name}'."
 
