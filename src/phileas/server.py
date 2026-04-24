@@ -166,18 +166,20 @@ def recall(
     query: str,
     memory_type: str | None = None,
     min_importance: int | None = None,
+    top_k: int = 30,
 ) -> str:
     """Retrieve memories relevant to a query.
 
     Graph-first retrieval: entity lookup → memory pivot (memories → entities → memories)
-    → semantic supplement. Returns all relevant memories with no hard cap.
+    → semantic supplement. Returns top_k most relevant memories.
 
     Args:
         query: What to search for (natural language or keywords).
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
         min_importance: Only return memories with importance >= this value.
+        top_k: Max memories to return (default 30). Increase for broader recall.
     """
-    items = engine.recall(query, top_k=None, memory_type=memory_type, min_importance=min_importance)
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance)
     if not items:
         return "No relevant memories found."
 

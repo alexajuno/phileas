@@ -289,9 +289,124 @@ class MemoryEngine:
             # Stage 1: Gather candidates from multiple paths
             # ----------------------------------------------------------
 
+            # Stop words filtered out of keyword search and graph entity lookup.
+            # Common English function words match almost every summary and every
+            # entity name, inflating both keyword_ids and graph hop-0 counts with
+            # false positives that then dominate scoring via the importance/access
+            # tiebreaker. Filtering them keeps both paths precise.
+            _STOP_WORDS = {
+                "a",
+                "an",
+                "the",
+                "and",
+                "or",
+                "but",
+                "in",
+                "on",
+                "at",
+                "to",
+                "for",
+                "of",
+                "with",
+                "by",
+                "from",
+                "is",
+                "it",
+                "its",
+                "be",
+                "as",
+                "that",
+                "this",
+                "was",
+                "are",
+                "were",
+                "been",
+                "have",
+                "has",
+                "had",
+                "do",
+                "did",
+                "does",
+                "will",
+                "would",
+                "could",
+                "should",
+                "may",
+                "might",
+                "shall",
+                "can",
+                "not",
+                "no",
+                "so",
+                "if",
+                "then",
+                "than",
+                "about",
+                "us",
+                "we",
+                "i",
+                "you",
+                "he",
+                "she",
+                "they",
+                "me",
+                "him",
+                "her",
+                "them",
+                "my",
+                "our",
+                "your",
+                "his",
+                "their",
+                "still",
+                "just",
+                "also",
+                "up",
+                "out",
+                "what",
+                "which",
+                "who",
+                "when",
+                "where",
+                "how",
+                "why",
+                "between",
+                "into",
+                "through",
+                "during",
+                "before",
+                "after",
+                "while",
+                "am",
+                "any",
+                "all",
+                "both",
+                "each",
+                "few",
+                "more",
+                "most",
+                "other",
+                "same",
+                "such",
+                "own",
+                "too",
+                "very",
+                "now",
+                "remember",
+            }
+
+            def _strip_stopwords(text: str) -> str:
+                """Return query with stop words removed, preserving any remainder."""
+                import re as _re
+
+                words_in = _re.findall(r"\w+", text, flags=_re.UNICODE)
+                meaningful = [w for w in words_in if w.lower() not in _STOP_WORDS and len(w) >= 2]
+                return " ".join(meaningful) if meaningful else text
+
             # Path 1: keyword search (SQLite) — run for each query variant
             for q in queries:
-                keyword_hits = self.db.search_by_keyword(q, top_k=_effective_top_k * 3)
+                filtered_q = _strip_stopwords(q)
+                keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
                 for item in keyword_hits:
                     candidates[item.id] = item
                     keyword_ids.add(item.id)
@@ -332,18 +447,39 @@ class MemoryEngine:
             # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
             # plain query.split() leaves trailing "?" on the last token and
             # breaks CONTAINS match against entity names/aliases.
+            # Stop words are filtered: short function words match too many entity
+            # names ("the" → "The School of Life", "us" → "USD removal") and
+            # flood the graph_ids pool with unrelated hop-0 false positives.
             import re
 
-            words = re.findall(r"\w+", query, flags=re.UNICODE)
+            words = [
+                w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in _STOP_WORDS and len(w) >= 2
+            ]
             seen_entities: set[tuple[str, str]] = set()
 
             day_ids: set[str] = set()  # memories from matched Day entities
             referent_ids: set[str] = set()  # memories from LLM-resolved referents
             # Per-memory referent rank (1 = best pick); smaller is better.
             referent_rank: dict[str, int] = {}
+            # Hop distance at which each memory first entered the candidate pool via graph:
+            #   0 = query word matched an entity name directly
+            #   1 = one step removed (entity-entity neighbour, or pivot from a hop-0 memory)
+            #   2+ = further expansions
+            # Lower hop → higher relevance floor in scoring.
+            candidate_hop: dict[str, int] = {}
 
-            def _add_memories_for_entity(etype: str, ename: str, *, referent_rank_value: int | None = None) -> None:
+            def _add_memories_for_entity(
+                etype: str,
+                ename: str,
+                *,
+                hop: int = 0,
+                referent_rank_value: int | None = None,
+            ) -> None:
                 """Add memories linked to an entity to the candidates pool.
+
+                ``hop`` tracks graph distance from the query: 0 = entity matched
+                a query word directly, higher = further expansion. Lower hop
+                means a higher relevance floor in the scoring stage.
 
                 ``referent_rank_value`` tracks whether the source entity came
                 from the LLM referent-resolution step and at what rank. Smaller
@@ -360,6 +496,9 @@ class MemoryEngine:
                     return
                 for mem_id in memory_ids:
                     graph_ids.add(mem_id)
+                    # Keep the closest (lowest) hop seen for this memory.
+                    if mem_id not in candidate_hop or hop < candidate_hop[mem_id]:
+                        candidate_hop[mem_id] = hop
                     if etype == "Day":
                         day_ids.add(mem_id)
                     if referent_rank_value is not None:
@@ -382,12 +521,16 @@ class MemoryEngine:
                     entity_type = node.get("type")
                     if not entity_name or not entity_type:
                         continue
-                    _add_memories_for_entity(entity_type, entity_name)
+                    _add_memories_for_entity(entity_type, entity_name, hop=0)
                     # Follow entity↔entity edges to discover related entities
+                    # Skip Day-typed neighbours: they fan out to a whole day's
+                    # memories and flood day_ids with unrelated results.
                     try:
                         related = self.graph.get_related_entities(entity_type, entity_name)
                         for rel in related:
-                            _add_memories_for_entity(rel["type"], rel["name"])
+                            if rel["type"] == "Day":
+                                continue
+                            _add_memories_for_entity(rel["type"], rel["name"], hop=1)
                     except Exception as e:
                         log.debug(
                             "graph traversal failed",
@@ -415,11 +558,13 @@ class MemoryEngine:
                     etype = entity["type"]
                     if etype == "Day":
                         continue  # Day entities fan out too broadly
-                    _add_memories_for_entity(etype, ename)
+                    _add_memories_for_entity(etype, ename, hop=1)
                     try:
                         related = self.graph.get_related_entities(etype, ename)
                         for rel in related:
-                            _add_memories_for_entity(rel["type"], rel["name"])
+                            if rel["type"] == "Day":
+                                continue
+                            _add_memories_for_entity(rel["type"], rel["name"], hop=2)
                     except Exception as e:
                         log.debug(
                             "graph pivot traversal failed",
@@ -434,11 +579,11 @@ class MemoryEngine:
             # unrelated memory to the top. Rank (1-indexed) comes from the
             # LLM output order so the most-confident pick wins ties.
             for idx, (etype, ename) in enumerate(referent_names, start=1):
-                _add_memories_for_entity(etype, ename, referent_rank_value=idx)
+                _add_memories_for_entity(etype, ename, hop=0, referent_rank_value=idx)
                 try:
                     related = self.graph.get_related_entities(etype, ename)
                     for rel in related:
-                        _add_memories_for_entity(rel["type"], rel["name"])
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=1)
                 except Exception as e:
                     log.debug(
                         "referent traversal failed",
@@ -448,18 +593,25 @@ class MemoryEngine:
             # Path 4: semantic-to-graph bridge
             # Use semantic hits to discover entities, then follow graph
             # edges (including entity↔entity) to find connected memories.
+            # Skip Day entities: almost every memory is linked to one, and
+            # pulling in a whole day's memories via an incidental date link
+            # on a keyword candidate floods day_ids with unrelated results.
             bridge_source_ids = list(candidates.keys())
             for mem_id in bridge_source_ids:
                 entities = self.graph.get_entities_for_memory(mem_id)
                 for entity in entities:
                     ename = entity["name"]
                     etype = entity["type"]
-                    _add_memories_for_entity(etype, ename)
+                    if etype == "Day":
+                        continue
+                    _add_memories_for_entity(etype, ename, hop=1)
                     # Follow entity↔entity edges from bridge entities
                     try:
                         related = self.graph.get_related_entities(etype, ename)
                         for rel in related:
-                            _add_memories_for_entity(rel["type"], rel["name"])
+                            if rel["type"] == "Day":
+                                continue
+                            _add_memories_for_entity(rel["type"], rel["name"], hop=2)
                     except Exception as e:
                         log.debug(
                             "graph bridge traversal failed",
@@ -538,22 +690,36 @@ class MemoryEngine:
             graph_boost = self.config.recall.graph_boost
             relevance_map: dict[str, float] = {}
             for mem_id in filtered:
+                cosine = cosine_map.get(mem_id, 0.0)
                 if mem_id in day_ids:
                     # Day entity match is an exact structural constraint —
                     # the memory happened on the queried date. High relevance.
-                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.85)
+                    relevance_map[mem_id] = max(cosine, 0.85)
                 elif mem_id in referent_ids:
                     # LLM reasoned about this referent specifically. Floor
                     # deliberately above the 1.0 ceiling of min-max-normalised
                     # cross-encoder scores — otherwise unrelated CE hits
                     # routinely outrank the resolved person's memories on
                     # normalisation artefacts alone.
-                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), 0.95)
-                elif mem_id in graph_ids:
-                    # Other graph matches: use graph_boost as floor
-                    relevance_map[mem_id] = max(cosine_map.get(mem_id, 0.0), graph_boost)
+                    relevance_map[mem_id] = max(cosine, 0.95)
                 elif mem_id in keyword_ids:
-                    relevance_map[mem_id] = cosine_map.get(mem_id, 0.0)
+                    # Summary directly contains stop-word-filtered query terms.
+                    # This is the highest-confidence structural signal: the
+                    # memory's own text mentions what was asked about.
+                    # Give it a high floor so it beats pure graph expansions
+                    # that carry no query-term signal at all.
+                    relevance_map[mem_id] = max(cosine, 0.85)
+                elif mem_id in graph_ids:
+                    # Graph-expanded but no keyword match.
+                    # hop=0: query word matched an entity name (moderate floor).
+                    # hop>=1: farther expansion — rely on cosine similarity so
+                    # unrelated high-importance memories don't float to the top
+                    # just because the graph connected them three hops away.
+                    hop = candidate_hop.get(mem_id, 2)
+                    if hop == 0:
+                        relevance_map[mem_id] = max(cosine, graph_boost)
+                    else:
+                        relevance_map[mem_id] = cosine
                 else:
                     relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
 
