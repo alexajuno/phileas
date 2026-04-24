@@ -1,13 +1,11 @@
 """Stratified sampler for the extraction eval gold set.
 
-Walks ~/.claude/projects/**/*.jsonl, reconstructs the exact text the Phileas
-Stop hook would enqueue for each session (via gather_last_exchange), classifies
-each into one of eight strata, then samples per-stratum to hit the targets
-specified in docs/phileas/ingest-eval/01-gold-set.md.
+Walks ~/.claude/projects/**/*.jsonl, reconstructs the last user+assistant
+turn of each session, classifies each into one of eight strata, then samples
+per-stratum to hit the targets specified in docs/phileas/ingest-eval/01-gold-set.md.
 
 Writes:
-  <out>/transcripts/<id>.txt       -- the reconstructed text (byte-identical to
-                                      what the daemon ingest worker sees)
+  <out>/transcripts/<id>.txt       -- the reconstructed text
   <out>/labels/<id>.yaml            -- skeleton label file with expected_memories: []
   <out>/sampling.md                 -- provenance: which session each sample came from
 
@@ -23,11 +21,67 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from phileas.hooks.memorize import gather_last_exchange
+
+def _extract_text(content) -> str:
+    """Pull plain text out of a message content field (string or block list)."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            text = block.get("text", "")
+            if text:
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def gather_last_exchange(transcript_path: Path) -> str:
+    """Walk the transcript backwards, stitch last user+assistant text turn."""
+    if not transcript_path.exists():
+        return ""
+
+    with transcript_path.open() as f:
+        records = [json.loads(line) for line in f if line.strip()]
+
+    user_text = ""
+    assistant_parts: list[str] = []
+    for rec in reversed(records):
+        if rec.get("type") not in ("user", "assistant"):
+            continue
+        msg = rec.get("message")
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        text = _extract_text(msg.get("content"))
+        if not text:
+            continue
+        if role == "assistant":
+            assistant_parts.append(text)
+        elif role == "user":
+            user_text = text
+            break
+
+    if not user_text and not assistant_parts:
+        return ""
+
+    assistant_text = "\n".join(reversed(assistant_parts))
+
+    pieces = []
+    if user_text:
+        pieces.append(f"User: {user_text}")
+    if assistant_text:
+        pieces.append(f"Assistant: {assistant_text}")
+    return "\n\n".join(pieces)
+
 
 # Signatures of Phileas's own internal LLM prompts. Historical: older eval
 # sessions were recorded while Phileas still spawned `claude -p` sub-calls for

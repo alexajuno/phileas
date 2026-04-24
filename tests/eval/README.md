@@ -32,7 +32,7 @@ uv run python -m tests.eval.sampler \
   --seed 42
 ```
 
-The sampler mirrors `phileas.hooks.memorize.gather_last_exchange()` exactly — the string it writes to `gold/transcripts/<id>.txt` is byte-for-byte what the daemon's ingest worker would pass to `extract_memories()`.
+The sampler reconstructs the last user+assistant turn of each transcript using `gather_last_exchange()` (inlined from the historical Stop-hook implementation) and writes it byte-for-byte to `gold/transcripts/<id>.txt`.
 
 It also writes skeleton label YAML files with `expected_memories: []` for hand-labeling.
 

@@ -137,7 +137,6 @@ def _find_phileas_command() -> str | None:
 # declared in pyproject.toml under [project.scripts].
 HOOK_COMMANDS = {
     "UserPromptSubmit": "phileas-hook recall",
-    "Stop": "phileas-hook memorize",
 }
 
 
