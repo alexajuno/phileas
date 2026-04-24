@@ -11,6 +11,7 @@ Tools:
   - relate: create a graph edge between entities
   - about: get memories connected to an entity
   - timeline: get memories in a date range
+  - recall_recent: get recent memories (last N days) for temporal queries
   - recall with memory_type="profile": get profile-type memories (ranked)
   - ingest_session: parse a JSONL session for Claude Code to extract from
   - mark_session_done: mark a session as processed
@@ -32,9 +33,14 @@ from phileas.vector import VectorStore
 mcp = FastMCP(
     "phileas",
     instructions=(
-        "Phileas is a long-term memory companion. "
-        "Use 'memorize' to store important information about the user, "
-        "and 'recall' to retrieve relevant memories."
+        "Phileas is a long-term memory companion. Choose tools by query type:\n"
+        "- recall(query): semantic search — for topic/entity questions ('what did I say about X')\n"
+        "- recall_recent(days): recent memories by date — use FIRST for time-relative questions "
+        "('recently', 'yesterday', 'last chat', 'last night', 'last session', 'last time we talked')\n"
+        "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
+        "- timeline(start, end): memories across a date range\n"
+        "- about(name): all memories linked to a person/entity — for 'who is X' questions\n"
+        "- memorize(): store new memories; prefer memorize_batch() for multiple at once"
     ),
 )
 
@@ -305,6 +311,37 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
     lines = [f"Memories for {range_str} ({len(items)} found):"]
     for item in items:
         lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def recall_recent(days: int = 7, limit: int = 30) -> str:
+    """Return memories from the last N days, newest first.
+
+    Use for time-relative queries: 'recently', 'yesterday', 'last chat',
+    'last night', 'last session', 'last time we talked'. Call this before
+    recall() when the question has a temporal anchor.
+
+    Args:
+        days: How many days back to look (default 7).
+        limit: Max memories to return (default 30).
+    """
+    from datetime import date as _date
+    from datetime import timedelta
+
+    end = _date.today()
+    start = end - timedelta(days=days)
+    items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
+    items = items[:limit]
+    if not items:
+        return f"No memories found in the last {days} day(s)."
+
+    lines = [f"Recent memories (last {days} day(s), {len(items)} found):"]
+    for item in items:
+        imp = item.get("importance", "?")
+        created = item.get("created_at", "")
+        created_str = f", {created[:10]}" if created else ""
+        lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}{created_str}) {item['summary']}")
     return "\n".join(lines)
 
 

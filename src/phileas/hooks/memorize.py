@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-from phileas.hooks._client import call_daemon, truncate
+from phileas.hooks._client import call_daemon
 
 TIMEOUT_SECONDS = 5.0
 
@@ -95,7 +95,7 @@ def format_ok(result: object) -> str:
     if isinstance(result, dict) and result.get("queued") is False:
         reason = result.get("reason", "unknown")
         return f"<phileas-memorize>\nNot queued: {reason}.\n</phileas-memorize>"
-    return f"<phileas-memorize>\nAuto-memorize ran. Response: {truncate(str(result), 400)}\n</phileas-memorize>"
+    return f"<phileas-memorize>\nAuto-memorize ran. Response: {result!r}\n</phileas-memorize>"
 
 
 def format_error(msg: str) -> str:
