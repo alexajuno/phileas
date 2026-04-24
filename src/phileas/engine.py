@@ -85,7 +85,7 @@ class MemoryEngine:
         self.config = config if config is not None else load_config()
 
         # Usage tracking (records daemon op metrics; no LLM dependency)
-        from phileas.llm.usage import UsageTracker
+        from phileas.stats.usage import UsageTracker
 
         usage_db = self.config.home / "usage.db"
         self._usage_tracker = UsageTracker(usage_db)
