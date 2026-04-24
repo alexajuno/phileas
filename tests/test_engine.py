@@ -79,6 +79,38 @@ def test_about_gates_expansion(tmp_dir):
     assert expanded_ids == {m1["id"], m2["id"]}
 
 
+def test_about_memory_type_filter(tmp_dir):
+    """about() narrows results by memory_type when given one.
+
+    The user entity accumulates direct-ABOUT edges across every type because
+    they're the implicit author. A type filter lets callers isolate the
+    identity-shaped subset (profile/behavior/reflection/...) from the
+    first-person activity log (event/knowledge/...).
+    """
+    engine = _make_engine(tmp_dir)
+    profile_m = engine.memorize(
+        summary="Giao's birthday is April 10",
+        memory_type="profile",
+        importance=6,
+        entities=[{"name": "Giao", "type": "Person"}],
+    )
+    event_m = engine.memorize(
+        summary="Giao had coffee at 9am",
+        memory_type="event",
+        importance=4,
+        entities=[{"name": "Giao", "type": "Person"}],
+    )
+
+    all_ids = {r["id"] for r in engine.about("Giao")}
+    assert all_ids == {profile_m["id"], event_m["id"]}
+
+    profile_only = {r["id"] for r in engine.about("Giao", memory_type="profile")}
+    assert profile_only == {profile_m["id"]}
+
+    both = {r["id"] for r in engine.about("Giao", memory_type=["profile", "event"])}
+    assert both == {profile_m["id"], event_m["id"]}
+
+
 def test_forget(tmp_dir):
     engine = _make_engine(tmp_dir)
     result = engine.memorize(summary="old fact", importance=3)

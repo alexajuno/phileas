@@ -1012,7 +1012,13 @@ class MemoryEngine:
     # about
     # ------------------------------------------------------------------
 
-    def about(self, name: str, entity_type: str | None = None, expand: bool = False) -> list[dict]:
+    def about(
+        self,
+        name: str,
+        entity_type: str | None = None,
+        expand: bool = False,
+        memory_type: str | list[str] | None = None,
+    ) -> list[dict]:
         """Return memories connected to an entity node in the graph.
 
         By default only returns memories directly linked via ABOUT edges.
@@ -1020,9 +1026,19 @@ class MemoryEngine:
         REL neighbors (WORKS_AT, KNOWS, BUILDS, …). Expansion fans out to
         most of the DB for hub entities, so keep it off unless you
         explicitly want neighbor collateral.
+
+        Pass ``memory_type`` (a single type or list) to narrow the result by
+        memory type. Useful for the user entity, where identity-shaped types
+        (profile/behavior/reflection/emotional/pattern) separate durable
+        traits from the first-person activity log.
         """
+        type_filter: set[str] | None = None
+        if memory_type is not None:
+            type_filter = {memory_type} if isinstance(memory_type, str) else set(memory_type)
+
         with OpTimer(log, "about", entity=name, entity_type=entity_type) as timer:
             timer.extra["expand"] = expand
+            timer.extra["memory_type_filter"] = sorted(type_filter) if type_filter else None
             # Search graph for the entity
             node_hits = self.graph.search_nodes(name)
             if entity_type:
@@ -1066,6 +1082,9 @@ class MemoryEngine:
                     log.debug(
                         "graph traversal failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}}
                     )
+
+            if type_filter is not None:
+                items = [it for it in items if it.memory_type in type_filter]
 
             items.sort(
                 key=lambda it: (

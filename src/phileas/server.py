@@ -273,7 +273,12 @@ def relate(
 
 
 @mcp.tool()
-def about(name: str, entity_type: str | None = None, expand: bool = False) -> str:
+def about(
+    name: str,
+    entity_type: str | None = None,
+    expand: bool = False,
+    memory_type: str | list[str] | None = None,
+) -> str:
     """Get memories connected to an entity in the knowledge graph.
 
     Args:
@@ -283,8 +288,13 @@ def about(name: str, entity_type: str | None = None, expand: bool = False) -> st
             reached via REL edges (WORKS_AT, KNOWS, BUILDS, …). Default
             False — for hub entities (the user, close collaborators)
             one-hop fanout covers most of the DB. Use sparingly.
+        memory_type: Optional filter. Pass a single type (e.g. "profile")
+            or a list (e.g. ["profile", "behavior", "reflection"]). Useful
+            for the user entity: the identity-shaped subset (profile,
+            behavior, reflection, emotional, pattern) answers "who are they"
+            rather than returning the full first-person activity log.
     """
-    items = engine.about(name, entity_type=entity_type, expand=expand)
+    items = engine.about(name, entity_type=entity_type, expand=expand, memory_type=memory_type)
     if not items:
         return f"No memories found for '{name}'."
 
