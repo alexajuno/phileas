@@ -183,7 +183,7 @@ def recall(
         score_str = f"score={item['score']:.2f}" if item.get("score") else ""
         imp_str = f"importance={item['importance']}"
         created = item.get("created_at")
-        created_str = f"created={created[:10]}" if created else ""
+        created_str = f"created={created[:19]}" if created else ""
         meta = ", ".join(filter(None, [imp_str, score_str, created_str]))
         lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']} ({meta})")
     return "\n".join(lines)
@@ -321,6 +321,31 @@ def reflect(date: str | None = None) -> str:
     lines = [f"Extracted {len(insights)} insight(s):"]
     for ins in insights:
         lines.append(f"  [{ins.get('type', 'reflection')}] {ins['summary']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def list_day_memories(date: str | None = None) -> str:
+    """List the day's active memories — the input for agent-driven reflection.
+
+    Returns every active memory anchored to the given date, with no window
+    expansion. The `phileas-reflect` subagent reads this, synthesizes 1–5
+    reflection memories, and writes them back via `memorize(memory_type="reflection")`.
+
+    Args:
+        date: Date to list (YYYY-MM-DD). Defaults to today.
+    """
+    from datetime import date as _date
+
+    target = date or _date.today().isoformat()
+    items = engine.timeline(target, window=0)
+    if not items:
+        return f"No memories for {target}."
+
+    lines = [f"Memories for {target} ({len(items)} found):"]
+    for item in items:
+        imp = item.get("importance", "?")
+        lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}")
     return "\n".join(lines)
 
 
