@@ -37,5 +37,13 @@ def memorize() -> None:
     sys.exit(main())
 
 
+@app.command("session-start")
+def session_start() -> None:
+    """SessionStart hook: direct the session to drain the pending-event queue."""
+    from phileas.hooks.session_start import main
+
+    sys.exit(main())
+
+
 if __name__ == "__main__":
     app()
