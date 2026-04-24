@@ -248,7 +248,7 @@ class MemoryEngine:
     def recall(
         self,
         query: str,
-        top_k: int = 10,
+        top_k: int | None = None,
         memory_type: str | None = None,
         min_importance: int | None = None,
         _skip_llm: bool = False,
@@ -264,11 +264,13 @@ class MemoryEngine:
         from time import perf_counter
 
         _t0 = perf_counter()
+        _effective_top_k = top_k if top_k is not None else 9999
+
         with OpTimer(
             log,
             "recall",
             query=query,
-            top_k=top_k,
+            top_k=_effective_top_k,
             memory_type=memory_type,
             min_importance=min_importance,
         ) as timer:
@@ -289,7 +291,7 @@ class MemoryEngine:
 
             # Path 1: keyword search (SQLite) — run for each query variant
             for q in queries:
-                keyword_hits = self.db.search_by_keyword(q, top_k=top_k * 3)
+                keyword_hits = self.db.search_by_keyword(q, top_k=_effective_top_k * 3)
                 for item in keyword_hits:
                     candidates[item.id] = item
                     keyword_ids.add(item.id)
@@ -311,7 +313,7 @@ class MemoryEngine:
             for q in queries:
                 if not all_type_ids:
                     break
-                semantic_hits = self.vector.search(q, top_k=top_k * 3)
+                semantic_hits = self.vector.search(q, top_k=_effective_top_k * 3)
                 for mem_id, sim in semantic_hits:
                     if sim < self.config.recall.similarity_floor:
                         continue
@@ -392,7 +394,39 @@ class MemoryEngine:
                             extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
                         )
 
-            # Path 3b: LLM-proposed referents (pronoun / kinship resolution)
+            # Path 3b: Memory pivot — graph-first expansion.
+            # For each memory found via entity lookup, discover ALL its entities,
+            # then pull ALL memories of those entities. This is the key graph-first
+            # mechanism: "badminton" → Activity:badminton → memories about badminton
+            # → those memories' entities (Ownego, Giang Vo, ...) → all their memories.
+            # Catches non-obvious connections that query embeddings miss.
+            graph_pivot_snapshot = set(graph_ids)
+            for mem_id in list(graph_pivot_snapshot):
+                try:
+                    pivot_entities = self.graph.get_entities_for_memory(mem_id)
+                except Exception as e:
+                    log.debug(
+                        "graph pivot entity lookup failed",
+                        extra={"op": "recall", "data": {"mem_id": mem_id, "error": str(e)}},
+                    )
+                    continue
+                for entity in pivot_entities:
+                    ename = entity["name"]
+                    etype = entity["type"]
+                    if etype == "Day":
+                        continue  # Day entities fan out too broadly
+                    _add_memories_for_entity(etype, ename)
+                    try:
+                        related = self.graph.get_related_entities(etype, ename)
+                        for rel in related:
+                            _add_memories_for_entity(rel["type"], rel["name"])
+                    except Exception as e:
+                        log.debug(
+                            "graph pivot traversal failed",
+                            extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
+                        )
+
+            # Path 3c: LLM-proposed referents (pronoun / kinship resolution)
             # Fires only when stage 0 flagged the query as ambiguous.
             # Only the directly resolved entity gets the referent boost —
             # neighbours traversed via REL edges ride the regular graph_boost,
@@ -412,9 +446,9 @@ class MemoryEngine:
                     )
 
             # Path 4: semantic-to-graph bridge
-            # Use top semantic hits to discover entities, then follow graph
+            # Use semantic hits to discover entities, then follow graph
             # edges (including entity↔entity) to find connected memories.
-            bridge_source_ids = list(candidates.keys())[:top_k]
+            bridge_source_ids = list(candidates.keys())
             for mem_id in bridge_source_ids:
                 entities = self.graph.get_entities_for_memory(mem_id)
                 for entity in entities:
@@ -436,7 +470,7 @@ class MemoryEngine:
             # Searches the raw_memories ChromaDB collection — catches details
             # lost during summarization (names, places, specific phrases).
             for q in queries:
-                raw_hits = self.vector.search_raw(q, top_k=top_k * 3)
+                raw_hits = self.vector.search_raw(q, top_k=_effective_top_k * 3)
                 for mem_id, sim in raw_hits:
                     if sim < self.config.recall.similarity_floor:
                         continue
@@ -478,7 +512,7 @@ class MemoryEngine:
             structurally_matched = keyword_ids | graph_ids
 
             # Cosine similarity for structurally-matched candidates
-            cosine_hits = self.vector.search(query, top_k=top_k * 5)
+            cosine_hits = self.vector.search(query, top_k=_effective_top_k * 5)
             cosine_map = {mid: sim for mid, sim in cosine_hits}
 
             # Cross-encoder for candidates not already validated by
@@ -577,13 +611,19 @@ class MemoryEngine:
             # Build MMR candidates with relevance scores
             mmr_candidates = [{"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)} for mem_id in candidate_ids]
 
-            # Select diverse subset via MMR
-            selected = mmr_select(
-                mmr_candidates,
-                sim_matrix,
-                top_k=top_k,
-                lambda_param=self.config.recall.mmr_lambda,
-            )
+            # When top_k is None (graph-first / no cap mode), skip MMR and return
+            # all filtered candidates. MMR is a diversity-selection tool designed
+            # for a fixed-size result set — without a cap it would just return
+            # everything anyway, so skip the O(n²) matrix work.
+            if top_k is None:
+                selected = mmr_candidates
+            else:
+                selected = mmr_select(
+                    mmr_candidates,
+                    sim_matrix,
+                    top_k=top_k,
+                    lambda_param=self.config.recall.mmr_lambda,
+                )
 
             # ----------------------------------------------------------
             # Final scoring with importance/recency as tiebreakers
@@ -644,7 +684,7 @@ class MemoryEngine:
                 mean = sum(r.get("score", 0.0) for r in results) / len(results) if results else None
                 self._metrics.record_recall(
                     query_len=len(query),
-                    top_k=top_k,
+                    top_k=_effective_top_k,
                     returned=len(results),
                     top1_score=top1,
                     mean_score=mean,

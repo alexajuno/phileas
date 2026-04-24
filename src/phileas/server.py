@@ -164,23 +164,20 @@ def context(top_k: int = 10, memory_type: str | None = None) -> str:
 @mcp.tool()
 def recall(
     query: str,
-    top_k: int = 5,
     memory_type: str | None = None,
     min_importance: int | None = None,
 ) -> str:
     """Retrieve memories relevant to a query.
 
+    Graph-first retrieval: entity lookup → memory pivot (memories → entities → memories)
+    → semantic supplement. Returns all relevant memories with no hard cap.
+
     Args:
         query: What to search for (natural language or keywords).
-        top_k: Maximum number of memories to return.
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
         min_importance: Only return memories with importance >= this value.
     """
-    # Stage-0 query analysis (rewrite + optional referent resolution) runs
-    # here so ambiguous pronoun/kinship queries from the live conversation
-    # reach the right entity. Gated internally on `llm.available`, so a
-    # keyless MCP environment still works — it just skips the LLM hop.
-    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance)
+    items = engine.recall(query, top_k=None, memory_type=memory_type, min_importance=min_importance)
     if not items:
         return "No relevant memories found."
 
@@ -315,8 +312,8 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
 
 
 @mcp.tool()
-def recall_recent(days: int = 7, limit: int = 30) -> str:
-    """Return memories from the last N days, newest first.
+def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5) -> str:
+    """Return top memories per day for the last N days, grouped newest-day first.
 
     Use for time-relative queries: 'recently', 'yesterday', 'last chat',
     'last night', 'last session', 'last time we talked'. Call this before
@@ -324,24 +321,36 @@ def recall_recent(days: int = 7, limit: int = 30) -> str:
 
     Args:
         days: How many days back to look (default 7).
-        limit: Max memories to return (default 30).
+        top_per_day: Max memories to show per day (default 10), sorted by importance.
+        min_importance: Only include memories at or above this importance (default 5).
+                        If no memories pass the threshold for a day, all are shown.
     """
+    from collections import defaultdict
     from datetime import date as _date
     from datetime import timedelta
 
     end = _date.today()
     start = end - timedelta(days=days)
     items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
-    items = items[:limit]
     if not items:
         return f"No memories found in the last {days} day(s)."
 
-    lines = [f"Recent memories (last {days} day(s), {len(items)} found):"]
+    by_day: dict[str, list[dict]] = defaultdict(list)
     for item in items:
-        imp = item.get("importance", "?")
-        created = item.get("created_at", "")
-        created_str = f", {created[:10]}" if created else ""
-        lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}{created_str}) {item['summary']}")
+        day = (item.get("created_at") or "")[:10]
+        by_day[day].append(item)
+
+    lines = [f"Recent memories (last {days} day(s)):"]
+    for day in sorted(by_day.keys(), reverse=True):
+        day_items = by_day[day]
+        filtered = [i for i in day_items if (i.get("importance") or 0) >= min_importance]
+        if not filtered:
+            filtered = day_items
+        top = sorted(filtered, key=lambda x: x.get("importance") or 0, reverse=True)[:top_per_day]
+        lines.append(f"\n{day} ({len(day_items)} total, showing {len(top)}):")
+        for item in top:
+            imp = item.get("importance", "?")
+            lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}")
     return "\n".join(lines)
 
 
