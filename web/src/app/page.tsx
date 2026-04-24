@@ -1,11 +1,44 @@
 import { MemoryList } from "@/components/memory-list";
-import { todayLocal } from "@/lib/day";
+import { isValidDay, todayLocal } from "@/lib/day";
 import { fetchMemoriesForDay } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
-  const day = todayLocal();
+type SearchParams = Promise<{
+  day?: string | string[];
+  type?: string | string[];
+  min?: string | string[];
+}>;
+
+function firstString(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const sp = await searchParams;
+  const today = todayLocal();
+
+  const requestedDay = firstString(sp.day);
+  const day =
+    requestedDay && isValidDay(requestedDay) && requestedDay <= today
+      ? requestedDay
+      : today;
+
+  const requestedType = firstString(sp.type);
+  const initialType =
+    requestedType && requestedType.length > 0 ? requestedType : null;
+
+  const requestedMin = firstString(sp.min);
+  const parsedMin = requestedMin ? Number.parseInt(requestedMin, 10) : NaN;
+  const initialMin =
+    Number.isFinite(parsedMin) && parsedMin >= 1 && parsedMin <= 10
+      ? parsedMin
+      : 1;
+
   let items: Awaited<ReturnType<typeof fetchMemoriesForDay>> = [];
   let error: string | null = null;
   try {
@@ -38,7 +71,12 @@ export default function Page() {
           </p>
         </div>
       ) : (
-        <MemoryList initialDay={day} initialItems={items} />
+        <MemoryList
+          initialDay={day}
+          initialItems={items}
+          initialType={initialType}
+          initialMin={initialMin}
+        />
       )}
     </div>
   );

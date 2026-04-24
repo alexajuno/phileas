@@ -13,14 +13,39 @@ import type { MemoryItem } from "@/lib/types";
 type Props = {
   initialDay: string;
   initialItems: MemoryItem[];
+  initialType: string | null;
+  initialMin: number;
 };
 
 const POLL_MS = 20_000;
 
-export function MemoryList({ initialDay, initialItems }: Props) {
-  const [day, setDay] = useState(initialDay);
+function buildQuery({
+  day,
+  type,
+  min,
+}: {
+  day: string;
+  type: string | null;
+  min: number;
+}): string {
+  const params = new URLSearchParams();
+  if (day !== todayLocal()) params.set("day", day);
+  if (type) params.set("type", type);
+  if (min > 1) params.set("min", String(min));
+  const q = params.toString();
+  return q ? `?${q}` : window.location.pathname;
+}
+
+export function MemoryList({
+  initialDay,
+  initialItems,
+  initialType,
+  initialMin,
+}: Props) {
+  const [day, setDayState] = useState(initialDay);
   const [items, setItems] = useState<MemoryItem[]>(initialItems);
-  const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [selectedType, setSelectedTypeState] = useState<string | null>(initialType);
+  const [minImportance, setMinImportanceState] = useState<number>(initialMin);
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,6 +55,40 @@ export function MemoryList({ initialDay, initialItems }: Props) {
 
   const today = todayLocal();
   const isToday = day === today;
+
+  const syncUrl = useCallback(
+    (next: { day: string; type: string | null; min: number }) => {
+      if (typeof window === "undefined") return;
+      window.history.replaceState(null, "", buildQuery(next));
+    },
+    [],
+  );
+
+  const setDay = useCallback(
+    (d: string) => {
+      setDayState(d);
+      setSelectedTypeState(null);
+      setMinImportanceState(1);
+      syncUrl({ day: d, type: null, min: 1 });
+    },
+    [syncUrl],
+  );
+
+  const setSelectedType = useCallback(
+    (t: string | null) => {
+      setSelectedTypeState(t);
+      syncUrl({ day, type: t, min: minImportance });
+    },
+    [day, minImportance, syncUrl],
+  );
+
+  const setMinImportance = useCallback(
+    (m: number) => {
+      setMinImportanceState(m);
+      syncUrl({ day, type: selectedType, min: m });
+    },
+    [day, selectedType, syncUrl],
+  );
 
   const load = useCallback(
     async (
@@ -81,7 +140,6 @@ export function MemoryList({ initialDay, initialItems }: Props) {
       setLastLoaded(new Date());
       return;
     }
-    setSelectedType(null);
     load(day);
   }, [day, load]);
 
@@ -107,18 +165,23 @@ export function MemoryList({ initialDay, initialItems }: Props) {
 
   const visibleItems = useMemo(
     () =>
-      selectedType
-        ? items.filter((m) => m.memory_type === selectedType)
-        : items,
-    [items, selectedType],
+      items.filter(
+        (m) =>
+          (!selectedType || m.memory_type === selectedType) &&
+          m.importance >= minImportance,
+      ),
+    [items, selectedType, minImportance],
   );
 
-  // Clear the filter automatically if no items match (e.g. after a reload).
-  useEffect(() => {
-    if (selectedType && visibleItems.length === 0) {
-      setSelectedType(null);
-    }
-  }, [selectedType, visibleItems.length]);
+  const clearFilters = useCallback(() => {
+    setSelectedTypeState(null);
+    setMinImportanceState(1);
+    syncUrl({ day, type: null, min: 1 });
+  }, [day, syncUrl]);
+
+  const filtersActive = selectedType !== null || minImportance > 1;
+  const filtersHideAll =
+    items.length > 0 && visibleItems.length === 0 && filtersActive;
 
   const lastLoadedLabel = useMemo(
     () =>
@@ -157,6 +220,8 @@ export function MemoryList({ initialDay, initialItems }: Props) {
         items={items}
         selectedType={selectedType}
         onSelect={setSelectedType}
+        minImportance={minImportance}
+        onMinChange={setMinImportance}
       />
 
       {error && (
@@ -167,6 +232,17 @@ export function MemoryList({ initialDay, initialItems }: Props) {
 
       {items.length === 0 && !error ? (
         <EmptyState day={day} isToday={isToday} />
+      ) : filtersHideAll ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+          No memories match these filters.{" "}
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="font-medium text-foreground underline-offset-2 hover:underline"
+          >
+            Clear filters
+          </button>
+        </div>
       ) : (
         <ul className="space-y-2.5">
           <AnimatePresence initial={false}>
