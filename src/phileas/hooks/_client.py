@@ -26,7 +26,7 @@ def daemon_port() -> int | None:
         return None
 
 
-def call_daemon(method: str, params: dict, timeout: float) -> tuple[bool, object]:
+def call_daemon(method: str, params: dict, timeout: float = 8.0) -> tuple[bool, object]:
     """POST to the daemon. Returns (ok, payload-or-error-string).
 
     A False result with a string error message is the contract -- callers
@@ -52,10 +52,3 @@ def call_daemon(method: str, params: dict, timeout: float) -> tuple[bool, object
     if data.get("ok"):
         return True, data.get("result")
     return False, str(data.get("error", "unknown daemon error"))
-
-
-def truncate(s: str, max_len: int) -> str:
-    s = s.strip()
-    if len(s) <= max_len:
-        return s
-    return s[: max_len - 1].rstrip() + "…"

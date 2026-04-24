@@ -14,12 +14,9 @@ from __future__ import annotations
 import json
 import sys
 
-from phileas.hooks._client import call_daemon, truncate
+from phileas.hooks._client import call_daemon
 
 TOP_K = 10
-MAX_QUERY_CHARS = 2000
-MAX_SUMMARY_CHARS = 400
-TIMEOUT_SECONDS = 8.0
 
 
 def read_prompt() -> str:
@@ -51,7 +48,7 @@ def format_memories(memories: list[dict]) -> str:
         score_str = f", score={score:.2f}" if isinstance(score, (int, float)) else ""
         created = m.get("created_at")
         created_str = f", created={created[:10]}" if isinstance(created, str) else ""
-        summary = truncate(m.get("summary", ""), MAX_SUMMARY_CHARS)
+        summary = (m.get("summary") or "").strip()
         lines.append(f"  [{mid}] [{mtype}] (imp={imp}{score_str}{created_str}) {summary}")
     lines.append("</phileas-recall>")
     return "\n".join(lines)
@@ -86,11 +83,9 @@ def main() -> int:
     if not prompt:
         return 0
 
-    query = truncate(prompt, MAX_QUERY_CHARS)
     ok, payload = call_daemon(
         "recall",
-        {"query": query, "top_k": TOP_K, "_skip_llm": True},
-        timeout=TIMEOUT_SECONDS,
+        {"query": prompt, "top_k": TOP_K, "_skip_llm": True},
     )
 
     if not ok:
@@ -106,7 +101,7 @@ def main() -> int:
 
     # Best-effort pending-queue nudge. Silent on any failure — pending status
     # is advisory, not critical path, so we never want it to break recall.
-    ok_counts, counts_payload = call_daemon("event_counts", {}, timeout=2.0)
+    ok_counts, counts_payload = call_daemon("event_counts", {})
     if ok_counts and isinstance(counts_payload, dict):
         pending = int(counts_payload.get("pending", 0) or 0)
         failed = int(counts_payload.get("failed", 0) or 0)

@@ -34,9 +34,10 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from phileas.config import load_config
 from phileas.llm import LLMClient
 from phileas.llm.extraction import extract_memories
+
+from phileas.config import load_config
 from tests.eval.match import (
     _collect_entities,
     _collect_relationships,
