@@ -21,7 +21,6 @@ This starts the Phileas MCP server using stdio transport. The server exposes the
 | `timeline` | Get memories in a date range |
 | `ingest_session` | Parse a Claude Code JSONL session file for memory extraction |
 | `mark_session_done` | Mark a session as processed |
-| `consolidate` | Find clusters of similar memories for summarization |
 | `status` | Get system health and statistics |
 
 ## Claude Code
@@ -203,17 +202,6 @@ Mark a session as processed after memory extraction.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `session_path` | string | yes | Same path passed to `ingest_session` |
-
-### consolidate
-
-Find clusters of similar tier-2 memories for summarization.
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `min_cluster_size` | int | no | `3` | Minimum memories per cluster |
-| `max_clusters` | int | no | `10` | Maximum clusters to return |
 
 ### status
 

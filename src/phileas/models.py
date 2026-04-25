@@ -1,10 +1,4 @@
-"""Core data models for Phileas memory system.
-
-Three-tier memory hierarchy:
-  Tier 1: JSONL pointers (processed_sessions table)
-  Tier 2: Extracted facts (memory_items table + ChromaDB + KuzuDB)
-  Tier 3: Consolidated knowledge (same tables, tier=3)
-"""
+"""Core data models for Phileas memory system."""
 
 import uuid
 from dataclasses import dataclass, field
@@ -41,12 +35,11 @@ class MemoryItem:
     summary: str = ""
     memory_type: MemoryType = "knowledge"
     importance: int = 5  # 1-10 scale
-    tier: int = 2  # 2=long-term, 3=consolidated
     status: MemoryStatus = "active"
     access_count: int = 0
     last_accessed: datetime | None = None
     daily_ref: str | None = None
-    consolidated_into: str | None = None  # memory ID of tier-3 parent
+    consolidated_into: str | None = None  # memory ID of a summary/parent, if any
     reinforcement_count: int = 0  # how many similar memories arrived after this one
     last_reinforced: datetime | None = None
     raw_text: str | None = None  # verbatim source text (conversation snippet, etc.)

@@ -9,7 +9,6 @@ def test_memory_item_defaults():
     assert item.memory_type == "knowledge"
     assert item.importance == 5
     assert item.access_count == 0
-    assert item.tier == 2
     assert item.status == "active"
     assert item.last_accessed is None
     assert item.consolidated_into is None
@@ -21,7 +20,6 @@ def test_memory_item_custom_fields():
         summary="identity fact",
         memory_type="profile",
         importance=9,
-        tier=3,
     )
     assert item.importance == 9
-    assert item.tier == 3
+    assert item.memory_type == "profile"

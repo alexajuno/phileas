@@ -31,8 +31,7 @@ def print_status(stats: dict) -> None:
     table.add_column("Value", style="bold")
 
     table.add_row("Total memories", str(stats.get("total", 0)))
-    table.add_row("Active tier-2", str(stats.get("tier2", 0)))
-    table.add_row("Active tier-3", str(stats.get("tier3", 0)))
+    table.add_row("Active", str(stats.get("active", 0)))
     table.add_row("Archived", str(stats.get("archived", 0)))
     table.add_row("Vector embeddings", str(stats.get("vector_count", 0)))
     table.add_row("Graph nodes", str(stats.get("graph_nodes", 0)))
@@ -88,7 +87,6 @@ def print_memory_detail(item: dict) -> None:
     table.add_row("Summary", item.get("summary", ""))
     table.add_row("Type", item.get("memory_type", ""))
     table.add_row("Importance", str(item.get("importance", "")))
-    table.add_row("Tier", str(item.get("tier", "")))
     table.add_row("Status", item.get("status", ""))
     table.add_row("Access count", str(item.get("access_count", 0)))
     table.add_row("Daily ref", item.get("daily_ref", "") or "")

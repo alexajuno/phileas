@@ -50,7 +50,6 @@ def _memory_from_dict(data: dict[str, Any]) -> MemoryItem:
         summary=data["summary"],
         memory_type=data.get("memory_type", "knowledge"),
         importance=int(data.get("importance", 5)),
-        tier=int(data.get("tier", 2)),
         status=data.get("status", "active"),
         access_count=int(data.get("access_count", 0)),
         last_accessed=_parse_dt(data.get("last_accessed")),

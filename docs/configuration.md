@@ -59,9 +59,6 @@ access_weight = 0.1                # Weight for access frequency
 level = "INFO"                     # Log level: DEBUG, INFO, WARNING, ERROR
 file_max_bytes = 5242880           # Max log file size in bytes (default: 5 MB)
 file_backup_count = 3              # Number of rotated log files to keep
-
-[consolidation]
-auto_threshold = 100               # Auto-consolidate after this many tier-2 memories
 ```
 
 ## Section reference
@@ -90,7 +87,6 @@ The home directory contains:
 The LLM is optional. Without it, Phileas still works for storing and recalling memories using vector search and keyword matching. The LLM enables:
 - Automatic importance scoring
 - Memory extraction from text (`phileas ingest`)
-- Memory consolidation (`phileas consolidate`)
 - Contradiction detection (`phileas contradictions`)
 - Query rewriting for better recall
 
@@ -168,12 +164,6 @@ Weights for the final composite score. Must sum to 1.0.
 | `file_backup_count` | int | `3` | Number of rotated log files to keep |
 
 Logs are written to `~/.phileas/phileas.log`.
-
-### [consolidation]
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `auto_threshold` | int | `100` | Number of unconsolidated tier-2 memories that triggers auto-consolidation |
 
 ## Minimal config
 

@@ -32,7 +32,6 @@ CREATE TABLE IF NOT EXISTS memory_items (
     summary TEXT NOT NULL,
     memory_type TEXT NOT NULL,
     importance INTEGER NOT NULL DEFAULT 5,
-    tier INTEGER NOT NULL DEFAULT 2,
     status TEXT NOT NULL DEFAULT 'active',
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
@@ -60,7 +59,6 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
-CREATE INDEX IF NOT EXISTS idx_items_tier ON memory_items(tier);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 CREATE INDEX IF NOT EXISTS idx_events_status ON events(extraction_status);
@@ -73,6 +71,8 @@ MIGRATIONS = [
     "ALTER TABLE memory_items ADD COLUMN last_reinforced TEXT",
     "ALTER TABLE memory_items ADD COLUMN raw_text TEXT",
     "ALTER TABLE memory_items ADD COLUMN source_event_id TEXT REFERENCES events(id)",
+    "DROP INDEX IF EXISTS idx_items_tier",
+    "ALTER TABLE memory_items DROP COLUMN tier",
 ]
 
 
@@ -103,17 +103,16 @@ class Database:
     def save_item(self, item: MemoryItem) -> None:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
-               (id, summary, memory_type, importance, tier, status,
+               (id, summary, memory_type, importance, status,
                 access_count, last_accessed, daily_ref,
                 consolidated_into, reinforcement_count, last_reinforced,
                 raw_text, source_event_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
                 item.memory_type,
                 item.importance,
-                item.tier,
                 item.status,
                 item.access_count,
                 item.last_accessed.isoformat() if item.last_accessed else None,
@@ -148,14 +147,6 @@ class Database:
         rows = self.conn.execute(
             "SELECT * FROM memory_items WHERE memory_type = ? AND status = 'active' ORDER BY created_at DESC",
             (memory_type,),
-        ).fetchall()
-        return [self._row_to_item(row) for row in rows]
-
-    @_locked
-    def get_items_by_tier(self, tier: int) -> list[MemoryItem]:
-        rows = self.conn.execute(
-            "SELECT * FROM memory_items WHERE tier = ? AND status = 'active' ORDER BY created_at DESC",
-            (tier,),
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
@@ -209,7 +200,6 @@ class Database:
             summary=item.summary,
             memory_type=item.memory_type,
             importance=item.importance,
-            tier=item.tier,
             status="archived",
             access_count=item.access_count,
             last_accessed=item.last_accessed,
@@ -234,12 +224,11 @@ class Database:
         row = self.conn.execute(
             """SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN tier = 2 AND status = 'active' THEN 1 ELSE 0 END) as tier2,
-                SUM(CASE WHEN tier = 3 AND status = 'active' THEN 1 ELSE 0 END) as tier3,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
                 SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END) as archived
             FROM memory_items"""
         ).fetchone()
-        return {"total": row["total"], "tier2": row["tier2"], "tier3": row["tier3"], "archived": row["archived"]}
+        return {"total": row["total"], "active": row["active"] or 0, "archived": row["archived"] or 0}
 
     # --- Processed Sessions ---
 
@@ -343,7 +332,6 @@ class Database:
             summary=row["summary"],
             memory_type=row["memory_type"],
             importance=row["importance"],
-            tier=row["tier"],
             status=row["status"],
             access_count=row["access_count"],
             last_accessed=last_accessed,

@@ -1,7 +1,8 @@
 """Memory scoring: relevance, importance, recency decay, access frequency, MMR.
 
 Final scoring formula (post-rerank):
-  final = (relevance × 0.55) + (importance/10 × 0.2) + (recency × 0.15) + (access × 0.1)
+  final = (relevance × 0.55) + (importance/10 × 0.15) + (reinforcement × 0.15)
+        + (recency × 0.10) + (access × 0.05)
 """
 
 import math
@@ -10,7 +11,6 @@ import math
 def recency_score(
     days_since_access: float,
     importance: int = 5,
-    tier: int = 2,
     reinforcement_count: int = 0,
     *,
     base_decay: float = 0.01,
@@ -26,10 +26,10 @@ def recency_score(
     With defaults: 0 reinforcements → 0.01 (50% at ~70d),
     3 → 0.005 (50% at ~140d), 9+ → 0.001 (near-permanent).
 
-    Tier 3 and importance >= 9 still get min_decay as a floor guarantee.
+    High-importance memories (>= 9) get min_decay as a floor guarantee.
     """
-    if tier == 3 or importance >= 9:
-        # Tier 3 / high-importance: decay rate capped at min_decay (slow decay
+    if importance >= 9:
+        # High-importance: decay rate capped at min_decay (slow decay
         # guaranteed), but reinforcement can push it even lower (slower).
         raw = base_decay * decay_halving ** (reinforcement_count / halving_interval)
         decay_rate = min(raw, min_decay)
@@ -54,7 +54,6 @@ def compute_score(
     importance: int,
     days_since_access: float,
     access_count: int,
-    tier: int = 2,
     reinforcement_count: int = 0,
     *,
     relevance_weight: float = 0.55,
@@ -85,7 +84,6 @@ def compute_score(
         recency_score(
             days_since_access,
             importance,
-            tier,
             reinforcement_count,
             base_decay=base_decay,
             decay_halving=decay_halving,

@@ -1,22 +1,32 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { formatTime, toneFor } from "@/lib/format";
+import { highlight } from "@/lib/highlight";
 import type { MemoryItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Props = {
   memory: MemoryItem;
   justArrived?: boolean;
+  highlightTerms?: readonly string[];
+  dayBadge?: string;
 };
 
-export function MemoryCard({ memory, justArrived }: Props) {
+export function MemoryCard({
+  memory,
+  justArrived,
+  highlightTerms,
+  dayBadge,
+}: Props) {
   const [open, setOpen] = useState(false);
   const tone = toneFor(memory.memory_type);
   const hasRaw = Boolean(memory.raw_text);
+  const terms = highlightTerms && highlightTerms.length > 0 ? highlightTerms : null;
 
   return (
     <article
@@ -31,6 +41,19 @@ export function MemoryCard({ memory, justArrived }: Props) {
         <time className="font-mono tabular-nums text-muted-foreground">
           {formatTime(memory.created_at)}
         </time>
+        {dayBadge && (
+          <Link
+            href={`/?day=${dayBadge}`}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40",
+              "px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground",
+              "transition-colors hover:border-border hover:text-foreground",
+            )}
+            title="Open this day"
+          >
+            {dayBadge}
+          </Link>
+        )}
         <span className={cn("inline-flex items-center gap-1.5", tone.text)}>
           <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
           <span className="text-[11px] uppercase tracking-wide">
@@ -52,7 +75,7 @@ export function MemoryCard({ memory, justArrived }: Props) {
       </div>
 
       <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/95">
-        {memory.summary}
+        {terms ? highlight(memory.summary, terms) : memory.summary}
       </p>
 
       {(memory.tags.length > 0 || hasRaw) && (
@@ -63,7 +86,7 @@ export function MemoryCard({ memory, justArrived }: Props) {
               variant="outline"
               className="rounded-full border-border/70 px-2 py-0 text-[10px] font-normal text-muted-foreground"
             >
-              {t}
+              {terms ? highlight(t, terms) : t}
             </Badge>
           ))}
           {hasRaw && (
@@ -96,7 +119,9 @@ export function MemoryCard({ memory, justArrived }: Props) {
             "text-foreground/90 whitespace-pre-wrap",
           )}
         >
-          {memory.raw_text}
+          {terms && memory.raw_text
+            ? highlight(memory.raw_text, terms)
+            : memory.raw_text}
         </pre>
       )}
     </article>

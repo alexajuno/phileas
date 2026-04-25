@@ -64,10 +64,6 @@ class TestDefaults:
         assert cfg.logging.file_max_bytes == 5_242_880
         assert cfg.logging.file_backup_count == 3
 
-    def test_default_consolidation(self):
-        cfg = load_config()
-        assert cfg.consolidation.auto_threshold == 100
-
     def test_derived_paths(self):
         cfg = load_config()
         home = Path.home() / ".phileas"
@@ -178,17 +174,6 @@ class TestTomlOverrides:
         )
         cfg = load_config(home=tmp_path)
         assert cfg.reranker.model == "cross-encoder/ms-marco-MiniLM-L-12-v2"
-
-    def test_consolidation_override(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            textwrap.dedent("""\
-            [consolidation]
-            auto_threshold = 50
-        """)
-        )
-        cfg = load_config(home=tmp_path)
-        assert cfg.consolidation.auto_threshold == 50
 
     def test_no_config_file(self, tmp_path):
         """When config.toml doesn't exist, all defaults should apply."""

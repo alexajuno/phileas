@@ -43,6 +43,74 @@ def test_memorize_with_entities(tmp_dir):
     assert len(about_results) > 0
 
 
+def test_about_gates_expansion(tmp_dir):
+    """about() returns direct-ABOUT memories only by default.
+
+    Giao -[BUILDS]-> Phileas: a memory linked to Phileas alone must not
+    surface from about("Giao") unless expand=True.
+    """
+    engine = _make_engine(tmp_dir)
+    m1 = engine.memorize(
+        summary="Giao woke up early",
+        memory_type="event",
+        importance=5,
+        entities=[{"name": "Giao", "type": "Person"}],
+    )
+    m2 = engine.memorize(
+        summary="Phileas shipped v0.1",
+        memory_type="event",
+        importance=6,
+        entities=[{"name": "Phileas", "type": "Project"}],
+        relationships=[
+            {
+                "from_name": "Giao",
+                "from_type": "Person",
+                "edge": "BUILDS",
+                "to_name": "Phileas",
+                "to_type": "Project",
+            },
+        ],
+    )
+
+    direct_ids = {r["id"] for r in engine.about("Giao")}
+    assert direct_ids == {m1["id"]}
+
+    expanded_ids = {r["id"] for r in engine.about("Giao", expand=True)}
+    assert expanded_ids == {m1["id"], m2["id"]}
+
+
+def test_about_memory_type_filter(tmp_dir):
+    """about() narrows results by memory_type when given one.
+
+    The user entity accumulates direct-ABOUT edges across every type because
+    they're the implicit author. A type filter lets callers isolate the
+    identity-shaped subset (profile/behavior/reflection/...) from the
+    first-person activity log (event/knowledge/...).
+    """
+    engine = _make_engine(tmp_dir)
+    profile_m = engine.memorize(
+        summary="Giao's birthday is April 10",
+        memory_type="profile",
+        importance=6,
+        entities=[{"name": "Giao", "type": "Person"}],
+    )
+    event_m = engine.memorize(
+        summary="Giao had coffee at 9am",
+        memory_type="event",
+        importance=4,
+        entities=[{"name": "Giao", "type": "Person"}],
+    )
+
+    all_ids = {r["id"] for r in engine.about("Giao")}
+    assert all_ids == {profile_m["id"], event_m["id"]}
+
+    profile_only = {r["id"] for r in engine.about("Giao", memory_type="profile")}
+    assert profile_only == {profile_m["id"]}
+
+    both = {r["id"] for r in engine.about("Giao", memory_type=["profile", "event"])}
+    assert both == {profile_m["id"], event_m["id"]}
+
+
 def test_forget(tmp_dir):
     engine = _make_engine(tmp_dir)
     result = engine.memorize(summary="old fact", importance=3)
@@ -74,7 +142,7 @@ def test_status(tmp_dir):
     engine.memorize(summary="fact one")
     engine.memorize(summary="fact two")
     stats = engine.status()
-    assert stats["tier2"] == 2
+    assert stats["active"] == 2
     assert stats["vector_count"] == 2
 
 

@@ -117,7 +117,6 @@ class MemoryEngine:
         memory_type: str = "knowledge",
         importance: int | None = None,
         daily_ref: str | None = None,
-        tier: int = 2,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         source_event_id: str | None = None,
@@ -153,7 +152,6 @@ class MemoryEngine:
                 summary=summary,
                 memory_type=memory_type,
                 importance=importance,
-                tier=tier,
                 daily_ref=daily_ref,
                 source_event_id=source_event_id,
             )
@@ -803,7 +801,6 @@ class MemoryEngine:
                     item.importance,
                     days,
                     item.access_count,
-                    item.tier,
                     item.reinforcement_count,
                     relevance_weight=self.config.scoring.relevance_weight,
                     importance_weight=self.config.scoring.importance_weight,
@@ -1012,19 +1009,39 @@ class MemoryEngine:
     # about
     # ------------------------------------------------------------------
 
-    def about(self, name: str, entity_type: str | None = None) -> list[dict]:
+    def about(
+        self,
+        name: str,
+        entity_type: str | None = None,
+        expand: bool = False,
+        memory_type: str | list[str] | None = None,
+    ) -> list[dict]:
         """Return memories connected to an entity node in the graph.
 
-        Also follows entity↔entity edges to include memories about
-        directly related entities.
+        By default only returns memories directly linked via ABOUT edges.
+        Set ``expand=True`` to additionally include memories about one-hop
+        REL neighbors (WORKS_AT, KNOWS, BUILDS, …). Expansion fans out to
+        most of the DB for hub entities, so keep it off unless you
+        explicitly want neighbor collateral.
+
+        Pass ``memory_type`` (a single type or list) to narrow the result by
+        memory type. Useful for the user entity, where identity-shaped types
+        (profile/behavior/reflection/emotional/pattern) separate durable
+        traits from the first-person activity log.
         """
+        type_filter: set[str] | None = None
+        if memory_type is not None:
+            type_filter = {memory_type} if isinstance(memory_type, str) else set(memory_type)
+
         with OpTimer(log, "about", entity=name, entity_type=entity_type) as timer:
+            timer.extra["expand"] = expand
+            timer.extra["memory_type_filter"] = sorted(type_filter) if type_filter else None
             # Search graph for the entity
             node_hits = self.graph.search_nodes(name)
             if entity_type:
                 node_hits = [n for n in node_hits if n.get("type") == entity_type]
 
-            results = []
+            items: list[MemoryItem] = []
             seen_ids: set[str] = set()
             seen_entities: set[tuple[str, str]] = set()
 
@@ -1043,7 +1060,7 @@ class MemoryEngine:
                     seen_ids.add(mem_id)
                     item = self.db.get_item(mem_id)
                     if item and item.status == "active":
-                        results.append(_item_to_dict(item))
+                        items.append(item)
 
             for node in node_hits:
                 etype = node.get("type")
@@ -1051,6 +1068,8 @@ class MemoryEngine:
                 if not etype or not ename:
                     continue
                 _collect_memories(etype, ename)
+                if not expand:
+                    continue
                 # Follow entity↔entity edges
                 try:
                     related = self.graph.get_related_entities(etype, ename)
@@ -1061,6 +1080,16 @@ class MemoryEngine:
                         "graph traversal failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}}
                     )
 
+            if type_filter is not None:
+                items = [it for it in items if it.memory_type in type_filter]
+
+            items.sort(
+                key=lambda it: (
+                    -it.importance,
+                    -(it.updated_at.timestamp() if it.updated_at else 0),
+                )
+            )
+            results = [_item_to_dict(it) for it in items]
             timer.extra["results"] = len(results)
             return results
 

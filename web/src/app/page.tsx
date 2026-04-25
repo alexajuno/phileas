@@ -1,3 +1,6 @@
+import Link from "next/link";
+import { Search } from "lucide-react";
+
 import { MemoryList } from "@/components/memory-list";
 import { isValidDay, todayLocal } from "@/lib/day";
 import { fetchMemoriesForDay } from "@/lib/queries";
@@ -59,6 +62,13 @@ export default async function Page({
             Long-term memory, captured throughout the day.
           </p>
         </div>
+        <Link
+          href="/search"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card/60 px-1.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+          title="Search all memories"
+        >
+          <Search className="h-3.5 w-3.5" aria-hidden />
+        </Link>
       </header>
 
       {error ? (
