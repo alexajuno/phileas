@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { DayNav } from "./day-nav";
 import { EmptyState } from "./empty-state";
+import { ExportMenu } from "./export-menu";
 import { MemoryCard } from "./memory-card";
 import { StatsStrip } from "./stats-strip";
 import { todayLocal } from "@/lib/day";
@@ -200,6 +201,7 @@ export function MemoryList({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <DayNav day={day} onChange={setDay} />
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          <ExportMenu day={day} type={selectedType} min={minImportance} />
           {loading && <span className="animate-pulse">loading…</span>}
           {!loading && isToday && lastLoaded && (
             <span className="inline-flex items-center gap-1.5">

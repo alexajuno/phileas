@@ -63,7 +63,6 @@ export function MemoryCard({
         <span className="text-muted-foreground">
           imp <span className="text-foreground">{memory.importance}</span>
         </span>
-        <span className="text-muted-foreground">tier {memory.tier}</span>
         {memory.reinforcement_count > 0 && (
           <span className="text-muted-foreground">
             ×{memory.reinforcement_count}

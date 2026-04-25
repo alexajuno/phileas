@@ -20,7 +20,7 @@ export function fetchMemoriesForDay(day: string): MemoryItem[] {
   const { startIso, endIso } = localDayBoundsAsUtcIso(day);
   const rows = getDb()
     .prepare<[string, string], Row>(
-      `SELECT id, summary, memory_type, importance, tier, status,
+      `SELECT id, summary, memory_type, importance, status,
               access_count, reinforcement_count, last_reinforced,
               raw_text, tags, daily_ref, source_session_id,
               created_at, updated_at
@@ -52,7 +52,7 @@ export function searchMemories(rawQuery: string, limit = 100): MemoryItem[] {
     params.push(like, like, like);
   }
 
-  const sql = `SELECT id, summary, memory_type, importance, tier, status,
+  const sql = `SELECT id, summary, memory_type, importance, status,
                       access_count, reinforcement_count, last_reinforced,
                       raw_text, tags, daily_ref, source_session_id,
                       created_at, updated_at
@@ -65,6 +65,50 @@ export function searchMemories(rawQuery: string, limit = 100): MemoryItem[] {
   const rows = getDb()
     .prepare<(string | number)[], Row>(sql)
     .all(...params, limit);
+  return rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
+}
+
+export type ExportFilters = {
+  from?: string; // local YYYY-MM-DD inclusive
+  to?: string;   // local YYYY-MM-DD inclusive
+  type?: string;
+  minImportance?: number;
+};
+
+export function fetchMemoriesForExport(filters: ExportFilters): MemoryItem[] {
+  const clauses: string[] = ["status = 'active'"];
+  const params: (string | number)[] = [];
+
+  if (filters.from) {
+    const { startIso } = localDayBoundsAsUtcIso(filters.from);
+    clauses.push("created_at >= ?");
+    params.push(startIso);
+  }
+  if (filters.to) {
+    const { endIso } = localDayBoundsAsUtcIso(filters.to);
+    clauses.push("created_at < ?");
+    params.push(endIso);
+  }
+  if (filters.type) {
+    clauses.push("memory_type = ?");
+    params.push(filters.type);
+  }
+  if (filters.minImportance && filters.minImportance > 1) {
+    clauses.push("importance >= ?");
+    params.push(filters.minImportance);
+  }
+
+  const sql = `SELECT id, summary, memory_type, importance, status,
+                      access_count, reinforcement_count, last_reinforced,
+                      raw_text, tags, daily_ref, source_session_id,
+                      created_at, updated_at
+                 FROM memory_items
+                WHERE ${clauses.join(" AND ")}
+                ORDER BY created_at DESC`;
+
+  const rows = getDb()
+    .prepare<(string | number)[], Row>(sql)
+    .all(...params);
   return rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
 }
 

@@ -15,7 +15,6 @@ export type MemoryItem = {
   summary: string;
   memory_type: MemoryType | string;
   importance: number;
-  tier: number;
   status: string;
   access_count: number;
   reinforcement_count: number;
