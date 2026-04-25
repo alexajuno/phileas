@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { ForgetMemoryDialog } from "@/components/forget-memory-dialog";
 import { formatTime, toneFor } from "@/lib/format";
 import { highlight } from "@/lib/highlight";
 import type { MemoryItem } from "@/lib/types";
@@ -15,6 +16,7 @@ type Props = {
   justArrived?: boolean;
   highlightTerms?: readonly string[];
   dayBadge?: string;
+  onForgotten?: (id: string) => void;
 };
 
 export function MemoryCard({
@@ -22,8 +24,10 @@ export function MemoryCard({
   justArrived,
   highlightTerms,
   dayBadge,
+  onForgotten,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [forgetOpen, setForgetOpen] = useState(false);
   const tone = toneFor(memory.memory_type);
   const hasRaw = Boolean(memory.raw_text);
   const terms = highlightTerms && highlightTerms.length > 0 ? highlightTerms : null;
@@ -71,6 +75,23 @@ export function MemoryCard({
         <span className="ml-auto font-mono text-[10px] text-muted-foreground/60">
           {memory.id.slice(0, 8)}
         </span>
+        {onForgotten && (
+          <button
+            type="button"
+            onClick={() => setForgetOpen(true)}
+            aria-label="Forget memory"
+            title="Forget memory"
+            className={cn(
+              "inline-flex h-5 w-5 items-center justify-center rounded-md",
+              "text-muted-foreground/70 opacity-0 transition-all",
+              "hover:bg-destructive/10 hover:text-destructive",
+              "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40",
+              "group-hover:opacity-100",
+            )}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        )}
       </div>
 
       <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/95">
@@ -108,6 +129,15 @@ export function MemoryCard({
             </button>
           )}
         </div>
+      )}
+
+      {onForgotten && (
+        <ForgetMemoryDialog
+          memory={memory}
+          open={forgetOpen}
+          onOpenChange={setForgetOpen}
+          onForgotten={onForgotten}
+        />
       )}
 
       {open && hasRaw && (
