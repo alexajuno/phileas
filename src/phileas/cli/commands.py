@@ -54,11 +54,9 @@ def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
     # Try exact match first
     if engine.db.get_item(short_id):
         return short_id
-    # Prefix match
-    items = engine.db.get_active_items() + [
-        i for i in (engine.db.get_items_by_tier(2) + engine.db.get_items_by_tier(3)) if i.status == "archived"
-    ]
-    matches = [i.id for i in items if i.id.startswith(short_id)]
+    # Prefix match — walk all items (active + archived) for ID resolution.
+    rows = engine.db.conn.execute("SELECT id FROM memory_items").fetchall()
+    matches = [r["id"] for r in rows if r["id"].startswith(short_id)]
     if len(matches) == 1:
         return matches[0]
     return None
@@ -269,7 +267,6 @@ def show(memory_id: str):
                 "summary": item.summary,
                 "memory_type": item.memory_type,
                 "importance": item.importance,
-                "tier": item.tier,
                 "status": item.status,
                 "access_count": item.access_count,
                 "daily_ref": item.daily_ref,
@@ -450,7 +447,6 @@ def export_cmd(fmt: str, output: str | None):
                 "summary": item.summary,
                 "memory_type": item.memory_type,
                 "importance": item.importance,
-                "tier": item.tier,
                 "status": item.status,
                 "access_count": item.access_count,
                 "daily_ref": item.daily_ref,

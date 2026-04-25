@@ -61,13 +61,8 @@ SessionStart hook
 
 Mid-conversation (Phileas skill)
   → detect important facts/decisions/preferences
-  → store directly to Tier 2 (no need for Tier 1 — Claude Code is live)
+  → store directly as extracted memories (no need for raw pointer — Claude Code is live)
   → check for contradictions with existing memories
-
-Weekly / manual consolidation
-  → cluster related Tier 2 memories by topic/entity
-  → merge clusters into Tier 3 summaries
-  → mark originals as "consolidated" (kept but deprioritized)
 ```
 
 ---
@@ -82,20 +77,15 @@ Fires when a new Claude Code session begins:
    - **Entities** (people, projects, places, tools)
    - **Relationships** (who → knows/builds/uses/feels → what)
    - **Importance score** (1-10)
-3. Store as Tier 2 across all three DBs
+3. Store across all three DBs
 4. Mark sessions as processed
 
 ### Phileas Skill (Mid-conversation)
 Upgraded to be more proactive:
 1. Invoked for any conversation touching personal topics, decisions, preferences
-2. Stores directly to Tier 2
+2. Stores memories directly
 3. Detects contradictions before storing
 4. Updates access_count when recalled memories are useful
-
-### Consolidation (Weekly / Manual)
-1. Cluster related Tier 2 memories using graph neighborhoods + embedding similarity
-2. Claude Code summarizes each cluster into Tier 3 consolidated memory
-3. Original Tier 2 items get `consolidated_into` reference
 
 **Key constraint:** All intelligence runs inside Claude Code sessions — no external API calls needed.
 
@@ -117,8 +107,7 @@ Upgraded to be more proactive:
 | Tool | Signature | Purpose |
 |------|-----------|---------|
 | `ingest_session` | `(session_path, max_tokens=50000)` | Read a JSONL file, return extracted user/assistant messages as text for Claude Code to process. Marks session as processed only after Claude Code calls `memorize` with the results. Max N=3 sessions per SessionStart to avoid blocking. |
-| `consolidate` | `(min_cluster_size=3, max_clusters=10)` | Find clusters of related Tier 2 memories. Returns clusters for Claude Code to summarize, then Claude calls `memorize` with tier=3. Triggered opportunistically when >50 unconsolidated Tier 2 memories exist. |
-| `status` | `()` | Memory stats: counts per tier, unprocessed sessions, graph node/edge counts, oldest unaccessed memory. |
+| `status` | `()` | Memory stats: active/archived counts, unprocessed sessions, graph node/edge counts, oldest unaccessed memory. |
 
 ### Query Tools
 
@@ -300,8 +289,8 @@ A 6-month-old identity fact (importance=10, accessed often) still beats a 1-day-
 ### What changes
 - Add ChromaDB + KuzuDB as new storage backends
 - Existing memories migrated: embedded into ChromaDB, entities extracted into KuzuDB
-- New schema columns: importance, access_count, last_accessed, tier, consolidated_into
-- New tools: `forget`, `relate`, `ingest_session`, `consolidate`, `status`, `about`, `timeline`
+- New schema columns: importance, access_count, last_accessed, consolidated_into
+- New tools: `forget`, `relate`, `ingest_session`, `status`, `about`, `timeline`
 - SessionStart hook for automatic JSONL ingestion
 - Phileas skill upgraded for proactive mid-conversation extraction
 

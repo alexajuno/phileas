@@ -109,11 +109,6 @@ class LoggingConfig:
 
 
 @dataclass
-class ConsolidationConfig:
-    auto_threshold: int = 100
-
-
-@dataclass
 class HotSetConfig:
     profile_behavior_floor: int = 7  # Min importance for profile/behavior types
     identity_floor: int = 9  # Min importance for any type
@@ -141,7 +136,6 @@ class PhileasConfig:
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     reinforcement: ReinforcementConfig = field(default_factory=ReinforcementConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
     hot_set: HotSetConfig = field(default_factory=HotSetConfig)
 
     # -- Derived paths --
@@ -218,7 +212,6 @@ def load_config(home: Path | None = None) -> PhileasConfig:
             "scoring": cfg.scoring,
             "reinforcement": cfg.reinforcement,
             "logging": cfg.logging,
-            "consolidation": cfg.consolidation,
             "hot_set": cfg.hot_set,
         }
         for section_name, section_obj in section_map.items():

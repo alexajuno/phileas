@@ -117,7 +117,6 @@ class MemoryEngine:
         memory_type: str = "knowledge",
         importance: int | None = None,
         daily_ref: str | None = None,
-        tier: int = 2,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         source_event_id: str | None = None,
@@ -153,7 +152,6 @@ class MemoryEngine:
                 summary=summary,
                 memory_type=memory_type,
                 importance=importance,
-                tier=tier,
                 daily_ref=daily_ref,
                 source_event_id=source_event_id,
             )
@@ -803,7 +801,6 @@ class MemoryEngine:
                     item.importance,
                     days,
                     item.access_count,
-                    item.tier,
                     item.reinforcement_count,
                     relevance_weight=self.config.scoring.relevance_weight,
                     importance_weight=self.config.scoring.importance_weight,

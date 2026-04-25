@@ -224,7 +224,7 @@ phileas show MEMORY_ID
 phileas show a1b2c3d4
 ```
 
-Displays: ID, summary, type, importance, tier, status, access count, daily reference, and timestamps.
+Displays: ID, summary, type, importance, status, access count, daily reference, and timestamps.
 
 ---
 
@@ -253,38 +253,6 @@ phileas ingest "Had a great meeting with Sarah about the new API design. She pre
 ```
 
 The LLM analyzes the text and extracts individual memories with types, importance scores, entities, and relationships. Each extracted memory is stored via the normal `memorize` pipeline, including deduplication.
-
----
-
-## phileas consolidate
-
-Find and merge clusters of similar memories into higher-level summaries. Requires an LLM to be configured.
-
-```
-phileas consolidate [--min-cluster N] [--max-clusters N]
-```
-
-**Options:**
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--min-cluster` | `3` | Minimum memories to form a cluster |
-| `--max-clusters` | `10` | Maximum clusters to process |
-
-**Examples:**
-
-```bash
-# Default consolidation
-phileas consolidate
-
-# Require larger clusters
-phileas consolidate --min-cluster 5
-
-# Process more clusters
-phileas consolidate --max-clusters 20
-```
-
-Consolidation works on tier-2 memories (raw memories) and produces tier-3 memories (summaries). Clusters are found using vector similarity (threshold: 0.7 cosine similarity).
 
 ---
 
@@ -348,7 +316,7 @@ Start the Phileas MCP server for AI client integration.
 phileas serve
 ```
 
-The server exposes memory tools (memorize, recall, forget, update, relate, about, timeline, consolidate, status) over the Model Context Protocol. See [MCP Integration](mcp-integration.md) for client configuration.
+The server exposes memory tools (memorize, recall, forget, update, relate, about, timeline, status) over the Model Context Protocol. See [MCP Integration](mcp-integration.md) for client configuration.
 
 ---
 
@@ -365,8 +333,7 @@ phileas status
 ```
 Phileas Status
   Total memories:     42
-  Active tier-2:      38
-  Active tier-3:      4
+  Active:             39
   Archived:           3
   Vector embeddings:  42
   Graph nodes:        15

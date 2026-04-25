@@ -120,8 +120,7 @@ phileas status
 ```
 Phileas Status
   Total memories:     4
-  Active tier-2:      4
-  Active tier-3:      0
+  Active:             4
   Archived:           0
   Vector embeddings:  4
   Graph nodes:        0

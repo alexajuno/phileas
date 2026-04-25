@@ -15,7 +15,6 @@ Tools:
   - recall with memory_type="profile": get profile-type memories (ranked)
   - ingest_session: parse a JSONL session for Claude Code to extract from
   - mark_session_done: mark a session as processed
-  - consolidate: find clusters of similar tier-2 memories for summarization
   - status: system health/stats
 """
 
@@ -544,77 +543,6 @@ def mark_event_extracted(event_id: str, memory_count: int = 0) -> str:
 
 
 @mcp.tool()
-def consolidate(min_cluster_size: int = 3, max_clusters: int = 10) -> str:
-    """Find clusters of similar tier-2 memories for consolidation.
-
-    Returns clusters of semantically similar memories for Claude Code to summarize
-    into higher-level tier-3 memories. Does not modify any data.
-
-    Args:
-        min_cluster_size: Minimum number of memories to form a cluster (default 3).
-        max_clusters: Maximum number of clusters to return (default 10).
-    """
-    # Get all active tier-2 items without consolidated_into
-    tier2_items = db.get_items_by_tier(2)
-    unconsolidated = [item for item in tier2_items if item.consolidated_into is None]
-
-    if not unconsolidated:
-        return "No unconsolidated tier-2 memories found."
-
-    if len(unconsolidated) < min_cluster_size:
-        return (
-            f"Only {len(unconsolidated)} unconsolidated memories — need at least {min_cluster_size} to form a cluster."
-        )
-
-    # Find clusters using vector similarity
-    clusters: list[list[dict]] = []
-    used_ids: set[str] = set()
-
-    for item in unconsolidated:
-        if item.id in used_ids:
-            continue
-
-        # Search for similar memories
-        similar = vector.search(item.summary, top_k=min_cluster_size * 3)
-        cluster_ids = []
-        for mem_id, sim in similar:
-            if sim >= 0.7 and mem_id not in used_ids:
-                candidate = db.get_item(mem_id)
-                is_eligible = (
-                    candidate
-                    and candidate.status == "active"
-                    and candidate.tier == 2
-                    and candidate.consolidated_into is None
-                )
-                if is_eligible:
-                    cluster_ids.append((mem_id, sim))
-
-        if len(cluster_ids) >= min_cluster_size:
-            cluster = []
-            for mem_id, sim in cluster_ids:
-                candidate = db.get_item(mem_id)
-                if candidate:
-                    cluster.append({"id": candidate.id, "summary": candidate.summary, "similarity": sim})
-                    used_ids.add(mem_id)
-            clusters.append(cluster)
-
-        if len(clusters) >= max_clusters:
-            break
-
-    if not clusters:
-        return f"No clusters of size >= {min_cluster_size} found among {len(unconsolidated)} memories."
-
-    lines = [f"Found {len(clusters)} cluster(s) for consolidation:"]
-    for i, cluster in enumerate(clusters, 1):
-        lines.append(f"\nCluster {i} ({len(cluster)} memories):")
-        for mem in cluster:
-            sim_str = f"sim={mem['similarity']:.2f}"
-            lines.append(f"  [{mem['id']}] {mem['summary']} ({sim_str})")
-    lines.append("\nSummarize each cluster and call memorize() with tier=3 for the summary.")
-    return "\n".join(lines)
-
-
-@mcp.tool()
 def status() -> str:
     """Get system health and memory statistics."""
     stats = engine.status()
@@ -628,8 +556,7 @@ def status() -> str:
         "Phileas Memory System Status",
         "=" * 30,
         f"Total memories:     {stats.get('total', 0)}",
-        f"  Active tier-2:    {stats.get('tier2', 0)}",
-        f"  Active tier-3:    {stats.get('tier3', 0)}",
+        f"  Active:           {stats.get('active', 0)}",
         f"  Archived:         {stats.get('archived', 0)}",
         f"Vector embeddings:  {stats.get('vector_count', 0)}",
     ]

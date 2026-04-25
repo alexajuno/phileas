@@ -67,25 +67,15 @@ def test_bump_access(sqlite_path):
     db.close()
 
 
-def test_get_items_by_tier(sqlite_path):
-    db = Database(path=sqlite_path)
-    db.save_item(MemoryItem(summary="long-term", tier=2))
-    db.save_item(MemoryItem(summary="core", tier=3))
-    tier2 = db.get_items_by_tier(2)
-    tier3 = db.get_items_by_tier(3)
-    assert len(tier2) == 1
-    assert len(tier3) == 1
-    assert tier2[0].summary == "long-term"
-    db.close()
-
-
 def test_status_counts(sqlite_path):
     db = Database(path=sqlite_path)
-    db.save_item(MemoryItem(summary="a", tier=2))
-    db.save_item(MemoryItem(summary="b", tier=2))
-    db.save_item(MemoryItem(summary="c", tier=3))
+    db.save_item(MemoryItem(summary="a"))
+    db.save_item(MemoryItem(summary="b"))
+    archived = MemoryItem(summary="c")
+    db.save_item(archived)
+    db.archive_item(archived.id)
     counts = db.get_counts()
-    assert counts["tier2"] == 2
-    assert counts["tier3"] == 1
+    assert counts["active"] == 2
+    assert counts["archived"] == 1
     assert counts["total"] == 3
     db.close()

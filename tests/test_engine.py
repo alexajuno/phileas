@@ -142,7 +142,7 @@ def test_status(tmp_dir):
     engine.memorize(summary="fact one")
     engine.memorize(summary="fact two")
     stats = engine.status()
-    assert stats["tier2"] == 2
+    assert stats["active"] == 2
     assert stats["vector_count"] == 2
 
 
