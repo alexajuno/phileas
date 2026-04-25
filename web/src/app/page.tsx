@@ -64,11 +64,10 @@ export default async function Page({
         </div>
         <Link
           href="/search"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card/60 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card/60 px-1.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
           title="Search all memories"
         >
           <Search className="h-3.5 w-3.5" aria-hidden />
-          search
         </Link>
       </header>
 
