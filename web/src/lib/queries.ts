@@ -34,6 +34,40 @@ export function fetchMemoriesForDay(day: string): MemoryItem[] {
   return rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
 }
 
+export function searchMemories(rawQuery: string, limit = 100): MemoryItem[] {
+  const terms = rawQuery
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8);
+  if (terms.length === 0) return [];
+
+  const clauses: string[] = [];
+  const params: string[] = [];
+  for (const t of terms) {
+    clauses.push(
+      "(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')",
+    );
+    const like = `%${t.replace(/([\\%_])/g, "\\$1")}%`;
+    params.push(like, like, like);
+  }
+
+  const sql = `SELECT id, summary, memory_type, importance, tier, status,
+                      access_count, reinforcement_count, last_reinforced,
+                      raw_text, tags, daily_ref, source_session_id,
+                      created_at, updated_at
+                 FROM memory_items
+                WHERE status = 'active'
+                  AND ${clauses.join(" AND ")}
+                ORDER BY created_at DESC
+                LIMIT ?`;
+
+  const rows = getDb()
+    .prepare<(string | number)[], Row>(sql)
+    .all(...params, limit);
+  return rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
+}
+
 export function fetchDaysWithCounts(limit = 60): DayCount[] {
   // SQLite substring is UTC-stored; collapse into local-day buckets server-side
   // by pulling all created_at values then grouping. Cheap for <100k rows.
