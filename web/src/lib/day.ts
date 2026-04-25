@@ -15,6 +15,12 @@ export function todayLocal(): string {
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 }
 
+export function localDayOf(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export function shiftDay(day: string, delta: number): string {
   const [y, m, d] = day.split("-").map(Number);
   const dt = new Date(y, m - 1, d + delta);
