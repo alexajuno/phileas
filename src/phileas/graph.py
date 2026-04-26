@@ -320,6 +320,48 @@ class GraphStore:
     # Entity node operations
     # ------------------------------------------------------------------
 
+    def _resolve_canonical(self, node_type: str, name: str) -> tuple[str, str]:
+        """Snap (type, name) onto the canonical pair already stored in the graph.
+
+        Without normalization, the LLM's call-to-call casing drift (Tool vs
+        tool, Phileas vs phileas, Person vs person) creates a fresh Entity
+        node every time. The 2026-04-26 audit showed 31 exact dup clusters
+        and 89 type-confusion groups touching 71.5% of memories — duplicates
+        have Jaccard=0, i.e. they fragment a single referent across siloed
+        nodes rather than overlap.
+
+        Resolution rule:
+          1. If any existing entity matches case-insensitively on BOTH type
+             and name, return its stored (type, name) verbatim. Among
+             multiple matches, prefer the one with the most ABOUT edges so
+             new writes accumulate on the highest-mass variant.
+          2. Otherwise, return a fresh canonical: type as ``.strip().title()``
+             (Tool, Project, Person…) and name as ``.strip()`` (preserves
+             user/handle casing like ``minhnt``).
+
+        We intentionally do NOT collapse across types — Project:Phileas and
+        Tool:Phileas may be the same referent, but that's a semantic call
+        for a separate merge migration, not a normalization decision.
+
+        Caller must hold the connection lock and have already called
+        ``_ensure_connected``.
+        """
+        norm_type = node_type.strip().lower()
+        norm_name = name.strip().lower()
+        result = self._conn.execute(
+            "MATCH (e:Entity) "
+            "WHERE lower(e.type) = $t AND lower(e.name) = $n "
+            "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+            "WITH e, COUNT(m) AS cnt "
+            "RETURN e.type, e.name "
+            "ORDER BY cnt DESC LIMIT 1",
+            parameters={"t": norm_type, "n": norm_name},
+        )
+        if result.has_next():
+            row = result.get_next()
+            return row[0], row[1]
+        return node_type.strip().title(), name.strip()
+
     @_locked
     def upsert_node(self, node_type: str, name: str, props: dict[str, Any] | None = None) -> None:
         """Insert or update an entity node.
@@ -335,6 +377,7 @@ class GraphStore:
         """
         if not self._ensure_connected():
             return
+        node_type, name = self._resolve_canonical(node_type, name)
         entity_id = _entity_id(node_type, name)
         props_str = json.dumps(props, ensure_ascii=False) if props else ""
         self._conn.execute(
@@ -344,9 +387,10 @@ class GraphStore:
 
     @_locked
     def find_nodes(self, node_type: str, name: str) -> list[dict[str, Any]]:
-        """Return nodes matching an exact type + name."""
+        """Return nodes matching an exact type + name (case-insensitively)."""
         if not self._ensure_connected():
             return []
+        node_type, name = self._resolve_canonical(node_type, name)
         entity_id = _entity_id(node_type, name)
         result = self._conn.execute(
             "MATCH (n:Entity {id: $id}) RETURN n.name AS name, n.type AS type, n.props AS props, n.aliases AS aliases",
@@ -392,6 +436,7 @@ class GraphStore:
         """Set aliases for an entity node (e.g., "mom" for a Person)."""
         if not self._ensure_connected():
             return
+        node_type, name = self._resolve_canonical(node_type, name)
         entity_id = _entity_id(node_type, name)
         # ensure_ascii=False so non-ASCII aliases (e.g. Vietnamese kinship
         # terms like "chị") stay as literal characters in the stored string.
@@ -415,6 +460,7 @@ class GraphStore:
         """
         if not self._ensure_connected():
             return
+        entity_type, entity_name = self._resolve_canonical(entity_type, entity_name)
         entity_id = _entity_id(entity_type, entity_name)
         # Ensure both nodes exist
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": memory_id})
@@ -437,9 +483,10 @@ class GraphStore:
 
     @_locked
     def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
-        """Return memory IDs linked to the given entity."""
+        """Return memory IDs linked to the given entity (case-insensitive lookup)."""
         if not self._ensure_connected():
             return []
+        entity_type, entity_name = self._resolve_canonical(entity_type, entity_name)
         entity_id = _entity_id(entity_type, entity_name)
         result = self._conn.execute(
             "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
@@ -488,6 +535,8 @@ class GraphStore:
         """
         if not self._ensure_connected():
             return
+        from_type, from_name = self._resolve_canonical(from_type, from_name)
+        to_type, to_name = self._resolve_canonical(to_type, to_name)
         from_id = _entity_id(from_type, from_name)
         to_id = _entity_id(to_type, to_name)
         # Check existence

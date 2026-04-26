@@ -174,6 +174,89 @@ def test_link_memory_to_memory(kuzu_path):
     gs.close()
 
 
+def test_upsert_normalizes_type_casing(kuzu_path):
+    """Type casing drift should collapse onto a single Entity node.
+
+    Regression: 2026-04-26 audit found 89 type-confusion groups where the
+    LLM emitted ``Tool`` and ``tool`` (or ``Project`` and ``project``) for
+    the same name across calls, producing siloed nodes with disjoint
+    ABOUT edges.
+    """
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Tool", "Phileas")
+    gs.upsert_node("tool", "Phileas")  # lowercased type from a later LLM call
+    gs.link_memory("mem-1", "Tool", "Phileas")
+    gs.link_memory("mem-2", "tool", "Phileas")  # also lowercased
+
+    # Both link_memory calls should have hit the same canonical node.
+    mems = gs.get_memories_about("Tool", "Phileas")
+    assert set(mems) == {"mem-1", "mem-2"}
+
+    # No stray ``tool`` node.
+    detail = gs.status()
+    assert detail["entity_types"].get("Tool") == 1
+    assert "tool" not in detail["entity_types"]
+    gs.close()
+
+
+def test_upsert_snaps_to_existing_name_casing(kuzu_path):
+    """Name casing drift on the same type should collapse onto one node.
+
+    Regression: 2026-04-26 audit — ``Project:Phileas`` (83 mems) and
+    ``Project:phileas`` (3 mems) had Jaccard=0; new writes with either
+    casing should land on a single canonical node and accumulate there.
+    """
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Project", "Phileas")
+    gs.link_memory("mem-1", "Project", "Phileas")
+    gs.link_memory("mem-2", "Project", "Phileas")
+    # Now a later call with a different casing — should snap to existing.
+    gs.upsert_node("Project", "phileas")
+    gs.link_memory("mem-3", "Project", "phileas")
+
+    mems = gs.get_memories_about("Project", "Phileas")
+    assert set(mems) == {"mem-1", "mem-2", "mem-3"}
+
+    # The lowercased-name lookup should also resolve to the same node and
+    # see the same memories.
+    mems_lower = gs.get_memories_about("Project", "phileas")
+    assert set(mems_lower) == {"mem-1", "mem-2", "mem-3"}
+
+    detail = gs.status()
+    assert detail["entity_types"].get("Project") == 1
+    gs.close()
+
+
+def test_upsert_preserves_distinct_types(kuzu_path):
+    """Same name under genuinely distinct types must NOT be merged.
+
+    The normalization layer only collapses casing variants — it never
+    decides that ``Project:Phileas`` and ``Tool:Phileas`` are the same
+    referent. That's a semantic call left to the merge migration.
+    """
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Project", "Phileas")
+    gs.upsert_node("Tool", "Phileas")
+
+    detail = gs.status()
+    assert detail["entity_types"].get("Project") == 1
+    assert detail["entity_types"].get("Tool") == 1
+    gs.close()
+
+
+def test_create_edge_normalizes_endpoints(kuzu_path):
+    """create_edge should snap both endpoint (type, name) pairs."""
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Person", "Giao")
+    gs.upsert_node("Project", "Phileas")
+    # Edge created with drifted casing on both sides.
+    gs.create_edge("person", "giao", "BUILDS", "project", "phileas")
+
+    related = gs.get_related_entities("Person", "Giao")
+    assert any(r["name"] == "Phileas" and r["edge_type"] == "BUILDS" for r in related)
+    gs.close()
+
+
 def test_get_stats(kuzu_path):
     gs = GraphStore(path=kuzu_path)
     gs.upsert_node("Person", "Giao")
