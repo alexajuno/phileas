@@ -81,6 +81,11 @@ class RecallConfig:
     mmr_lambda: float = 0.7
     default_top_k: int = 10
 
+    # Skill-driven recall delivery (PHI-39).
+    mode: str = "auto"  # always | never | auto
+    format: str = "pointer"  # inline | pointer
+    pipeline: str = "rerank"  # rerank | agent_summarizer (PHI-40)
+
 
 @dataclass
 class ReinforcementConfig:
@@ -174,10 +179,54 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
             setattr(dc_instance, key, value)
 
 
-def load_config(home: Path | None = None) -> PhileasConfig:
-    """Load Phileas configuration with priority: explicit home > env > default.
+def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
+    """Merge a parsed TOML dict onto a PhileasConfig in-place."""
+    if "llm" in data:
+        llm_data = dict(data["llm"])
+        ops_data = llm_data.pop("operations", None)
+        _apply_toml_section(cfg.llm, llm_data)
+        if ops_data:
+            _apply_toml_section(cfg.llm.operations, ops_data)
 
-    Config values are merged: env vars > config.toml > code defaults.
+    section_map = {
+        "embeddings": cfg.embeddings,
+        "reranker": cfg.reranker,
+        "recall": cfg.recall,
+        "scoring": cfg.scoring,
+        "reinforcement": cfg.reinforcement,
+        "logging": cfg.logging,
+        "hot_set": cfg.hot_set,
+    }
+    for section_name, section_obj in section_map.items():
+        if section_name in data:
+            _apply_toml_section(section_obj, data[section_name])
+
+
+def _find_project_config(start: Path | None = None) -> Path | None:
+    """Walk upward from `start` (default cwd) looking for a `.phileas.toml`.
+
+    Returns the path to the first match, or None if none found before the
+    filesystem root.
+    """
+    cur = (start or Path.cwd()).resolve()
+    for candidate in [cur, *cur.parents]:
+        marker = candidate / ".phileas.toml"
+        if marker.is_file():
+            return marker
+    return None
+
+
+def load_config(
+    home: Path | None = None,
+    project_start: Path | None = None,
+) -> PhileasConfig:
+    """Load Phileas configuration with priority: project > user > env > defaults.
+
+    Layering order (later wins):
+      1. Code defaults.
+      2. User TOML at `<home>/config.toml`.
+      3. Project TOML at the nearest `.phileas.toml` walking up from `project_start`
+         (or cwd when `project_start` is None).
     """
     # 1. Resolve home directory
     if home is not None:
@@ -190,32 +239,16 @@ def load_config(home: Path | None = None) -> PhileasConfig:
     # 2. Start with all defaults
     cfg = PhileasConfig(home=resolved_home)
 
-    # 3. Layer TOML overrides on top
-    toml_path = resolved_home / "config.toml"
-    if toml_path.is_file():
-        with open(toml_path, "rb") as f:
-            data = tomllib.load(f)
+    # 3. Layer user TOML on top
+    user_toml = resolved_home / "config.toml"
+    if user_toml.is_file():
+        with open(user_toml, "rb") as f:
+            _apply_toml_data(cfg, tomllib.load(f))
 
-        # LLM section (special: has nested operations)
-        if "llm" in data:
-            llm_data = data["llm"]
-            ops_data = llm_data.pop("operations", None)
-            _apply_toml_section(cfg.llm, llm_data)
-            if ops_data:
-                _apply_toml_section(cfg.llm.operations, ops_data)
-
-        # Flat sections
-        section_map = {
-            "embeddings": cfg.embeddings,
-            "reranker": cfg.reranker,
-            "recall": cfg.recall,
-            "scoring": cfg.scoring,
-            "reinforcement": cfg.reinforcement,
-            "logging": cfg.logging,
-            "hot_set": cfg.hot_set,
-        }
-        for section_name, section_obj in section_map.items():
-            if section_name in data:
-                _apply_toml_section(section_obj, data[section_name])
+    # 4. Layer project TOML (.phileas.toml) on top of user
+    project_toml = _find_project_config(project_start)
+    if project_toml is not None:
+        with open(project_toml, "rb") as f:
+            _apply_toml_data(cfg, tomllib.load(f))
 
     return cfg

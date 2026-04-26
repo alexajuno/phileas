@@ -174,6 +174,17 @@ export function MemoryList({
     [items, selectedType, minImportance],
   );
 
+  const handleForgotten = useCallback((id: string) => {
+    setItems((prev) => prev.filter((m) => m.id !== id));
+    prevIdsRef.current.delete(id);
+    setJustArrived((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
   const clearFilters = useCallback(() => {
     setSelectedTypeState(null);
     setMinImportanceState(1);
@@ -264,6 +275,7 @@ export function MemoryList({
                 <MemoryCard
                   memory={m}
                   justArrived={justArrived.has(m.id)}
+                  onForgotten={handleForgotten}
                 />
               </motion.li>
             ))}

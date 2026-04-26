@@ -500,6 +500,43 @@ def init_cmd():
     run_wizard()
 
 
+@click.command("migrate-recall")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite existing customized SKILL.md / phileas-recall agent (otherwise leaves user edits alone).",
+)
+def migrate_recall_cmd(force: bool):
+    """Install Phileas recall skill + judge agent and reconcile the legacy hook against config.
+
+    Default flow (recall.mode != "always"):
+      - Installs SKILL.md at ~/.claude/skills/phileas/SKILL.md.
+      - Installs phileas-recall judge agent at ~/.claude/agents/phileas-recall.md.
+      - Removes the legacy phileas-hook entry from ~/.claude/settings.json.
+
+    With recall.mode = "always":
+      - Installs SKILL.md and agent.
+      - Installs the phileas-hook entry as a power-user opt-in.
+    """
+    from phileas.cli.wizard import _install_agent, _install_skill, _sync_hook_state
+    from phileas.config import load_config
+
+    cfg = load_config()
+    mode = cfg.recall.mode
+
+    skill_changed, skill_msg = _install_skill(force=force)
+    agent_changed, agent_msg = _install_agent(force=force)
+    hook_changed, hook_msg = _sync_hook_state(mode)
+
+    skill_marker = "[green]OK[/green]" if skill_changed else "[dim]skip[/dim]"
+    agent_marker = "[green]OK[/green]" if agent_changed else "[dim]skip[/dim]"
+    hook_marker = "[green]OK[/green]" if hook_changed else "[dim]skip[/dim]"
+    console.print(f"  Skill {skill_marker} -- {skill_msg}")
+    console.print(f"  Agent {agent_marker} -- {agent_msg}")
+    console.print(f"  Hooks {hook_marker} -- {hook_msg} (recall.mode = {mode!r})")
+    console.print("  [dim]Restart Claude Code to pick up changes.[/dim]")
+
+
 # ------------------------------------------------------------------
 # start / stop (daemon)
 # ------------------------------------------------------------------

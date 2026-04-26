@@ -19,6 +19,7 @@ from phileas.cli.commands import (
     ingest,
     init_cmd,
     list_cmd,
+    migrate_recall_cmd,
     recall,
     reflect,
     remember,
@@ -55,6 +56,7 @@ app.add_command(contradictions)
 app.add_command(export_cmd)
 app.add_command(serve)
 app.add_command(init_cmd)
+app.add_command(migrate_recall_cmd)
 app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)

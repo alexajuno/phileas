@@ -194,6 +194,34 @@ def recall(
 
 
 @mcp.tool()
+def recall_raw(
+    query: str,
+    memory_type: str | None = None,
+    min_importance: int | None = None,
+) -> list[dict]:
+    """Stage-1 only candidate gather. Returns the unranked candidate pool.
+
+    Use this when you want to do your own relevance judgement (e.g. via the
+    `phileas-recall` judge subagent) instead of the cross-encoder rerank
+    pipeline that `recall` uses. Returns the full filtered candidate pool
+    — typically up to ~1000 items — so the caller can apply LLM-as-judge
+    over a richer set than the rerank top-K.
+
+    Args:
+        query: What to search for (natural language or keywords).
+        memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
+        min_importance: Only return memories with importance >= this value.
+
+    Returns:
+        List of dicts, one per candidate memory, with keys: id, summary, type,
+        importance, created_at, hop (graph distance from query, 0 = direct
+        entity-name match), gather_source (list of contributing paths from
+        "keyword", "semantic", "graph", "raw_text").
+    """
+    return engine.recall_raw(query, memory_type=memory_type, min_importance=min_importance)
+
+
+@mcp.tool()
 def update(
     memory_id: str,
     summary: str | None = None,
