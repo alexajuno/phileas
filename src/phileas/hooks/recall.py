@@ -143,14 +143,14 @@ def format_dispatch_directive(prompt: str, candidates: int) -> str:
     return (
         "<phileas-recall-task>\n"
         f"Phileas: this prompt looks memory-relevant. The Stage-1 candidate pool "
-        f"({candidates} memories) has been gathered server-side.\n"
+        f"({candidates} memories) has been gathered server-side as a sizing signal.\n"
         "ACTION REQUIRED before responding to the user: dispatch the "
         "`phileas-recall` subagent via the Task tool.\n"
         '  Task(subagent_type="phileas-recall", description="Phileas pool judge",\n'
         f'       prompt="Query: {prompt}")\n'
-        "The subagent will fetch and rank the pool itself (it has "
-        "`mcp__phileas__recall_raw` available) and return a `<phileas-recall>` "
-        "block. Use that block as background context.\n"
+        "The subagent will fetch its own pools (`recall_raw` + `recall_recent`), "
+        "merge them, and return a single `<phileas-recall>` block. Use that block "
+        "as background context.\n"
         "</phileas-recall-task>"
     )
 
