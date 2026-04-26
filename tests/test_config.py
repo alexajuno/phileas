@@ -6,6 +6,7 @@ from pathlib import Path
 from phileas.config import (
     LLMConfig,
     LLMOperations,
+    _find_project_config,
     load_config,
 )
 
@@ -42,13 +43,16 @@ class TestDefaults:
         cfg = load_config()
         assert cfg.reranker.model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-    def test_default_recall(self):
-        cfg = load_config()
+    def test_default_recall(self, tmp_path):
+        cfg = load_config(home=tmp_path)
         assert cfg.recall.similarity_floor == 0.5
         assert cfg.recall.relevance_floor == 0.15
         assert cfg.recall.graph_boost == 0.5
         assert cfg.recall.mmr_lambda == 0.7
         assert cfg.recall.default_top_k == 10
+        assert cfg.recall.mode == "auto"
+        assert cfg.recall.format == "pointer"
+        assert cfg.recall.pipeline == "rerank"
 
     def test_default_scoring(self, tmp_path):
         cfg = load_config(home=tmp_path)
@@ -327,3 +331,97 @@ class TestLLMAvailability:
     def test_not_available_from_empty_config(self, tmp_path):
         cfg = load_config(home=tmp_path)
         assert cfg.llm.available is False
+
+
+# ------------------------------------------------------------------
+# Project config (.phileas.toml) walker + precedence
+# ------------------------------------------------------------------
+
+
+class TestProjectConfig:
+    """Project `.phileas.toml` is discovered via cwd-walk and overrides user TOML."""
+
+    def test_finds_phileas_toml_in_current_dir(self, tmp_path):
+        marker = tmp_path / ".phileas.toml"
+        marker.write_text('[recall]\nmode = "never"\n')
+        assert _find_project_config(tmp_path) == marker
+
+    def test_walks_up_to_find_phileas_toml(self, tmp_path):
+        marker = tmp_path / ".phileas.toml"
+        marker.write_text('[recall]\nmode = "always"\n')
+        nested = tmp_path / "a" / "b" / "c"
+        nested.mkdir(parents=True)
+        assert _find_project_config(nested) == marker
+
+    def test_returns_none_when_no_project_config(self, tmp_path):
+        nested = tmp_path / "x" / "y"
+        nested.mkdir(parents=True)
+        # tmp_path itself has no .phileas.toml; walker should reach root and return None
+        # (root may have one in rare cases — pytest tmpdirs are deep enough that this is safe)
+        result = _find_project_config(nested)
+        # If something exists above tmp_path it might not be None — but the marker we placed
+        # inside tmp_path would have to exist; we never created one, so result must be None
+        # for any path under tmp_path.
+        assert result is None or marker_outside_tmp_path(result, tmp_path)
+
+    def test_project_overrides_user(self, tmp_path):
+        user_home = tmp_path / "user"
+        user_home.mkdir()
+        (user_home / "config.toml").write_text(
+            textwrap.dedent("""\
+            [recall]
+            mode = "auto"
+            default_top_k = 5
+        """)
+        )
+        project_root = tmp_path / "proj"
+        project_root.mkdir()
+        (project_root / ".phileas.toml").write_text(
+            textwrap.dedent("""\
+            [recall]
+            mode = "never"
+        """)
+        )
+        cfg = load_config(home=user_home, project_start=project_root)
+        # Project wins on `mode`
+        assert cfg.recall.mode == "never"
+        # User TOML still wins on `default_top_k` (not set in project)
+        assert cfg.recall.default_top_k == 5
+        # Defaults still apply for fields touched by neither
+        assert cfg.recall.format == "pointer"
+
+    def test_project_walk_from_nested_cwd(self, tmp_path):
+        user_home = tmp_path / "user"
+        user_home.mkdir()
+        project_root = tmp_path / "proj"
+        nested = project_root / "src" / "deep"
+        nested.mkdir(parents=True)
+        (project_root / ".phileas.toml").write_text(
+            textwrap.dedent("""\
+            [recall]
+            mode = "always"
+            format = "inline"
+        """)
+        )
+        cfg = load_config(home=user_home, project_start=nested)
+        assert cfg.recall.mode == "always"
+        assert cfg.recall.format == "inline"
+
+    def test_recall_pipeline_override(self, tmp_path):
+        (tmp_path / "config.toml").write_text(
+            textwrap.dedent("""\
+            [recall]
+            pipeline = "agent_summarizer"
+        """)
+        )
+        cfg = load_config(home=tmp_path, project_start=tmp_path)
+        assert cfg.recall.pipeline == "agent_summarizer"
+
+
+def marker_outside_tmp_path(result: Path, tmp_path: Path) -> bool:
+    """Helper: a found project config that is not inside tmp_path is unrelated state."""
+    try:
+        result.relative_to(tmp_path)
+    except ValueError:
+        return True
+    return False

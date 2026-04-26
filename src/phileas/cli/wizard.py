@@ -151,48 +151,216 @@ def _hook_already_present(entries: list, command: str) -> bool:
     return False
 
 
-def _install_hooks() -> tuple[bool, str]:
-    """Merge Phileas hook entries into ~/.claude/settings.json.
+def _settings_path() -> Path:
+    return Path.home() / ".claude" / "settings.json"
 
-    Returns (changed, message). `changed` is True when the file was modified;
-    False when all entries were already present (idempotent re-run) or when the
-    write failed. `message` describes what happened for display.
-    """
-    settings_path = Path.home() / ".claude" / "settings.json"
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            return False, f"could not read {settings_path}: {exc}"
-        if not isinstance(settings, dict):
-            return False, f"{settings_path} is not a JSON object -- refusing to overwrite"
-    else:
-        settings = {}
 
+def _read_settings(path: Path) -> tuple[dict | None, str | None]:
+    """Return (settings_dict, error_message). settings_dict is None when read failed."""
+    if not path.exists():
+        return {}, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"could not read {path}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"{path} is not a JSON object -- refusing to overwrite"
+    return data, None
+
+
+def _write_settings(path: Path, data: dict) -> str | None:
+    """Write settings dict to path. Returns an error message on failure, else None."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        return f"could not write {path}: {exc}"
+    return None
+
+
+def _install_hook_entries(settings: dict) -> bool:
+    """Add Phileas hook entries to settings dict (in place). Returns True if modified."""
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
-        return False, "settings.json `hooks` field is not an object -- refusing to overwrite"
+        raise ValueError("settings.json `hooks` field is not an object")
 
     changed = False
     for event, command in HOOK_COMMANDS.items():
         entries = hooks.setdefault(event, [])
         if not isinstance(entries, list):
-            return False, f"settings.json `hooks.{event}` is not a list -- refusing to overwrite"
+            raise ValueError(f"settings.json `hooks.{event}` is not a list")
         if _hook_already_present(entries, command):
             continue
         entries.append({"hooks": [{"type": "command", "command": command}]})
         changed = True
+    return changed
 
-    if not changed:
-        return False, "hook entries already present"
+
+def _remove_hook_entries(settings: dict) -> bool:
+    """Remove Phileas hook entries from settings dict (in place). Returns True if modified."""
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+
+    changed = False
+    for event, command in HOOK_COMMANDS.items():
+        entries = hooks.get(event)
+        if not isinstance(entries, list):
+            continue
+        kept: list = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                kept.append(entry)
+                continue
+            inner = entry.get("hooks", []) or []
+            filtered = [h for h in inner if not (isinstance(h, dict) and h.get("command", "").strip() == command)]
+            if not filtered:
+                # The entire entry only carried the phileas hook; drop it.
+                changed = True
+                continue
+            if filtered != inner:
+                entry = {**entry, "hooks": filtered}
+                changed = True
+            kept.append(entry)
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+            changed = True
+    return changed
+
+
+def _sync_hook_state(mode: str) -> tuple[bool, str]:
+    """Reconcile ~/.claude/settings.json hook entries against `recall.mode`.
+
+    mode == "never"  -> remove any phileas-hook entry.
+    Otherwise        -> install the phileas-hook entry (idempotent).
+
+    The hook script itself reads `recall.mode` and `recall.pipeline` at runtime
+    to decide whether to fire and which pipeline to use, so installing it for
+    both "auto" and "always" is correct -- the hook handles the auto-vs-always
+    branching internally.
+
+    Returns (changed, message) for display.
+    """
+    settings_path = _settings_path()
+    settings, err = _read_settings(settings_path)
+    if err is not None:
+        return False, err
+    assert settings is not None  # narrow for type-checker
 
     try:
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not write {settings_path}: {exc}"
+        if mode == "never":
+            changed = _remove_hook_entries(settings)
+            verb = "removed"
+        else:
+            changed = _install_hook_entries(settings)
+            verb = "installed"
+    except ValueError as exc:
+        return False, str(exc)
 
-    return True, f"updated {settings_path}"
+    if not changed:
+        return False, f"hook entries already in desired state ({mode})"
+
+    write_err = _write_settings(settings_path, settings)
+    if write_err is not None:
+        return False, write_err
+
+    return True, f"{verb} hook entries in {settings_path}"
+
+
+# -- Skill installation ------------------------------------------------
+
+# Source asset ships with the package and never depends on HOME.
+SKILL_SOURCE = Path(__file__).resolve().parent.parent / "assets" / "skills" / "phileas" / "SKILL.md"
+
+
+def _skill_dest() -> Path:
+    """Live destination for the user-invoked skill (resolved against current HOME)."""
+    return Path.home() / ".claude" / "skills" / "phileas" / "SKILL.md"
+
+
+def _install_skill(force: bool = False) -> tuple[bool, str]:
+    """Install the Phileas skill into ~/.claude/skills/phileas/SKILL.md.
+
+    Behavior:
+      - Source missing -> error.
+      - Dest missing -> write (idempotent on next run).
+      - Dest exists with matching content -> skip.
+      - Dest exists with custom content -> skip unless force=True.
+    """
+    if not SKILL_SOURCE.is_file():
+        return False, f"skill source missing at {SKILL_SOURCE}"
+
+    try:
+        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not read skill source: {exc}"
+
+    dest = _skill_dest()
+    if dest.exists():
+        try:
+            existing = dest.read_text(encoding="utf-8")
+        except OSError as exc:
+            return False, f"could not read existing skill: {exc}"
+        if existing == source_text:
+            return False, f"skill already installed at {dest}"
+        if not force:
+            return False, f"skill exists with custom content at {dest} (use force=True to overwrite)"
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(source_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write skill: {exc}"
+
+    return True, f"installed skill at {dest}"
+
+
+# -- Agent installation ------------------------------------------------
+
+# Source asset ships with the package and never depends on HOME.
+AGENT_SOURCE = Path(__file__).resolve().parent.parent / "assets" / "agents" / "phileas-recall.md"
+
+
+def _agent_dest() -> Path:
+    """Live destination for the phileas-recall judge agent."""
+    return Path.home() / ".claude" / "agents" / "phileas-recall.md"
+
+
+def _install_agent(force: bool = False) -> tuple[bool, str]:
+    """Install the phileas-recall judge agent into ~/.claude/agents/phileas-recall.md.
+
+    Same idempotency contract as `_install_skill`: source missing -> error;
+    dest missing -> write; matching content -> skip; custom content -> skip
+    unless force=True.
+    """
+    if not AGENT_SOURCE.is_file():
+        return False, f"agent source missing at {AGENT_SOURCE}"
+
+    try:
+        source_text = AGENT_SOURCE.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not read agent source: {exc}"
+
+    dest = _agent_dest()
+    if dest.exists():
+        try:
+            existing = dest.read_text(encoding="utf-8")
+        except OSError as exc:
+            return False, f"could not read existing agent: {exc}"
+        if existing == source_text:
+            return False, f"agent already installed at {dest}"
+        if not force:
+            return False, f"agent exists with custom content at {dest} (use force=True to overwrite)"
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(source_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write agent: {exc}"
+
+    return True, f"installed agent at {dest}"
 
 
 def _download_embedding_model() -> bool:
@@ -296,10 +464,24 @@ def run_wizard() -> None:
             console.print("        Add this to ~/.claude/.mcp.json manually:")
             console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
 
-        changed, msg = _install_hooks()
+        # Recall delivery is via skill by default; hook only when mode == "always".
+        # Read the just-written config to find the resolved recall mode.
+        from phileas.config import load_config
+
+        recall_mode = load_config(home=home).recall.mode
+
+        changed, msg = _install_skill()
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Skill {marker} -- {msg}")
+
+        changed, msg = _install_agent()
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Agent {marker} -- {msg}")
+
+        changed, msg = _sync_hook_state(recall_mode)
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
         console.print(f"  Hooks {marker} -- {msg}")
-        console.print("  [dim]Restart Claude Code to pick up MCP + hook changes.[/dim]")
+        console.print("  [dim]Restart Claude Code to pick up MCP + skill + hook changes.[/dim]")
 
     # 6. Download models
     console.print()

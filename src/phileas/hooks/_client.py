@@ -26,7 +26,7 @@ def daemon_port() -> int | None:
         return None
 
 
-def call_daemon(method: str, params: dict, timeout: float = 8.0) -> tuple[bool, object]:
+def call_daemon(method: str, params: dict, timeout: float = 30.0) -> tuple[bool, object]:
     """POST to the daemon. Returns (ok, payload-or-error-string).
 
     A False result with a string error message is the contract -- callers

@@ -240,6 +240,51 @@ class MemoryEngine:
         self.graph.link_memory(memory_id, "Day", iso_date)
 
     # ------------------------------------------------------------------
+    # recall_raw — Stage-1 only (PHI-40)
+    # ------------------------------------------------------------------
+
+    def recall_raw(
+        self,
+        query: str,
+        memory_type: str | None = None,
+        min_importance: int | None = None,
+    ) -> list[dict]:
+        """Stage-1 only candidate gather. Returns the unranked candidate pool.
+
+        Mirrors recall's gather phase (keyword + semantic + graph + raw text)
+        but skips the cross-encoder rerank and MMR. Intended for callers that
+        do their own relevance judgement — e.g. the phileas-recall judge
+        subagent invoked from the agent_summarizer skill pipeline.
+
+        Skips Path 3c (LLM-resolved referents) since the daemon has no LLM.
+
+        Returns: list of dicts with id, summary, type, importance, created_at,
+        hop (graph distance, 0 = entity-name match), gather_source (list of
+        paths that contributed: any of "keyword", "semantic", "graph",
+        "raw_text").
+        """
+        from phileas.engine_gather import gather_candidates_raw
+
+        with OpTimer(
+            log,
+            "recall_raw",
+            query=query,
+            memory_type=memory_type,
+            min_importance=min_importance,
+        ) as timer:
+            result = gather_candidates_raw(
+                db=self.db,
+                vector=self.vector,
+                graph=self.graph,
+                config=self.config,
+                query=query,
+                memory_type=memory_type,
+                min_importance=min_importance,
+            )
+            timer.extra["candidates"] = len(result)
+            return result
+
+    # ------------------------------------------------------------------
     # recall
     # ------------------------------------------------------------------
 

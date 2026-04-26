@@ -49,6 +49,11 @@ graph_boost = 0.5                  # Boost factor for graph-connected results
 mmr_lambda = 0.7                   # MMR diversity/relevance tradeoff (1.0 = pure relevance)
 default_top_k = 10                 # Default number of results to return
 
+# Skill-driven recall delivery (PHI-39).
+mode = "auto"                      # "auto" | "always" | "never"
+format = "pointer"                 # "pointer" (short brief + IDs) | "inline" (full block)
+pipeline = "rerank"                # "rerank" (default, CPU cross-encoder) | "agent_summarizer" (LLM-as-judge subagent)
+
 [scoring]
 relevance_weight = 0.55            # Weight for semantic relevance in final score
 importance_weight = 0.2            # Weight for memory importance (1-10)
@@ -134,7 +139,7 @@ The reranker also runs locally. It provides a second-pass relevance score after 
 
 ### [recall]
 
-Controls the retrieval pipeline.
+Controls the retrieval pipeline (server-side scoring) and the delivery mechanism (how Claude Code is told about relevant memories).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -143,6 +148,37 @@ Controls the retrieval pipeline.
 | `graph_boost` | float | `0.5` | Score boost for graph-connected memories |
 | `mmr_lambda` | float | `0.7` | Tradeoff between relevance (1.0) and diversity (0.0) in MMR selection |
 | `default_top_k` | int | `10` | Default number of results for recall |
+| `mode` | string | `"auto"` | Delivery mode: `auto` (skill-driven, recall when memory-relevant), `always` (legacy hook on every prompt), `never` (skip recall) |
+| `format` | string | `"pointer"` | Output format: `pointer` (short brief + memory IDs) or `inline` (full block, parity with the legacy hook) |
+| `pipeline` | string | `"rerank"` | Scoring pipeline: `rerank` (gather + cross-encoder + MMR) or `agent_summarizer` (gather + LLM-as-judge subagent — uses `mcp__phileas__recall_raw` + the `phileas-recall` agent, billed per recall) |
+
+#### `mode` — when does recall fire?
+
+Phileas v0.2 runs recall through a skill (`~/.claude/skills/phileas/SKILL.md`) instead of a `UserPromptSubmit` hook. The agent invokes the skill when the prompt looks memory-relevant — references to past work, decisions, named projects, people, dates, or phrases like "remember when", "last time", "what did we".
+
+| Mode | Behavior |
+|------|----------|
+| `"auto"` (default) | Skill fires when the prompt matches its description. Memory-irrelevant prompts (`ls`, `run the tests`) skip recall entirely. |
+| `"always"` | Re-installs the legacy `phileas-hook recall` `UserPromptSubmit` hook so recall runs unconditionally on every turn. Power-user opt-in. |
+| `"never"` | Skill is a no-op even when the prompt matches. Use when you want recall fully suppressed for a project. |
+
+Switch modes by editing the config and running `phileas migrate-recall` — that command reconciles the skill install and the hook entry against the current `mode`.
+
+#### `format` — what does Claude see?
+
+| Format | Example |
+|--------|---------|
+| `"pointer"` (default) | One- or two-sentence brief with memory IDs you can drill into via `mcp__phileas__about` / `timeline`. Cheap on context. |
+| `"inline"` | Full `<phileas-recall>` block with one line per memory (id-prefix, type, importance, score, created_at, summary). Matches the legacy hook output. |
+
+#### `pipeline` — how is the candidate pool scored?
+
+Two options:
+
+- **`rerank`** (default): gather (vector + keyword + graph + raw text) → cross-encoder rerank → MMR selection. All work happens server-side on CPU; cost per recall is roughly free, but the cross-encoder has known weaknesses on personal/emotional memories (MS MARCO scores them near zero).
+- **`agent_summarizer`**: gather → call `mcp__phileas__recall_raw` to fetch the full Stage-1 candidate pool (~1000 items) → invoke the `phileas-recall` judge subagent (Claude Sonnet 4.6) which scores relevance and returns a brief + ranked memory IDs. This burns one paid LLM call per recall but is generally smarter at semantic-vague queries and emotional themes. The judge is installed by `phileas migrate-recall` to `~/.claude/agents/phileas-recall.md`.
+
+The default is `rerank` until the PHI-40 head-to-head eval (held-out gold-set precision@5, p95 latency, cost per recall — see `experiments/recall-agent-vs-rerank/RESULTS.md` once it lands) demonstrates `agent_summarizer` clears the decision rule. Until then, `agent_summarizer` is opt-in via this config knob.
 
 ### [scoring]
 
@@ -175,3 +211,22 @@ home = "~/.phileas"
 ```
 
 This gives you full store/recall functionality with vector search and keyword matching. Add an `[llm]` section later for smart features.
+
+## Project-local config (`.phileas.toml`)
+
+Per-project overrides live in a `.phileas.toml` at the repo root (or any ancestor of your working directory — Phileas walks upward to find it). Same TOML schema as `~/.phileas/config.toml`; values are deep-merged.
+
+Resolution order, later wins:
+1. Built-in defaults.
+2. User config: `~/.phileas/config.toml` (or `$PHILEAS_HOME/config.toml`).
+3. Project config: nearest `.phileas.toml` walking up from cwd.
+
+Example: silence recall in one project while keeping global behavior intact.
+
+```toml
+# /path/to/secret-side-project/.phileas.toml
+[recall]
+mode = "never"
+```
+
+After editing project config, run `phileas migrate-recall` from inside the project to reconcile the skill / hook install state.

@@ -161,3 +161,66 @@ def test_reflect_is_agent_driven_stub(tmp_dir):
 
     assert engine.reflect() == []
     assert engine.reflect(target_date=today) == []
+
+
+# ----------------------------------------------------------------------
+# recall_raw (PHI-40)
+# ----------------------------------------------------------------------
+
+
+def test_recall_raw_returns_list(tmp_dir):
+    engine = _make_engine(tmp_dir)
+    engine.memorize(summary="Giao likes coffee in the morning", memory_type="behavior", importance=5)
+    pool = engine.recall_raw("coffee")
+    assert isinstance(pool, list)
+    assert len(pool) > 0
+
+
+def test_recall_raw_dict_shape(tmp_dir):
+    engine = _make_engine(tmp_dir)
+    engine.memorize(summary="Giao likes coffee", memory_type="behavior", importance=5)
+    pool = engine.recall_raw("coffee")
+    item = pool[0]
+    assert set(item.keys()) == {
+        "id",
+        "summary",
+        "type",
+        "importance",
+        "created_at",
+        "hop",
+        "gather_source",
+    }
+    assert isinstance(item["gather_source"], list)
+    assert all(s in {"keyword", "semantic", "graph", "raw_text"} for s in item["gather_source"])
+
+
+def test_recall_raw_filters_by_memory_type(tmp_dir):
+    engine = _make_engine(tmp_dir)
+    engine.memorize(summary="Giao likes coffee", memory_type="behavior", importance=5)
+    engine.memorize(summary="Coffee shop opened on Main St", memory_type="event", importance=5)
+    behavior_pool = engine.recall_raw("coffee", memory_type="behavior")
+    assert all(item["type"] == "behavior" for item in behavior_pool)
+
+
+def test_recall_raw_filters_by_min_importance(tmp_dir):
+    engine = _make_engine(tmp_dir)
+    engine.memorize(summary="Giao likes coffee", memory_type="behavior", importance=3)
+    engine.memorize(summary="Giao loves espresso", memory_type="behavior", importance=8)
+    pool = engine.recall_raw("coffee espresso", min_importance=7)
+    assert all(item["importance"] >= 7 for item in pool)
+    assert any("espresso" in item["summary"] for item in pool)
+
+
+def test_recall_raw_empty_for_nonsense(tmp_dir):
+    engine = _make_engine(tmp_dir)
+    engine.memorize(summary="Giao likes coffee", memory_type="behavior", importance=5)
+    pool = engine.recall_raw("zzznonexistentqueryxxx")
+    assert isinstance(pool, list)
+
+
+def test_recall_raw_skips_forgotten(tmp_dir):
+    engine = _make_engine(tmp_dir)
+    r = engine.memorize(summary="Giao likes coffee", memory_type="behavior", importance=5)
+    engine.forget(r["id"])
+    pool = engine.recall_raw("coffee")
+    assert not any(item["id"] == r["id"] for item in pool)
