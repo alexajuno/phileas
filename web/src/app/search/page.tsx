@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { SearchView } from "@/components/search-view";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { searchMemories } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -40,12 +41,15 @@ export default async function Page({
             Raw text search across all memories.
           </p>
         </div>
-        <Link
-          href="/"
-          className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          ← today
-        </Link>
+        <div className="flex items-center gap-1.5">
+          <ThemeToggle />
+          <Link
+            href="/"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            ← today
+          </Link>
+        </div>
       </header>
 
       {error ? (

@@ -17,6 +17,7 @@
     "lucide-react": "^1.8.0",
     "motion": "^12.38.0",
     "next": "16.2.4",
+    "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-day-picker": "^9.14.0",
     "react-dom": "19.2.4",
@@ -36,6 +37,8 @@
     "typescript": "^5"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3"]
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
