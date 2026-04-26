@@ -349,13 +349,20 @@ class GraphStore:
             return []
         entity_id = _entity_id(node_type, name)
         result = self._conn.execute(
-            "MATCH (n:Entity {id: $id}) RETURN n.name AS name, n.type AS type, n.props AS props",
+            "MATCH (n:Entity {id: $id}) RETURN n.name AS name, n.type AS type, n.props AS props, n.aliases AS aliases",
             parameters={"id": entity_id},
         )
         rows = []
         while result.has_next():
             row = result.get_next()
-            rows.append({"name": row[0], "type": row[1], "props": row[2]})
+            rows.append(
+                {
+                    "name": row[0],
+                    "type": row[1],
+                    "props": row[2],
+                    "aliases": row[3] or "[]",
+                }
+            )
         return rows
 
     @_locked
@@ -648,6 +655,52 @@ class GraphStore:
                     "type": entity_type,
                     "aliases": r[1] or "[]",
                     "memory_count": int(r[2]),
+                }
+            )
+        return rows
+
+    @_locked
+    def list_all_entities(
+        self,
+        limit: int = 500,
+        type_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return all entities with their ABOUT-edge counts.
+
+        Powers the web entity-explorer list page; ranking by memory_count
+        keeps the most-mentioned nodes near the top so the list is useful
+        even before the user filters.
+        """
+        if not self._ensure_connected():
+            return []
+        if type_filter:
+            cypher = (
+                "MATCH (e:Entity) WHERE e.type = $t "
+                "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+                "WITH e, COUNT(m) AS cnt "
+                "RETURN e.name AS name, e.type AS type, e.aliases AS aliases, cnt "
+                "ORDER BY cnt DESC, e.type, e.name LIMIT $n"
+            )
+            params: dict[str, Any] = {"t": type_filter, "n": int(limit)}
+        else:
+            cypher = (
+                "MATCH (e:Entity) "
+                "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+                "WITH e, COUNT(m) AS cnt "
+                "RETURN e.name AS name, e.type AS type, e.aliases AS aliases, cnt "
+                "ORDER BY cnt DESC, e.type, e.name LIMIT $n"
+            )
+            params = {"n": int(limit)}
+        result = self._conn.execute(cypher, parameters=params)
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "name": r[0],
+                    "type": r[1],
+                    "aliases": r[2] or "[]",
+                    "memory_count": int(r[3]),
                 }
             )
         return rows

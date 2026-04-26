@@ -1,7 +1,5 @@
-import Link from "next/link";
-
 import { SearchView } from "@/components/search-view";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { SiteHeader } from "@/components/site-header";
 import { searchMemories } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -31,26 +29,8 @@ export default async function Page({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 pb-16 pt-6 sm:px-6">
-      <header className="mb-6 flex items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-base font-medium tracking-tight">
-            Phileas <span className="text-muted-foreground">· search</span>
-          </h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Raw text search across all memories.
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <ThemeToggle />
-          <Link
-            href="/"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            ← today
-          </Link>
-        </div>
-      </header>
+    <div className="mx-auto w-full max-w-3xl px-5 pb-16 sm:px-6">
+      <SiteHeader />
 
       {error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
