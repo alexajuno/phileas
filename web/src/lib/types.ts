@@ -31,3 +31,26 @@ export type DayCount = {
   day: string;
   count: number;
 };
+
+export type EntitySummary = {
+  name: string;
+  type: string;
+  aliases: string[];
+  memory_count: number;
+};
+
+export type EntityRelation = {
+  name: string;
+  type: string;
+  edge_type: string;
+  direction: "out" | "in";
+};
+
+export type EntityDetail = {
+  name: string;
+  type: string;
+  aliases: string[];
+  props: Record<string, unknown>;
+  relations: EntityRelation[];
+  memories: MemoryItem[];
+};

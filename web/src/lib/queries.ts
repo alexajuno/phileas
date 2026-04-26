@@ -112,6 +112,23 @@ export function fetchMemoriesForExport(filters: ExportFilters): MemoryItem[] {
   return rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
 }
 
+export function fetchMemoriesByIds(ids: string[]): MemoryItem[] {
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(",");
+  const sql = `SELECT id, summary, memory_type, importance, status,
+                      access_count, reinforcement_count, last_reinforced,
+                      raw_text, tags, daily_ref, source_session_id,
+                      created_at, updated_at
+                 FROM memory_items
+                WHERE status = 'active'
+                  AND id IN (${placeholders})
+                ORDER BY created_at DESC`;
+  const rows = getDb()
+    .prepare<string[], Row>(sql)
+    .all(...ids);
+  return rows.map((r) => ({ ...r, tags: parseTags(r.tags) }));
+}
+
 export function fetchDaysWithCounts(limit = 60): DayCount[] {
   // SQLite substring is UTC-stored; collapse into local-day buckets server-side
   // by pulling all created_at values then grouping. Cheap for <100k rows.

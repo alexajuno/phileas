@@ -430,6 +430,11 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_neighborhood(params["node_type"], params["name"], depth=params.get("depth", 1))
         elif op == "get_top_entities_by_type":
             return graph.get_top_entities_by_type(params["entity_type"], top_n=params.get("top_n", 15))
+        elif op == "list_all_entities":
+            return graph.list_all_entities(
+                limit=params.get("limit", 500),
+                type_filter=params.get("type_filter"),
+            )
         elif op == "status":
             return graph.status()
         else:
