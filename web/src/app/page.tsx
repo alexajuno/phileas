@@ -1,8 +1,5 @@
-import Link from "next/link";
-import { Network, Search } from "lucide-react";
-
 import { MemoryList } from "@/components/memory-list";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { SiteHeader } from "@/components/site-header";
 import { isValidDay, todayLocal } from "@/lib/day";
 import { fetchMemoriesForDay } from "@/lib/queries";
 
@@ -52,35 +49,8 @@ export default async function Page({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 pb-16 pt-6 sm:px-6">
-      <header className="mb-6 flex items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-base font-medium tracking-tight">
-            Phileas{" "}
-            <span className="text-muted-foreground">· daily memories</span>
-          </h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Long-term memory, captured throughout the day.
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <ThemeToggle />
-          <Link
-            href="/entities"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card/60 px-1.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-            title="Browse entities"
-          >
-            <Network className="h-3.5 w-3.5" aria-hidden />
-          </Link>
-          <Link
-            href="/search"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card/60 px-1.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-            title="Search all memories"
-          >
-            <Search className="h-3.5 w-3.5" aria-hidden />
-          </Link>
-        </div>
-      </header>
+    <div className="mx-auto w-full max-w-3xl px-5 pb-16 sm:px-6">
+      <SiteHeader currentTab="today" />
 
       {error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">

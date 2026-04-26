@@ -222,12 +222,9 @@ export function EntityListView({
               >
                 <Link
                   href={entityHref(e)}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-muted/40"
+                  className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-muted/40"
                 >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <Badge variant="outline" className="shrink-0">
-                      {e.type}
-                    </Badge>
+                  <div className="flex min-w-0 items-baseline gap-2">
                     <span className="truncate text-foreground">{e.name}</span>
                     {e.aliases.length > 0 && (
                       <span className="truncate text-xs text-muted-foreground">
@@ -235,7 +232,13 @@ export function EntityListView({
                       </span>
                     )}
                   </div>
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 text-[10px]"
+                  >
+                    {e.type}
+                  </Badge>
+                  <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                     {e.memory_count}
                   </span>
                 </Link>

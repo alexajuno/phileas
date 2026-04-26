@@ -1,7 +1,5 @@
-import Link from "next/link";
-
 import { EntityListView } from "@/components/entity-list-view";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { SiteHeader } from "@/components/site-header";
 import { DaemonUnavailableError } from "@/lib/daemon";
 import { listEntities } from "@/lib/graph";
 import type { EntitySummary } from "@/lib/types";
@@ -47,32 +45,8 @@ export default async function Page({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 pb-16 pt-6 sm:px-6">
-      <header className="mb-6 flex items-baseline justify-between gap-4">
-        <div>
-          <h1 className="text-base font-medium tracking-tight">
-            Phileas <span className="text-muted-foreground">· entities</span>
-          </h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Knowledge graph nodes — people, places, concepts mentioned across memories.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <ThemeToggle />
-          <Link
-            href="/search"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            ↗ search
-          </Link>
-          <Link
-            href="/"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            ← today
-          </Link>
-        </div>
-      </header>
+    <div className="mx-auto w-full max-w-3xl px-5 pb-16 sm:px-6">
+      <SiteHeader currentTab="entities" />
 
       {error ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
