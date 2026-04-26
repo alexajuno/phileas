@@ -1,0 +1,34 @@
+# Manual semantic merges for entity clusters the auto-merger can't safely detect.
+#
+# Each entry declares a canonical (type, name) plus a list of satellites
+# whose ABOUT/REL edges get re-targeted onto the canonical, and which are
+# then deleted. Satellite display names + existing aliases are unioned
+# into the canonical's aliases so the merged identity is still findable
+# via search_nodes.
+#
+# Tier 3 wins over Tier 1/2 auto-merges — if the same satellite appears
+# in both, the override's canonical is the final destination.
+#
+# Format:
+#   - canonical: { type: <Type>, name: <Name> }
+#     aliases_to_add:        # optional; merged into canonical.aliases
+#       - <alias>
+#     merge:                 # required; satellites to absorb
+#       - { type: <Type>, name: <Name> }
+#
+# Run dry-run first to preview:
+#   uv run python scripts/migrate_entity_duplicates.py --overrides scripts/entity_merge_overrides.yml
+# Apply:
+#   uv run python scripts/migrate_entity_duplicates.py --overrides scripts/entity_merge_overrides.yml --apply
+
+- canonical: { type: Person, name: phuongtq }
+  aliases_to_add:
+    - "Phuong"
+    - "Phương"
+    - "chị Phuong"
+    - "chị"
+  merge:
+    - { type: Person, name: Phuong }
+    - { type: Person, name: "Phương" }
+    - { type: Person, name: "@phuongtq" }
+    - { type: Person, name: "Phuong (phuongtq)" }
