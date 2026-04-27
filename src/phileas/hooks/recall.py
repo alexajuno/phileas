@@ -35,6 +35,7 @@ from phileas.hooks._client import call_daemon
 
 TOP_K = 10
 CONFIG_PATH = Path.home() / ".phileas" / "config.toml"
+METRICS_DB_PATH = Path.home() / ".phileas" / "metrics.db"
 
 # Triggers used by `mode = "auto"` to decide whether the prompt looks
 # memory-relevant. Mirror the cues called out in SKILL.md's description so the
@@ -206,8 +207,97 @@ def run_rerank(prompt: str) -> int:
     return 0
 
 
+def _gather_source_histogram(items: list[dict]) -> dict:
+    """Same shape as engine._gather_source_histogram; duplicated to keep the
+    hook free of phileas.engine import overhead (heavy chroma/kuzu deps)."""
+    hist: dict[str, int] = {}
+    for it in items or ():
+        srcs = it.get("gather_source") or ()
+        if isinstance(srcs, str):
+            srcs = (srcs,)
+        for s in srcs:
+            hist[s] = hist.get(s, 0) + 1
+    return hist
+
+
+def _hop_histogram(items: list[dict]) -> dict:
+    hist: dict[str, int] = {}
+    for it in items or ():
+        h = it.get("hop")
+        if h is None:
+            continue
+        hist[str(h)] = hist.get(str(h), 0) + 1
+    return hist
+
+
+def _write_hook_trace(
+    query: str,
+    payload: list[dict],
+    latency_ms: float,
+) -> None:
+    """Append a hook_dispatch row to ~/.phileas/metrics.db.
+
+    Best-effort — silent on any failure (file missing, schema not yet created,
+    locked, anything). The hook process is short-lived so we open and close
+    the connection inline; engine writers reuse a long-lived MetricsWriter.
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+
+    try:
+        if not METRICS_DB_PATH.parent.exists():
+            METRICS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(METRICS_DB_PATH), isolation_level=None, timeout=1.0)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            # Ensure the table exists even if the engine hasn't started yet.
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS recall_traces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    query TEXT,
+                    latency_ms REAL,
+                    candidate_count INTEGER,
+                    returned_ids TEXT,
+                    pool_chars INTEGER,
+                    extra TEXT
+                )"""
+            )
+            ids = [m.get("id") for m in payload if m.get("id")]
+            pool_chars = len(json.dumps(payload, default=str))
+            extra = {
+                "gather_sources": _gather_source_histogram(payload),
+                "hop_distribution": _hop_histogram(payload),
+            }
+            conn.execute(
+                """INSERT INTO recall_traces
+                   (created_at, source, query, latency_ms, candidate_count,
+                    returned_ids, pool_chars, extra)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    "hook_dispatch",
+                    query[:4096],
+                    round(latency_ms, 2),
+                    len(payload),
+                    json.dumps(ids),
+                    pool_chars,
+                    json.dumps(extra),
+                ),
+            )
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
 def run_agent_summarizer(prompt: str) -> int:
+    from time import perf_counter
+
+    _t0 = perf_counter()
     ok, payload = call_daemon("recall_raw", {"query": prompt})
+    _elapsed_ms = (perf_counter() - _t0) * 1000
     if not ok:
         print(format_error(str(payload)))
         return 0
@@ -218,6 +308,7 @@ def run_agent_summarizer(prompt: str) -> int:
         # Empty pool -- nothing to dispatch. Stay silent so we don't emit a
         # noisy directive that the agent then has to reason about.
         return 0
+    _write_hook_trace(prompt, payload, _elapsed_ms)
     print(format_dispatch_directive(prompt, len(payload)))
     return 0
 

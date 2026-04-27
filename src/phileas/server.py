@@ -371,11 +371,20 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
     from collections import defaultdict
     from datetime import date as _date
     from datetime import timedelta
+    from time import perf_counter
 
+    _t0 = perf_counter()
     end = _date.today()
     start = end - timedelta(days=days)
     items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
     if not items:
+        _trace_recent(
+            items=[],
+            days=days,
+            top_per_day=top_per_day,
+            min_importance=min_importance,
+            latency_ms=(perf_counter() - _t0) * 1000,
+        )
         return f"No memories found in the last {days} day(s)."
 
     by_day: dict[str, list[dict]] = defaultdict(list)
@@ -383,6 +392,7 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
         day = (item.get("created_at") or "")[:10]
         by_day[day].append(item)
 
+    selected: list[dict] = []
     lines = [f"Recent memories (last {days} day(s)):"]
     for day in sorted(by_day.keys(), reverse=True):
         day_items = by_day[day]
@@ -390,11 +400,41 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
         if not filtered:
             filtered = day_items
         top = sorted(filtered, key=lambda x: x.get("importance") or 0, reverse=True)[:top_per_day]
+        selected.extend(top)
         lines.append(f"\n{day} ({len(day_items)} total, showing {len(top)}):")
         for item in top:
             imp = item.get("importance", "?")
             lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}")
+
+    _trace_recent(
+        items=selected,
+        days=days,
+        top_per_day=top_per_day,
+        min_importance=min_importance,
+        latency_ms=(perf_counter() - _t0) * 1000,
+    )
     return "\n".join(lines)
+
+
+def _trace_recent(items: list[dict], days: int, top_per_day: int, min_importance: int, latency_ms: float) -> None:
+    """Best-effort trace write for the recall_recent MCP tool."""
+    try:
+        from phileas.engine import _trace_recall
+
+        _trace_recall(
+            engine._metrics,
+            source="engine.recall_recent",
+            query=None,
+            latency_ms=latency_ms,
+            result=items,
+            extra={
+                "days": days,
+                "top_per_day": top_per_day,
+                "min_importance": min_importance,
+            },
+        )
+    except Exception:
+        pass
 
 
 @mcp.tool()

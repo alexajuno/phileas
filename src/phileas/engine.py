@@ -60,6 +60,65 @@ def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     return max(0.0, (now - target).total_seconds() / 86400.0)
 
 
+def _gather_source_histogram(items: list[dict]) -> dict[str, int]:
+    """Count occurrences of each gather_source path across the candidate pool.
+
+    `gather_source` is a list (e.g. ["keyword", "semantic"]); a memory matched
+    by two paths increments both counts.
+    """
+    hist: dict[str, int] = {}
+    for it in items or ():
+        srcs = it.get("gather_source") or ()
+        if isinstance(srcs, str):
+            srcs = (srcs,)
+        for s in srcs:
+            hist[s] = hist.get(s, 0) + 1
+    return hist
+
+
+def _hop_histogram(items: list[dict]) -> dict[str, int]:
+    hist: dict[str, int] = {}
+    for it in items or ():
+        h = it.get("hop")
+        if h is None:
+            continue
+        key = str(h)
+        hist[key] = hist.get(key, 0) + 1
+    return hist
+
+
+def _trace_recall(
+    metrics,
+    *,
+    source: str,
+    query: str | None,
+    latency_ms: float,
+    result: list[dict],
+    extra: dict | None = None,
+) -> None:
+    """Best-effort wrapper around MetricsWriter.record_recall_trace.
+
+    Computes the input-token proxy (pool_chars) once and pulls returned IDs.
+    Never raises into the recall path.
+    """
+    try:
+        import json as _json
+
+        ids = [r.get("id") for r in (result or ()) if r.get("id")]
+        pool_chars = len(_json.dumps(result or [], default=str))
+        metrics.record_recall_trace(
+            source=source,
+            query=query,
+            latency_ms=round(latency_ms, 2) if latency_ms is not None else None,
+            candidate_count=len(result or ()),
+            returned_ids=ids,
+            pool_chars=pool_chars,
+            extra=extra,
+        )
+    except Exception:
+        pass
+
+
 def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
     return {
         "id": item.id,
@@ -263,6 +322,8 @@ class MemoryEngine:
         paths that contributed: any of "keyword", "semantic", "graph",
         "raw_text").
         """
+        from time import perf_counter
+
         from phileas.engine_gather import gather_candidates_raw
 
         with OpTimer(
@@ -272,6 +333,7 @@ class MemoryEngine:
             memory_type=memory_type,
             min_importance=min_importance,
         ) as timer:
+            _t0 = perf_counter()
             result = gather_candidates_raw(
                 db=self.db,
                 vector=self.vector,
@@ -282,6 +344,19 @@ class MemoryEngine:
                 min_importance=min_importance,
             )
             timer.extra["candidates"] = len(result)
+            _trace_recall(
+                self._metrics,
+                source="engine.recall_raw",
+                query=query,
+                latency_ms=(perf_counter() - _t0) * 1000,
+                result=result,
+                extra={
+                    "memory_type": memory_type,
+                    "min_importance": min_importance,
+                    "gather_sources": _gather_source_histogram(result),
+                    "hop_distribution": _hop_histogram(result),
+                },
+            )
             return result
 
     # ------------------------------------------------------------------
@@ -887,6 +962,7 @@ class MemoryEngine:
             if results:
                 timer.extra["top_score"] = round(results[0]["score"], 3)
 
+            _elapsed_ms = (perf_counter() - _t0) * 1000
             try:
                 top1 = results[0]["score"] if results else None
                 mean = sum(r.get("score", 0.0) for r in results) / len(results) if results else None
@@ -898,10 +974,25 @@ class MemoryEngine:
                     mean_score=mean,
                     empty=not results,
                     hot_hit=False,
-                    latency_ms=(perf_counter() - _t0) * 1000,
+                    latency_ms=_elapsed_ms,
                 )
             except Exception:
                 pass
+
+            _trace_recall(
+                self._metrics,
+                source="engine.recall",
+                query=query,
+                latency_ms=_elapsed_ms,
+                result=results,
+                extra={
+                    "top_k": _effective_top_k,
+                    "memory_type": memory_type,
+                    "min_importance": min_importance,
+                    "skip_llm": _skip_llm,
+                    "top_score": round(results[0]["score"], 3) if results else None,
+                },
+            )
 
             return results
 

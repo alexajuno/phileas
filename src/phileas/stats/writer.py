@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS daemon_events (
     payload_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_daemon_created_kind ON daemon_events(created_at, kind);
+
+CREATE TABLE IF NOT EXISTS recall_traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    query TEXT,
+    latency_ms REAL,
+    candidate_count INTEGER,
+    returned_ids TEXT,
+    pool_chars INTEGER,
+    extra TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_recall_traces_created ON recall_traces(created_at);
+CREATE INDEX IF NOT EXISTS idx_recall_traces_source ON recall_traces(source);
 """
 
 
@@ -124,6 +138,45 @@ class MetricsWriter:
             )
         except Exception as e:
             log.debug("record_ingest failed", extra={"err": str(e)})
+
+    def record_recall_trace(
+        self,
+        source: str,
+        query: str | None,
+        latency_ms: float | None,
+        candidate_count: int | None,
+        returned_ids: list[str] | None = None,
+        pool_chars: int | None = None,
+        extra: dict | None = None,
+    ) -> None:
+        """Append one recall trace row. Best-effort — never raises.
+
+        source is one of: 'hook_dispatch', 'engine.recall', 'engine.recall_raw',
+        'engine.recall_recent'. The web /monitoring page groups rows by
+        timestamp + query for temporal correlation across a single user prompt.
+        """
+        if self._conn is None:
+            return
+        try:
+            q = query if query is None else query[:4096]
+            self._conn.execute(
+                """INSERT INTO recall_traces
+                   (created_at, source, query, latency_ms, candidate_count,
+                    returned_ids, pool_chars, extra)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    self._now(),
+                    source,
+                    q,
+                    latency_ms,
+                    candidate_count,
+                    json_mod.dumps(returned_ids) if returned_ids is not None else None,
+                    pool_chars,
+                    json_mod.dumps(extra) if extra else None,
+                ),
+            )
+        except Exception as e:
+            log.debug("record_recall_trace failed", extra={"err": str(e)})
 
     def record_daemon(self, kind: str, payload: dict | None = None) -> None:
         if self._conn is None:
