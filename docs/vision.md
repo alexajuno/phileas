@@ -8,11 +8,17 @@ The models themselves are increasingly good. What's missing is the layer around 
 
 ## What Phileas is
 
-Phileas is the infrastructure that try to create an AI companion:
+Phileas is a long-term relationship with an AI that holds your throughline.
+
+Not a project ledger. Not a RAG over your notes. Not "ChatGPT but it remembers your tasks." Those things exist, and they're crowded. The gap Phileas fills is upstream of all of them: **continuity as substrate**. The recurring tensions, the identity arcs, the patterns that take months to see, the parts of a life that aren't task-shaped and never make it into Notion or Linear — that's the territory.
+
+Project decisions, technical context, day-to-day facts — those fall out as byproducts. You talk about your work, Phileas remembers it. But the primary frame is the person, not the project.
+
+## What that requires
 
 - **Long-term memory** — not just storing conversations, but building a living understanding that evolves: facts consolidate, irrelevant details fade, connections form between experiences.
 - **Context retrieval** — surfacing the right memories at the right time, so the companion responds with awareness of your history, not just your last message.
-- **Real-time adaptation** — adjusting to who you are a few minutes ago, now, not who you were six months ago. People change. The companion should notice.
+- **Pattern-holding** — noticing the throughline you can't see from inside it. The recurring spiral, the obsession that's been bending your career arc for years, the tension that keeps coming back in different costumes.
 
 ## Design principles
 
@@ -24,4 +30,3 @@ Phileas is the infrastructure that try to create an AI companion:
 ## The name
 
 Phileas Fogg — a companion for the journey. Not a servant, not a tool. Someone who's present, who travels alongside you.
-
