@@ -187,7 +187,7 @@ def gather_candidates_raw(
 
     # Path 1: keyword search (SQLite)
     filtered_q = _strip_stopwords(query)
-    keyword_hits = db.search_by_keyword(filtered_q, top_k=effective_top_k * 3)
+    keyword_hits = db.search_by_keyword(filtered_q, top_k=None)  # no cap; ~1500-row scan is cheap
     for item in keyword_hits:
         candidates[item.id] = item
         keyword_ids.add(item.id)
@@ -203,7 +203,7 @@ def gather_candidates_raw(
         all_type_ids.update(active.keys())
 
     if all_type_ids:
-        semantic_hits = vector.search(query, top_k=effective_top_k * 3)
+        semantic_hits = vector.search(query, top_k=None)  # no cap; HNSW returns up to collection size
         for mem_id, sim in semantic_hits:
             if sim < similarity_floor:
                 continue

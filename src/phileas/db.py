@@ -151,24 +151,29 @@ class Database:
         return [self._row_to_item(row) for row in rows]
 
     @_locked
-    def search_by_keyword(self, query: str, top_k: int = 10) -> list[MemoryItem]:
+    def search_by_keyword(self, query: str, top_k: int | None = None) -> list[MemoryItem]:
         """Keyword search using SQLite LIKE. Splits query into words, scores by match count."""
         words = query.lower().split()
         if not words:
-            return self.get_active_items()[:top_k]
+            active = self.get_active_items()
+            return active if top_k is None else active[:top_k]
 
         conditions = " OR ".join(["LOWER(summary) LIKE ?" for _ in words])
         score_expr = " + ".join(["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words])
         params = [f"%{w}%" for w in words]
 
-        rows = self.conn.execute(
-            f"""SELECT *, ({score_expr}) as match_count
-            FROM memory_items
-            WHERE status = 'active' AND ({conditions})
-            ORDER BY match_count DESC, created_at DESC
-            LIMIT ?""",
-            params + params + [top_k],
-        ).fetchall()
+        sql = (
+            f"SELECT *, ({score_expr}) as match_count "
+            f"FROM memory_items "
+            f"WHERE status = 'active' AND ({conditions}) "
+            f"ORDER BY match_count DESC, created_at DESC"
+        )
+        sql_params = params + params
+        if top_k is not None:
+            sql += " LIMIT ?"
+            sql_params = sql_params + [top_k]
+
+        rows = self.conn.execute(sql, sql_params).fetchall()
         return [self._row_to_item(row) for row in rows]
 
     @_locked

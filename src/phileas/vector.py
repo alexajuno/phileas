@@ -70,11 +70,13 @@ class VectorStore:
             kwargs["metadatas"] = [metadata]
         self._collection.upsert(**kwargs)
 
-    def search(self, query: str, top_k: int = 5) -> list[tuple[str, float]]:
+    def search(self, query: str, top_k: int | None = None) -> list[tuple[str, float]]:
         """Search by semantic similarity. Returns [(memory_id, score)]."""
-        if self._collection.count() == 0:
+        count = self._collection.count()
+        if count == 0:
             return []
-        results = self._collection.query(query_texts=[query], n_results=min(top_k, self._collection.count()))
+        n_results = count if top_k is None else min(top_k, count)
+        results = self._collection.query(query_texts=[query], n_results=n_results)
         ids = results["ids"][0] if results["ids"] else []
         distances = results["distances"][0] if results["distances"] else []
         # ChromaDB returns distances (lower = closer for cosine). Convert to similarity.
