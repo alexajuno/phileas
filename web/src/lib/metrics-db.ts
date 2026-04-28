@@ -149,6 +149,135 @@ function percentile(sorted: number[], p: number): number | null {
   return sorted[idx];
 }
 
+export interface BucketStats {
+  count: number;
+  candidate_p50: number | null;
+  candidate_p95: number | null;
+  latency_p50: number | null;
+  latency_p95: number | null;
+  source_mix: Record<string, number>;
+  hop_distribution: Record<string, number>;
+}
+
+export interface CompareResult {
+  cutoff: string;
+  source: string;
+  since: string;
+  before: BucketStats;
+  after: BucketStats;
+}
+
+interface CompareRawRow {
+  created_at: string;
+  latency_ms: number | null;
+  candidate_count: number | null;
+  extra: string | null;
+}
+
+function median(sorted: number[]): number | null {
+  if (!sorted.length) return null;
+  const mid = sorted.length >>> 1;
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function p95(sorted: number[]): number | null {
+  return percentile(sorted, 95);
+}
+
+function meanFractionMap(maps: Array<Record<string, number>>): Record<string, number> {
+  if (!maps.length) return {};
+  const fractions: Record<string, number[]> = {};
+  for (const m of maps) {
+    const total = Object.values(m).reduce((a, c) => a + c, 0);
+    if (total <= 0) continue;
+    for (const [key, val] of Object.entries(m)) {
+      (fractions[key] ??= []).push(val / total);
+    }
+  }
+  const out: Record<string, number> = {};
+  for (const [key, values] of Object.entries(fractions)) {
+    if (!values.length) continue;
+    out[key] = values.reduce((a, c) => a + c, 0) / maps.length;
+  }
+  return out;
+}
+
+function bucketize(rows: CompareRawRow[]): BucketStats {
+  const cand: number[] = [];
+  const lat: number[] = [];
+  const sources: Array<Record<string, number>> = [];
+  const hops: Array<Record<string, number>> = [];
+  for (const r of rows) {
+    if (r.candidate_count != null) cand.push(r.candidate_count);
+    if (r.latency_ms != null) lat.push(r.latency_ms);
+    if (r.extra) {
+      try {
+        const ex = JSON.parse(r.extra) as Record<string, unknown>;
+        const gs = ex.gather_sources;
+        if (gs && typeof gs === "object") {
+          sources.push(gs as Record<string, number>);
+        }
+        const hd = ex.hop_distribution;
+        if (hd && typeof hd === "object") {
+          const filtered: Record<string, number> = {};
+          for (const [k, v] of Object.entries(hd as Record<string, number>)) {
+            if (k === "None" || k == null) continue;
+            filtered[k] = v;
+          }
+          hops.push(filtered);
+        }
+      } catch {
+        // skip
+      }
+    }
+  }
+  cand.sort((a, b) => a - b);
+  lat.sort((a, b) => a - b);
+  return {
+    count: rows.length,
+    candidate_p50: median(cand),
+    candidate_p95: p95(cand),
+    latency_p50: median(lat),
+    latency_p95: p95(lat),
+    source_mix: meanFractionMap(sources),
+    hop_distribution: meanFractionMap(hops),
+  };
+}
+
+export interface CompareArgs {
+  cutoffIso: string;
+  source?: string;
+  windowDays?: number;
+}
+
+export function compareTraces(args: CompareArgs): CompareResult {
+  const db = getMetricsDb();
+  const source = args.source ?? "engine.recall_raw";
+  const windowDays = args.windowDays ?? 7;
+  const since = new Date(Date.now() - windowDays * 86400 * 1000).toISOString();
+  const rows = db
+    .prepare(
+      `SELECT created_at, latency_ms, candidate_count, extra
+       FROM recall_traces
+       WHERE source = ? AND created_at >= ?`,
+    )
+    .all(source, since) as CompareRawRow[];
+  const before: CompareRawRow[] = [];
+  const after: CompareRawRow[] = [];
+  for (const r of rows) {
+    if (r.created_at < args.cutoffIso) before.push(r);
+    else after.push(r);
+  }
+  return {
+    cutoff: args.cutoffIso,
+    source,
+    since,
+    before: bucketize(before),
+    after: bucketize(after),
+  };
+}
+
 export function aggregateRecent(days = 7): AggregateResult {
   const db = getMetricsDb();
   const since = new Date(Date.now() - days * 86400 * 1000).toISOString();

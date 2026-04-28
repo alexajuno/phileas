@@ -1,17 +1,47 @@
+import { execFileSync } from "node:child_process";
+
 import { MonitoringView } from "@/components/monitoring-view";
 import { SiteHeader } from "@/components/site-header";
 import { todayLocal } from "@/lib/day";
-import { aggregateRecent, listTraces, type TraceRow } from "@/lib/metrics-db";
+import {
+  aggregateRecent,
+  compareTraces,
+  listTraces,
+  type CompareResult,
+  type TraceRow,
+} from "@/lib/metrics-db";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{
   date?: string | string[];
   source?: string | string[];
+  cutoff?: string | string[];
 }>;
 
 function firstString(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
+}
+
+function defaultCutoffIso(): string {
+  try {
+    const out = execFileSync(
+      "git",
+      ["log", "-1", "--format=%ct", "main"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+    const seconds = Number.parseInt(out, 10);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return new Date(seconds * 1000).toISOString();
+    }
+  } catch {
+    // fall through
+  }
+  return new Date(Date.now() - 86400 * 1000).toISOString();
 }
 
 export default async function Page({
@@ -22,14 +52,24 @@ export default async function Page({
   const sp = await searchParams;
   const date = firstString(sp.date) ?? todayLocal();
   const source = firstString(sp.source) ?? "";
+  const cutoffParam = firstString(sp.cutoff);
+  const initialCutoff = cutoffParam && !Number.isNaN(new Date(cutoffParam).getTime())
+    ? new Date(cutoffParam).toISOString()
+    : defaultCutoffIso();
 
   let initialRows: TraceRow[] = [];
   let aggregate: Awaited<ReturnType<typeof aggregateRecent>> | null = null;
+  let initialCompare: CompareResult | null = null;
   let error: string | null = null;
   let unavailable = false;
   try {
     initialRows = listTraces({ date, source: source || undefined, limit: 200 });
     aggregate = aggregateRecent(7);
+    initialCompare = compareTraces({
+      cutoffIso: initialCutoff,
+      source: "engine.recall_raw",
+      windowDays: 7,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("unable to open") || msg.includes("does not exist")) {
@@ -54,6 +94,8 @@ export default async function Page({
           initialSource={source}
           initialRows={initialRows}
           aggregate={aggregate}
+          initialCompare={initialCompare}
+          initialCutoff={initialCutoff}
           unavailable={unavailable}
         />
       )}
