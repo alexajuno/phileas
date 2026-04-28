@@ -239,63 +239,68 @@ def gather_candidates_raw(
                     extra={"op": "recall_raw", "data": {"entity": entity_name, "error": str(e)}},
                 )
 
-    # Path 3b: memory pivot — for each graph-found memory, expand its entities
-    graph_pivot_snapshot = set(graph_ids)
-    for mem_id in list(graph_pivot_snapshot):
-        try:
-            pivot_entities = graph.get_entities_for_memory(mem_id)
-        except Exception as e:
-            log.debug(
-                "graph pivot entity lookup failed",
-                extra={"op": "recall_raw", "data": {"mem_id": mem_id, "error": str(e)}},
-            )
-            continue
-        for entity in pivot_entities:
-            ename = entity["name"]
-            etype = entity["type"]
-            if etype == "Day":
-                continue
-            _add_memories_for_entity(etype, ename, hop=1)
-            try:
-                related = graph.get_related_entities(etype, ename)
-                for rel in related:
-                    if rel["type"] == "Day":
-                        continue
-                    _add_memories_for_entity(rel["type"], rel["name"], hop=2)
-            except Exception as e:
-                log.debug(
-                    "graph pivot traversal failed",
-                    extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
-                )
-
-    # Path 4: semantic-to-graph bridge
-    bridge_source_ids = list(candidates.keys())
-    for mem_id in bridge_source_ids:
-        try:
-            entities = graph.get_entities_for_memory(mem_id)
-        except Exception as e:
-            log.debug(
-                "graph bridge entity lookup failed",
-                extra={"op": "recall_raw", "data": {"mem_id": mem_id, "error": str(e)}},
-            )
-            continue
-        for entity in entities:
-            ename = entity["name"]
-            etype = entity["type"]
-            if etype == "Day":
-                continue
-            _add_memories_for_entity(etype, ename, hop=1)
-            try:
-                related = graph.get_related_entities(etype, ename)
-                for rel in related:
-                    if rel["type"] == "Day":
-                        continue
-                    _add_memories_for_entity(rel["type"], rel["name"], hop=2)
-            except Exception as e:
-                log.debug(
-                    "graph bridge traversal failed",
-                    extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
-                )
+    # NOTE 2026-04-29: Paths 3b + 4 (2-hop graph expansion) disabled.
+    # They walked +2 hops from every candidate (incl. semantic + keyword
+    # hits), dragging in weakly-related memories and inflating the pool
+    # from ~500 to ~1500. Path 3 (1-hop from query-word entities) is kept.
+    # Re-enable once the recall observability page can quantify quality impact.
+    # # Path 3b: memory pivot — for each graph-found memory, expand its entities
+    # graph_pivot_snapshot = set(graph_ids)
+    # for mem_id in list(graph_pivot_snapshot):
+    #     try:
+    #         pivot_entities = graph.get_entities_for_memory(mem_id)
+    #     except Exception as e:
+    #         log.debug(
+    #             "graph pivot entity lookup failed",
+    #             extra={"op": "recall_raw", "data": {"mem_id": mem_id, "error": str(e)}},
+    #         )
+    #         continue
+    #     for entity in pivot_entities:
+    #         ename = entity["name"]
+    #         etype = entity["type"]
+    #         if etype == "Day":
+    #             continue
+    #         _add_memories_for_entity(etype, ename, hop=1)
+    #         try:
+    #             related = graph.get_related_entities(etype, ename)
+    #             for rel in related:
+    #                 if rel["type"] == "Day":
+    #                     continue
+    #                 _add_memories_for_entity(rel["type"], rel["name"], hop=2)
+    #         except Exception as e:
+    #             log.debug(
+    #                 "graph pivot traversal failed",
+    #                 extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
+    #             )
+    #
+    # # Path 4: semantic-to-graph bridge
+    # bridge_source_ids = list(candidates.keys())
+    # for mem_id in bridge_source_ids:
+    #     try:
+    #         entities = graph.get_entities_for_memory(mem_id)
+    #     except Exception as e:
+    #         log.debug(
+    #             "graph bridge entity lookup failed",
+    #             extra={"op": "recall_raw", "data": {"mem_id": mem_id, "error": str(e)}},
+    #         )
+    #         continue
+    #     for entity in entities:
+    #         ename = entity["name"]
+    #         etype = entity["type"]
+    #         if etype == "Day":
+    #             continue
+    #         _add_memories_for_entity(etype, ename, hop=1)
+    #         try:
+    #             related = graph.get_related_entities(etype, ename)
+    #             for rel in related:
+    #                 if rel["type"] == "Day":
+    #                     continue
+    #                 _add_memories_for_entity(rel["type"], rel["name"], hop=2)
+    #         except Exception as e:
+    #             log.debug(
+    #                 "graph bridge traversal failed",
+    #                 extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
+    #             )
 
     # Path 5: raw text search (verbatim conversation snippets)
     raw_hits = vector.search_raw(query, top_k=effective_top_k * 3)
