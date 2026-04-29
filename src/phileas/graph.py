@@ -72,7 +72,16 @@ class GraphStore:
                 self._conn = None
                 self._db = None
         try:
-            db = kuzu.Database(str(self._path))
+            # Cap buffer_pool_size and max_db_size — Kuzu defaults to 80% of
+            # system RAM for the buffer pool (~12 GB on this 16 GB box) against
+            # an 88 MB graph file, which was the root cause of repeated daemon
+            # OOM kills. 512 MB is comfortably larger than the working set;
+            # the pool acts as an LRU cache.
+            db = kuzu.Database(
+                str(self._path),
+                buffer_pool_size=512 * 1024 * 1024,
+                max_db_size=1024 * 1024 * 1024,
+            )
             self._conn = kuzu.Connection(db)
             self._db = db
             self._init_schema()
