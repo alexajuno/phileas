@@ -167,6 +167,47 @@ class MemoryEngine:
         return [_item_to_dict(item) for item in items]
 
     # ------------------------------------------------------------------
+    # ingest event (raw turn)
+    # ------------------------------------------------------------------
+
+    def save_event(self, event) -> None:
+        """Persist a raw event to SQLite and embed its text for verbatim recall.
+
+        Wraps `db.save_event` + `vector.add_event` so callers (the daemon ingest
+        path, tests, the backfill script) get the embed for free. The event
+        text is what powers Path 6 / `thread()` retrieval.
+        """
+        self.db.save_event(event)
+        try:
+            self.vector.add_event(event.id, event.text)
+        except Exception as e:
+            log.debug(
+                "vector add_event failed",
+                extra={"op": "save_event", "data": {"event_id": event.id, "error": str(e)}},
+            )
+
+    # ------------------------------------------------------------------
+    # thread (event + sibling memories)
+    # ------------------------------------------------------------------
+
+    def thread(self, event_id: str) -> dict | None:
+        """Return an event's full text plus every memory extracted from it.
+
+        Powers the "show me the conversation this came from" affordance. Pair
+        with verbatim passages surfaced by Path 6 in recall_raw.
+        """
+        event = self.db.get_event(event_id)
+        if event is None:
+            return None
+        memories = self.db.get_memories_for_event(event_id)
+        return {
+            "event_id": event.id,
+            "text": event.text,
+            "received_at": event.received_at.isoformat() if event.received_at else None,
+            "memories": [_item_to_dict(m) for m in memories],
+        }
+
+    # ------------------------------------------------------------------
     # memorize
     # ------------------------------------------------------------------
 
@@ -748,6 +789,25 @@ class MemoryEngine:
                         item = self.db.get_item(mem_id)
                         if item:
                             candidates[mem_id] = item
+
+            # Path 6: event-text search → sibling-memory fanout.
+            # An event hit drags in every memory extracted from that event,
+            # tagged hop=1 (one structural step from the matching event).
+            # Verbatim event passages themselves are not memory rows, so they
+            # are not added to `candidates` here — the recall_raw path
+            # surfaces them as a separate event_hits list.
+            # Lower floor than memory search: long event chunks score lower
+            # under cosine than focused summaries. See engine_gather.py.
+            event_floor = min(0.25, self.config.recall.similarity_floor)
+            for q in queries:
+                event_hits = self.vector.search_events(q, top_k=20)
+                for event_id, sim in event_hits:
+                    if sim < event_floor:
+                        continue
+                    for sibling in self.db.get_memories_for_event(event_id):
+                        if sibling.id not in candidates:
+                            candidates[sibling.id] = sibling
+                            candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
 
             # Apply filters
             filtered: dict[str, MemoryItem] = {}
@@ -1368,6 +1428,7 @@ class MemoryEngine:
             **counts,
             "vector_count": self.vector.count(),
             "raw_vector_count": self.vector.raw_count(),
+            "event_vector_count": self.vector.event_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],
             "events_extracted": event_counts.get("extracted", 0),

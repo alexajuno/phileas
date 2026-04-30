@@ -361,7 +361,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         from phileas.models import Event
 
         event = Event(text=text)
-        engine.db.save_event(event)
+        engine.save_event(event)
         pending_count = engine.db.get_event_counts().get("pending", 0)
         return {"queued": True, "event_id": event.id, "queue_depth": pending_count}
     elif method == "retry_events":

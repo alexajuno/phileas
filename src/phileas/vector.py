@@ -11,6 +11,7 @@ import chromadb
 DEFAULT_CHROMA_PATH = Path.home() / ".phileas" / "chroma"
 COLLECTION_NAME = "memories"
 RAW_COLLECTION_NAME = "raw_memories"
+EVENTS_COLLECTION_NAME = "events"
 
 
 def _zip_embeddings(chroma_result: dict) -> dict[str, list[float]]:
@@ -57,6 +58,10 @@ class VectorStore:
         )
         self._raw_collection = self._client.get_or_create_collection(
             name=RAW_COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+        self._events_collection = self._client.get_or_create_collection(
+            name=EVENTS_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -167,3 +172,26 @@ class VectorStore:
 
     def raw_count(self) -> int:
         return self._raw_collection.count()
+
+    # --- Events collection (verbatim conversation chunks, keyed by event_id) ---
+
+    def add_event(self, event_id: str, text: str) -> None:
+        """Embed an ingested event's full text for verbatim recall."""
+        self._events_collection.upsert(ids=[event_id], documents=[text])
+
+    def search_events(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        """Search event text by semantic similarity. Returns [(event_id, score)]."""
+        if self._events_collection.count() == 0:
+            return []
+        results = self._events_collection.query(
+            query_texts=[query], n_results=min(top_k, self._events_collection.count())
+        )
+        ids = results["ids"][0] if results["ids"] else []
+        distances = results["distances"][0] if results["distances"] else []
+        return [(id_, 1.0 - dist) for id_, dist in zip(ids, distances)]
+
+    def delete_event(self, event_id: str) -> None:
+        self._events_collection.delete(ids=[event_id])
+
+    def event_count(self) -> int:
+        return self._events_collection.count()

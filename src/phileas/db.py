@@ -370,6 +370,38 @@ class Database:
         self.conn.commit()
 
     @_locked
+    def get_memories_for_event(self, event_id: str) -> list[MemoryItem]:
+        """Active memories whose source_event_id == event_id, oldest first."""
+        rows = self.conn.execute(
+            """SELECT * FROM memory_items
+               WHERE source_event_id = ? AND status = 'active'
+               ORDER BY created_at ASC""",
+            (event_id,),
+        ).fetchall()
+        return [self._row_to_item(row) for row in rows]
+
+    @_locked
+    def get_all_events(self, limit: int | None = None) -> list[Event]:
+        """All events in insertion order — used by the embed-backfill script."""
+        sql = "SELECT * FROM events ORDER BY received_at ASC"
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [
+            Event(
+                id=row["id"],
+                text=row["text"],
+                received_at=datetime.fromisoformat(row["received_at"]),
+                extraction_status=row["extraction_status"],
+                extraction_error=row["extraction_error"],
+                memory_count=row["memory_count"],
+            )
+            for row in rows
+        ]
+
+    @_locked
     def get_event(self, event_id: str) -> Event | None:
         row = self.conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if not row:

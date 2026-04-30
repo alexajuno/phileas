@@ -222,6 +222,34 @@ def recall_raw(
 
 
 @mcp.tool()
+def thread(event_id: str) -> str:
+    """Return the verbatim text of an ingested event plus every memory extracted from it.
+
+    Use as a follow-up to recall_raw when an event_passage or a memory's
+    source_event_id surfaces something interesting and you want the full
+    surrounding conversation context.
+
+    Args:
+        event_id: The event UUID (from recall_raw event_passage results, or a
+            memory's source_event_id field).
+    """
+    result = engine.thread(event_id)
+    if result is None:
+        return f"Event {event_id} not found."
+
+    lines = [
+        f"Event {result['event_id']} (received {result['received_at']}):",
+        "",
+        result["text"],
+        "",
+        f"Extracted memories ({len(result['memories'])}):",
+    ]
+    for m in result["memories"]:
+        lines.append(f"  [{m['id']}] [{m['type']}] {m['summary']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def update(
     memory_id: str,
     summary: str | None = None,
@@ -514,7 +542,11 @@ def ingest_session(session_path: str) -> str:
         lines.append("")
 
     lines.append("---")
-    lines.append("Extract memories from above and call memorize() for each.")
+    lines.append(
+        "Extract memories from above and call memorize() for each. "
+        "Write all summaries in English; translate VN/mixed-language turns "
+        "and preserve proper nouns."
+    )
     lines.append(f"Then call mark_session_done('{session_path}') to mark as processed.")
     return "\n".join(lines)
 
@@ -576,6 +608,7 @@ def pending_events(limit: int = 20, include_failed: bool = True) -> str:
         "",
         "For each, extract memories and call memorize() per memory, then call",
         "mark_event_extracted(event_id, memory_count).",
+        "Write all summaries in English; translate VN/mixed-language turns and preserve proper nouns.",
         "---",
     ]
     for ev in events:

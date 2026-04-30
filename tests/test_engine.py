@@ -187,11 +187,12 @@ def test_recall_raw_dict_shape(tmp_dir):
         "type",
         "importance",
         "created_at",
+        "source_event_id",
         "hop",
         "gather_source",
     }
     assert isinstance(item["gather_source"], list)
-    assert all(s in {"keyword", "semantic", "graph", "raw_text"} for s in item["gather_source"])
+    assert all(s in {"keyword", "semantic", "graph", "raw_text", "event_thread"} for s in item["gather_source"])
 
 
 def test_recall_raw_filters_by_memory_type(tmp_dir):
