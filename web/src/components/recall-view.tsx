@@ -232,12 +232,12 @@ export function RecallView({
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>
           {loading
-            ? "running vector search…"
+            ? "recalling… (graph + keyword + vector → rerank → MMR)"
             : hasRun
               ? `${items.length} result${items.length === 1 ? "" : "s"}${
                   elapsedMs !== null ? ` · ${elapsedMs}ms` : ""
                 }`
-              : "Type a query and press Recall to run the engine.recall() pipeline."}
+              : "Type a query and press Recall to run the full recall pipeline (graph + keyword + vector → rerank → MMR)."}
         </span>
       </div>
 
