@@ -5,11 +5,12 @@ import { DaemonStatus } from "./daemon-status";
 import { ThemeToggle } from "./theme-toggle";
 import { cn } from "@/lib/utils";
 
-export type HeaderTab = "today" | "entities" | "monitoring";
+export type HeaderTab = "today" | "entities" | "playground" | "monitoring";
 
 const TABS: { key: HeaderTab; label: string; href: string }[] = [
   { key: "today", label: "Memories", href: "/" },
   { key: "entities", label: "Entities", href: "/entities" },
+  { key: "playground", label: "Playground", href: "/recall" },
   { key: "monitoring", label: "Monitoring", href: "/monitoring" },
 ];
 
