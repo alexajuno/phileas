@@ -7,6 +7,7 @@ in the engine; commands handle argument parsing and output formatting.
 from __future__ import annotations
 
 import json
+import os
 
 import click
 
@@ -546,6 +547,15 @@ def migrate_recall_cmd(force: bool):
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground (for systemd).")
 def start(foreground: bool):
     """Start the Phileas daemon (keeps models loaded for fast CLI)."""
+    # Cap glibc's secondary arenas before libc initializes. On a 20-core box the
+    # default (8×ncpus = 160) lets ~115 × 64 MB arenas accumulate (~3 GB RSS).
+    # The env var is only read at libc startup, so we re-exec ourselves once.
+    if os.environ.get("MALLOC_ARENA_MAX") is None:
+        import sys
+
+        os.environ["MALLOC_ARENA_MAX"] = "4"
+        os.execvpe(sys.executable, [sys.executable, *sys.argv], os.environ)
+
     from phileas.daemon import is_running
     from phileas.daemon import start as daemon_start
 

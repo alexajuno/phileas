@@ -176,14 +176,28 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
         def _respond(self, code: int, data: dict):
             body = json.dumps(data, default=str).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except BrokenPipeError, ConnectionResetError:
+                pass  # Client gave up; nothing to do.
+
+    from concurrent.futures import ThreadPoolExecutor
 
     class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        # Bounded executor — request bursts previously leaked Thread-N workers
+        # in multi-generational clusters (Thread-4..Thread-36 etc), pinning
+        # tens of glibc arenas. A small reused pool keeps the daemon's working
+        # set bounded; bump max_workers if recall fan-out demands it.
         daemon_threads = True
+        block_on_close = False
+        _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="phileas-http")
+
+        def process_request(self, request, client_address):
+            self._executor.submit(self.process_request_thread, request, client_address)
 
     server = ThreadedHTTPServer(("127.0.0.1", 0), Handler)
     port = server.server_address[1]
