@@ -44,6 +44,8 @@ export async function GET(
     const detail: EntityDetail = {
       name: node.name,
       type: node.type,
+      types: node.types,
+      description: node.description,
       aliases: node.aliases,
       props: node.props,
       relations,

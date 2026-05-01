@@ -38,9 +38,19 @@ export function EntityDetailView({ entity }: Props) {
     <div className="space-y-8">
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{entity.type}</Badge>
+          {(entity.types && entity.types.length > 0
+            ? entity.types
+            : [entity.type]
+          ).map((t) => (
+            <Badge key={t} variant="outline">
+              {t}
+            </Badge>
+          ))}
           <h2 className="text-lg font-medium tracking-tight">{entity.name}</h2>
         </div>
+        {entity.description && (
+          <p className="text-sm text-foreground/80">{entity.description}</p>
+        )}
         {entity.aliases.length > 0 && (
           <p className="text-xs text-muted-foreground">
             also known as {entity.aliases.join(" · ")}
