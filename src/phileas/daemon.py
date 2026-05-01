@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import signal
-import sys
 from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -194,16 +193,20 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     _pid_path(config).write_text(str(os.getpid()))
     _port_path(config).write_text(str(port))
 
-    # Handle SIGTERM gracefully
+    # Handle SIGTERM gracefully — only flip an Event here. Signal handlers
+    # run on the main thread, so any blocking call (e.g. server.shutdown())
+    # would deadlock against serve_forever. The actual teardown happens
+    # below, after stop_event.wait() returns.
+    import threading
+
+    stop_event = threading.Event()
+
     def _shutdown(signum, frame):
         try:
             engine._metrics.record_daemon("stop", payload={"signal": signum})
         except Exception:
             pass
-        server.shutdown()
-        _pid_path(config).unlink(missing_ok=True)
-        _port_path(config).unlink(missing_ok=True)
-        sys.exit(0)
+        stop_event.set()
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
@@ -275,7 +278,18 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # drained by the host Claude Code session via the `pending_events` /
     # `mark_event_extracted` MCP tools.
 
-    server.serve_forever()
+    # Run the HTTP server on a worker thread; the main thread parks on
+    # stop_event so it can do cleanup safely after SIGTERM/SIGINT.
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    stop_event.wait()
+
+    # Clean shutdown — safe because serve_forever is on another thread.
+    server.shutdown()
+    server.server_close()
+    _pid_path(config).unlink(missing_ok=True)
+    _port_path(config).unlink(missing_ok=True)
     return port
 
 
