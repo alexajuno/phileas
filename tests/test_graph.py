@@ -244,6 +244,78 @@ def test_upsert_preserves_distinct_types(kuzu_path):
     gs.close()
 
 
+def test_multi_type_referent_collapses_under_overlapping_type(kuzu_path):
+    """A new mention whose types are a subset of an existing entity's types
+    reuses the same uuid — this is the deterministic hot path that lets
+    multi-type referents accumulate aspects without fragmenting.
+
+    Mirrors the Ownego case: once Ownego carries types ["Place","Project"]
+    on a single uuid, a fresh mention with hint types=["Project"] alone
+    must land on that same uuid.
+    """
+    gs = GraphStore(path=kuzu_path)
+    # Seed Ownego with two types accumulated over time. Direct manipulation
+    # via the public API: upsert with one type, then again with a hint that
+    # already contains the existing type so the hot path reuses the uuid
+    # and unions the new type onto it.
+    eid = gs.upsert_node("Place", "Ownego")
+    # Manually patch in a second type by writing the types JSON directly —
+    # without context_neighbors the linker is too conservative to add a
+    # disjoint type via upsert_node, which is the test we're guarding.
+    with gs._lock:
+        gs._merge_into_existing(eid, ["Place", "Project"], "")
+
+    # Subsequent mention with just Project (subset of {Place, Project}).
+    eid_third = gs.upsert_node("Project", "Ownego")
+    assert eid_third == eid
+
+    nodes = gs.find_nodes("Project", "Ownego")
+    assert len(nodes) == 1
+    assert "Place" in nodes[0]["types"]
+    assert "Project" in nodes[0]["types"]
+    gs.close()
+
+
+def test_disjoint_types_stay_separate_without_context(kuzu_path):
+    """Same name + disjoint types + no context = mint new (collision-safe default)."""
+    gs = GraphStore(path=kuzu_path)
+    eid_fruit = gs.upsert_node("Fruit", "Apple")
+    eid_company = gs.upsert_node("Company", "Apple")
+    assert eid_fruit and eid_company and eid_fruit != eid_company
+    gs.close()
+
+
+def test_alias_lookup_finds_existing(kuzu_path):
+    """A new mention that matches an existing alias reuses the same uuid."""
+    gs = GraphStore(path=kuzu_path)
+    eid = gs.upsert_node("Person", "phuongtq")
+    gs.set_aliases("Person", "phuongtq", ["Phuong", "Phương"])
+
+    # Mention by alias name → linker should find the candidate by alias
+    # match and (with same type) reuse it via the hot path.
+    eid_again = gs.upsert_node("Person", "Phuong")
+    assert eid_again == eid
+    # Status only counts each entity once even though it answers to
+    # multiple names.
+    detail = gs.status()
+    assert detail["entity_types"].get("Person") == 1
+    gs.close()
+
+
+def test_description_set_once(kuzu_path):
+    """description is captured at entity creation and never overwritten."""
+    gs = GraphStore(path=kuzu_path)
+    eid = gs.upsert_node("Company", "Apple", description="consumer electronics maker")
+    assert eid
+
+    # Subsequent mention with a different description — must not overwrite.
+    gs.upsert_node("Company", "Apple", description="totally different blurb")
+    nodes = gs.find_nodes("Company", "Apple")
+    assert len(nodes) == 1
+    assert nodes[0]["description"] == "consumer electronics maker"
+    gs.close()
+
+
 def test_create_edge_normalizes_endpoints(kuzu_path):
     """create_edge should snap both endpoint (type, name) pairs."""
     gs = GraphStore(path=kuzu_path)

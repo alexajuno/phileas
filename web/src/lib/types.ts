@@ -35,6 +35,7 @@ export type DayCount = {
 export type EntitySummary = {
   name: string;
   type: string;
+  types: string[];
   aliases: string[];
   memory_count: number;
 };
@@ -42,6 +43,7 @@ export type EntitySummary = {
 export type EntityRelation = {
   name: string;
   type: string;
+  types?: string[];
   edge_type: string;
   direction: "out" | "in";
 };
@@ -49,7 +51,9 @@ export type EntityRelation = {
 export type EntityDetail = {
   name: string;
   type: string;
+  types: string[];
   aliases: string[];
+  description: string;
   props: Record<string, unknown>;
   relations: EntityRelation[];
   memories: MemoryItem[];

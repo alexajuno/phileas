@@ -3,8 +3,8 @@
 # Each entry declares a canonical (type, name) plus a list of satellites
 # whose ABOUT/REL edges get re-targeted onto the canonical, and which are
 # then deleted. Satellite display names + existing aliases are unioned
-# into the canonical's aliases so the merged identity is still findable
-# via search_nodes.
+# into the canonical's aliases. Satellite types are unioned into the
+# canonical's types list.
 #
 # Tier 3 wins over Tier 1/2 auto-merges — if the same satellite appears
 # in both, the override's canonical is the final destination.
@@ -16,11 +16,16 @@
 #     merge:                 # required; satellites to absorb
 #       - { type: <Type>, name: <Name> }
 #
+# After the AA-52 schema swap, identity is uuid; (type, name) is just
+# the lookup key. The canonical/satellite pairs below are resolved by
+# matching primary_name + type-in-types-list at migration time.
+#
 # Run dry-run first to preview:
-#   uv run python scripts/migrate_entity_duplicates.py --overrides scripts/entity_merge_overrides.yml
+#   uv run python scripts/migrate_entity_to_uuid.py
 # Apply:
-#   uv run python scripts/migrate_entity_duplicates.py --overrides scripts/entity_merge_overrides.yml --apply
+#   uv run python scripts/migrate_entity_to_uuid.py --apply
 
+# Phuong (the same person, written four different ways in different sessions).
 - canonical: { type: Person, name: phuongtq }
   aliases_to_add:
     - "Phuong"
@@ -32,3 +37,52 @@
     - { type: Person, name: "Phương" }
     - { type: Person, name: "@phuongtq" }
     - { type: Person, name: "Phuong (phuongtq)" }
+
+# Ownego — same physical/legal/conceptual referent, three aspects.
+- canonical: { type: Place, name: Ownego }
+  merge:
+    - { type: Project, name: Ownego }
+    - { type: Company, name: Ownego }
+    - { type: Organization, name: Ownego }
+
+# Phileas — Giao's memory companion (this project). Surfaced as Tool /
+# Project / Skill / Person / System depending on how the LLM framed it.
+# Project carries the most mass; pick it as canonical so the merged
+# row's primary_name keeps the highest-edge variant.
+- canonical: { type: Project, name: Phileas }
+  merge:
+    - { type: Tool, name: Phileas }
+    - { type: Skill, name: Phileas }
+    - { type: Person, name: Phileas }
+    - { type: System, name: Phileas }
+
+# Polar — payment/membership platform under evaluation.
+- canonical: { type: Service, name: Polar }
+  merge:
+    - { type: Tool, name: Polar }
+    - { type: Platform, name: Polar }
+    - { type: "Payment Platform", name: Polar }
+    - { type: Company, name: Polar }
+
+# Linear — issue tracker (the company / product).
+- canonical: { type: Tool, name: Linear }
+  merge:
+    - { type: Project, name: Linear }
+    - { type: Place, name: Linear }
+
+# Single-game referents the LLM split across Topic / Tool / Game.
+- canonical: { type: Game, name: "League of Legends" }
+  merge:
+    - { type: Tool, name: "League of Legends" }
+    - { type: Topic, name: "League of Legends" }
+
+- canonical: { type: Game, name: "Genshin Impact" }
+  merge:
+    - { type: Tool, name: "Genshin Impact" }
+    - { type: Topic, name: "Genshin Impact" }
+
+# Single-emotion referents.
+- canonical: { type: Emotion, name: Loneliness }
+  merge:
+    - { type: Topic, name: Loneliness }
+    - { type: Concept, name: Loneliness }

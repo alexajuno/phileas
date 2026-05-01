@@ -1,25 +1,55 @@
-"""KuzuDB graph store — dynamic schema for entity relationship storage.
+"""KuzuDB graph store — opaque-uuid entity model with extraction-time linking.
 
 Schema (3 edge tables, 2 node tables):
-  Node: Entity(id STRING PK, name STRING, type STRING, props STRING, aliases STRING)
+  Node: Entity(id STRING PK uuid4, primary_name STRING, aliases STRING /JSON list/,
+               types STRING /JSON list/, description STRING, props STRING)
   Node: Memory(id STRING PK)
-  Edge: ABOUT(Memory → Entity)           — links memories to entities
-  Edge: REL(Entity → Entity, edge_type)  — any entity↔entity relationship
-  Edge: MEM_REL(Memory → Memory, edge_type) — memory↔memory relationships
+  Edge: ABOUT(Memory → Entity)
+  Edge: REL(Entity → Entity, edge_type)
+  Edge: MEM_REL(Memory → Memory, edge_type)
 
-Entity types and edge types are open — the LLM can use any strings.
+Identity is a uuid; names and types are attributes. Multi-type referents
+(Ownego = Place + Company + Project) collapse onto one row. Name collisions
+(Apple fruit vs. Apple Inc.) stay separate because identity is uuid, not name.
+
+Disambiguation for new mentions runs at extraction time via a scored
+linking step in ``entity_lookup`` (type Jaccard + neighborhood + prior).
+
+Public API surface (``upsert_node``, ``link_memory``, ``find_nodes``,
+``get_memories_about``, ``get_related_entities``…) keeps its current
+``(node_type, name)`` signatures so engine.py and graph_proxy.py callers
+don't need to change. The old ``id = "Type:Name"`` schema is detected and
+migrated 1:1 (each old row → one uuid row); cluster merging is done
+out-of-band by ``scripts/migrate_entity_to_uuid.py``.
 """
 
 import functools
 import json
 import logging
+import math
 import threading
+import uuid as _uuid
 from pathlib import Path
 from typing import Any
 
 import kuzu
 
 log = logging.getLogger("phileas.graph")
+
+
+# ----------------------------------------------------------------------
+# Linking thresholds
+# ----------------------------------------------------------------------
+
+LINK_HIGH = 0.6
+LINK_LOW = 0.3
+
+# Score weights — must sum to 1.0. Description-similarity weight reserved
+# for a follow-up that wires a Chroma-backed description embedder; for now
+# its slot is folded into type-overlap, the most discriminative signal.
+_W_TYPE = 0.50
+_W_NEIGHBORHOOD = 0.35
+_W_PRIOR = 0.15
 
 
 def _locked(method):
@@ -36,13 +66,55 @@ def _locked(method):
 DEFAULT_GRAPH_PATH = Path.home() / ".phileas" / "graph"
 
 
-def _entity_id(node_type: str, name: str) -> str:
-    """Deterministic primary key for an entity: 'Type:Name'."""
-    return f"{node_type}:{name}"
+def _new_entity_id() -> str:
+    """Mint a fresh opaque entity id (uuid4 hex, 32 chars, no dashes)."""
+    return _uuid.uuid4().hex
+
+
+def _norm_type(t: str) -> str:
+    """Canonicalize a type string for storage and comparison.
+
+    Title-case folds the LLM's call-to-call casing drift (Tool / tool /
+    TOOL → Tool) so the types-list set semantics aren't fooled by case.
+    """
+    return t.strip().title()
+
+
+def _parse_list(raw: str | None) -> list[str]:
+    """Parse a JSON-encoded list column. Tolerates None / empty / malformed."""
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw)
+        return v if isinstance(v, list) else []
+    except ValueError:
+        return []
+
+
+def _dump_list(items: list[str]) -> str:
+    """JSON-encode a list with ensure_ascii=False so non-ASCII aliases stay literal.
+
+    Kuzu's CONTAINS match runs against the raw column value; escaped forms
+    like "\\u1ecb" never match a query of "ị".
+    """
+    return json.dumps(items, ensure_ascii=False)
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 0.0
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _types_lower(types: list[str]) -> set[str]:
+    return {t.strip().lower() for t in types if t}
 
 
 class GraphStore:
-    """Graph store backed by KuzuDB for entity relationship storage.
+    """Graph store backed by KuzuDB.
 
     Direct KuzuDB access — used only by the daemon process, which holds
     the exclusive file lock. MCP servers use GraphProxy instead.
@@ -57,13 +129,8 @@ class GraphStore:
         self._lock = threading.RLock()
 
     def _ensure_connected(self) -> bool:
-        """Lazily open KuzuDB. Returns True if connected, False if unavailable.
-
-        Tries read-write first. If the database is locked by another process,
-        logs a warning. If an existing connection is stale, resets and retries.
-        """
+        """Lazily open KuzuDB. Returns True if connected, False if unavailable."""
         if self._conn is not None:
-            # Verify the connection is still alive
             try:
                 self._conn.execute("RETURN 1")
                 return True
@@ -72,11 +139,6 @@ class GraphStore:
                 self._conn = None
                 self._db = None
         try:
-            # Cap buffer_pool_size and max_db_size — Kuzu defaults to 80% of
-            # system RAM for the buffer pool (~12 GB on this 16 GB box) against
-            # an 88 MB graph file, which was the root cause of repeated daemon
-            # OOM kills. 512 MB is comfortably larger than the working set;
-            # the pool acts as an LRU cache.
             db = kuzu.Database(
                 str(self._path),
                 buffer_pool_size=512 * 1024 * 1024,
@@ -101,24 +163,37 @@ class GraphStore:
                 self._warned_locked = True
             return False
 
+    # ------------------------------------------------------------------
+    # Schema + migration
+    # ------------------------------------------------------------------
+
     def _init_schema(self) -> None:
-        """Create node and edge tables if they don't exist.
+        """Create node/edge tables, migrating from older schemas if needed.
 
-        Also detects the old schema (separate Person/Project/... tables)
-        and migrates data to the unified Entity table.
+        Three eras of schema:
+          - Pre-2025: per-type node tables (Person/Project/...) + per-edge tables
+          - 2025-2026: unified Entity table with id = "Type:Name"
+          - Now: unified Entity table with opaque uuid + types-list
+
+        Detect the oldest first (Person table marker), then the middle era
+        (Entity table without primary_name column), otherwise create new.
         """
-        # Detect old schema: check if Person table exists
-        old_schema = self._has_table("Person")
-
-        if old_schema:
-            self._migrate_from_old_schema()
+        if self._has_table("Person"):
+            self._migrate_from_per_type_schema()
             return
 
-        # New schema: create tables
+        if self._has_old_entity_schema():
+            self._migrate_to_uuid_schema()
+            return
+
+        self._create_new_tables()
+
+    def _create_new_tables(self) -> None:
         self._conn.execute(
-            "CREATE NODE TABLE IF NOT EXISTS Entity "
-            "(id STRING, name STRING, type STRING, props STRING DEFAULT '', "
-            "aliases STRING DEFAULT '[]', PRIMARY KEY (id))"
+            "CREATE NODE TABLE IF NOT EXISTS Entity ("
+            "id STRING, primary_name STRING, aliases STRING DEFAULT '[]', "
+            "types STRING DEFAULT '[]', description STRING DEFAULT '', "
+            "props STRING DEFAULT '', PRIMARY KEY (id))"
         )
         self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
@@ -128,21 +203,164 @@ class GraphStore:
         )
 
     def _has_table(self, table_name: str) -> bool:
-        """Check if a node table exists in the database."""
         try:
             self._conn.execute(f"MATCH (n:{table_name}) RETURN COUNT(*) LIMIT 1")
             return True
         except RuntimeError:
             return False
 
-    def _migrate_from_old_schema(self) -> None:
-        """Migrate from old per-type tables to unified Entity + edge tables.
+    def _has_old_entity_schema(self) -> bool:
+        """True iff Entity table exists in the old (id = 'Type:Name') shape.
 
-        Old schema: Person, Project, Place, Tool, Topic node tables
-                    + 13 separate edge tables
-        New schema: Entity node table + ABOUT, REL, MEM_REL edge tables
+        Distinguished by the absence of the new ``primary_name`` column.
         """
-        log.info("Migrating graph from old schema to unified Entity schema...")
+        if not self._has_table("Entity"):
+            return False
+        try:
+            self._conn.execute("MATCH (n:Entity) RETURN n.primary_name LIMIT 1")
+            return False
+        except RuntimeError:
+            return True
+
+    def _migrate_to_uuid_schema(self) -> None:
+        """Migrate from `id = "Type:Name"` Entity rows to opaque-uuid rows.
+
+        Strictly 1-to-1: each old row becomes one uuid row with
+        ``primary_name = name``, ``types = [type]``, aliases preserved.
+        Cluster merging across types is left to
+        ``scripts/migrate_entity_to_uuid.py`` so it can be reviewed in
+        dry-run mode against real data before commit.
+        """
+        log.info("Migrating Entity table from 'Type:Name' id to uuid schema...")
+
+        # 1. Snapshot Entity rows.
+        entities: list[dict] = []
+        result = self._conn.execute("MATCH (e:Entity) RETURN e.id, e.name, e.type, e.props, e.aliases")
+        while result.has_next():
+            row = result.get_next()
+            entities.append(
+                {
+                    "old_id": row[0],
+                    "name": row[1],
+                    "type": row[2],
+                    "props": row[3] or "",
+                    "aliases": row[4] or "[]",
+                }
+            )
+
+        # 2. Snapshot Memory ids.
+        memory_ids: list[str] = []
+        result = self._conn.execute("MATCH (m:Memory) RETURN m.id")
+        while result.has_next():
+            memory_ids.append(result.get_next()[0])
+
+        # 3. Snapshot edges by (from-key, to-key, edge_type).
+        about_edges: list[tuple[str, str]] = []
+        result = self._conn.execute("MATCH (m:Memory)-[:ABOUT]->(e:Entity) RETURN m.id, e.id")
+        while result.has_next():
+            row = result.get_next()
+            about_edges.append((row[0], row[1]))
+
+        rel_edges: list[tuple[str, str, str]] = []
+        result = self._conn.execute("MATCH (a:Entity)-[r:REL]->(b:Entity) RETURN a.id, b.id, r.edge_type")
+        while result.has_next():
+            row = result.get_next()
+            rel_edges.append((row[0], row[1], row[2] or ""))
+
+        mem_rel_edges: list[tuple[str, str, str]] = []
+        result = self._conn.execute("MATCH (a:Memory)-[r:MEM_REL]->(b:Memory) RETURN a.id, b.id, r.edge_type")
+        while result.has_next():
+            row = result.get_next()
+            mem_rel_edges.append((row[0], row[1], row[2] or ""))
+
+        log.info(
+            "uuid migration snapshot",
+            extra={
+                "data": {
+                    "entities": len(entities),
+                    "memories": len(memory_ids),
+                    "about": len(about_edges),
+                    "rel": len(rel_edges),
+                    "mem_rel": len(mem_rel_edges),
+                }
+            },
+        )
+
+        # 4. Drop old tables (edges first, then Entity / Memory).
+        for table in ("ABOUT", "REL", "MEM_REL"):
+            try:
+                self._conn.execute(f"DROP TABLE IF EXISTS {table}")
+            except RuntimeError:
+                pass
+        for table in ("Entity", "Memory"):
+            try:
+                self._conn.execute(f"DROP TABLE IF EXISTS {table}")
+            except RuntimeError:
+                pass
+
+        # 5. Create new schema.
+        self._create_new_tables()
+
+        # 6. Mint a uuid per old row, keep mapping for edge rewiring.
+        old_to_new: dict[str, str] = {}
+        for ent in entities:
+            new_id = _new_entity_id()
+            old_to_new[ent["old_id"]] = new_id
+            types_str = _dump_list([_norm_type(ent["type"])])
+            self._conn.execute(
+                "MERGE (n:Entity {id: $id}) SET n.primary_name = $name, "
+                "n.aliases = $aliases, n.types = $types, n.description = $description, n.props = $props",
+                parameters={
+                    "id": new_id,
+                    "name": ent["name"],
+                    "aliases": ent["aliases"],
+                    "types": types_str,
+                    "description": "",
+                    "props": ent["props"],
+                },
+            )
+
+        for mid in memory_ids:
+            self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": mid})
+
+        # 7. Re-target edges. Drop edges whose endpoint we couldn't map (shouldn't happen).
+        for mid, eid_old in about_edges:
+            new_eid = old_to_new.get(eid_old)
+            if not new_eid:
+                continue
+            self._conn.execute(
+                "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) CREATE (m)-[:ABOUT]->(e)",
+                parameters={"mid": mid, "eid": new_eid},
+            )
+
+        for fid_old, tid_old, etype in rel_edges:
+            new_fid = old_to_new.get(fid_old)
+            new_tid = old_to_new.get(tid_old)
+            if not (new_fid and new_tid):
+                continue
+            self._conn.execute(
+                "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
+                parameters={"fid": new_fid, "tid": new_tid, "et": etype},
+            )
+
+        for fid, tid, etype in mem_rel_edges:
+            self._conn.execute(
+                "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
+                parameters={"fid": fid, "tid": tid, "et": etype},
+            )
+
+        log.info(
+            "uuid migration complete — %d entities, %d memories, %d about, %d rel, %d mem_rel",
+            len(entities),
+            len(memory_ids),
+            len(about_edges),
+            len(rel_edges),
+            len(mem_rel_edges),
+        )
+
+    def _migrate_from_per_type_schema(self) -> None:
+        """Migrate from old per-type tables (Person/Project/...) directly to uuid schema."""
+        log.info("Migrating graph from per-type tables → uuid Entity schema...")
 
         _OLD_ENTITY_TYPES = ["Person", "Project", "Place", "Tool", "Topic"]
         _OLD_ABOUT_EDGES = {
@@ -160,8 +378,10 @@ class GraphStore:
         ]
         _OLD_MEMORY_EDGES = ["RELATES_TO", "CONTRADICTS", "CONSOLIDATED_INTO", "SUPERSEDES"]
 
-        # 1. Read all data from old tables
-        entities: list[dict] = []  # {name, type, props, aliases}
+        # Snapshot entities + their per-type-table identity.
+        # type_name → minted uuid (so edges can be re-targeted)
+        old_key_to_new: dict[tuple[str, str], str] = {}
+        entities_payload: list[dict] = []
         for etype in _OLD_ENTITY_TYPES:
             if not self._has_table(etype):
                 continue
@@ -169,18 +389,24 @@ class GraphStore:
                 result = self._conn.execute(f"MATCH (n:{etype}) RETURN n.name, n.props, n.aliases")
                 while result.has_next():
                     row = result.get_next()
-                    entities.append(
+                    name = row[0]
+                    props = row[1] or ""
+                    aliases = row[2] or "[]"
+                    new_id = _new_entity_id()
+                    old_key_to_new[(etype, name)] = new_id
+                    entities_payload.append(
                         {
-                            "name": row[0],
-                            "type": etype,
-                            "props": row[1] or "",
-                            "aliases": row[2] or "[]",
+                            "id": new_id,
+                            "name": name,
+                            "props": props,
+                            "aliases": aliases,
+                            "types": _dump_list([_norm_type(etype)]),
+                            "description": "",
                         }
                     )
             except RuntimeError:
                 pass
 
-        # Memory nodes
         memory_ids: list[str] = []
         try:
             result = self._conn.execute("MATCH (m:Memory) RETURN m.id")
@@ -189,19 +415,17 @@ class GraphStore:
         except RuntimeError:
             pass
 
-        # ABOUT edges
-        about_edges: list[dict] = []  # {memory_id, entity_type, entity_name}
+        about_edges: list[dict] = []
         for etype, edge_name in _OLD_ABOUT_EDGES.items():
             try:
                 result = self._conn.execute(f"MATCH (m:Memory)-[:{edge_name}]->(e:{etype}) RETURN m.id, e.name")
                 while result.has_next():
                     row = result.get_next()
-                    about_edges.append({"memory_id": row[0], "entity_type": etype, "entity_name": row[1]})
+                    about_edges.append({"mid": row[0], "etype": etype, "ename": row[1]})
             except RuntimeError:
                 pass
 
-        # Entity↔entity edges
-        entity_edges: list[dict] = []  # {from_type, from_name, edge_type, to_type, to_name}
+        entity_edges: list[dict] = []
         for edge_name, from_t, to_t in _OLD_ENTITY_EDGES:
             try:
                 result = self._conn.execute(f"MATCH (a:{from_t})-[:{edge_name}]->(b:{to_t}) RETURN a.name, b.name")
@@ -209,113 +433,84 @@ class GraphStore:
                     row = result.get_next()
                     entity_edges.append(
                         {
-                            "from_type": from_t,
-                            "from_name": row[0],
-                            "edge_type": edge_name,
-                            "to_type": to_t,
-                            "to_name": row[1],
+                            "from_t": from_t,
+                            "from_n": row[0],
+                            "edge": edge_name,
+                            "to_t": to_t,
+                            "to_n": row[1],
                         }
                     )
             except RuntimeError:
                 pass
 
-        # Memory↔memory edges
         mem_edges: list[dict] = []
         for edge_name in _OLD_MEMORY_EDGES:
             try:
                 result = self._conn.execute(f"MATCH (a:Memory)-[:{edge_name}]->(b:Memory) RETURN a.id, b.id")
                 while result.has_next():
                     row = result.get_next()
-                    mem_edges.append({"from_id": row[0], "edge_type": edge_name, "to_id": row[1]})
+                    mem_edges.append({"fid": row[0], "edge": edge_name, "tid": row[1]})
             except RuntimeError:
                 pass
 
-        log.info(
-            "Migration data collected",
-            extra={
-                "data": {
-                    "entities": len(entities),
-                    "memories": len(memory_ids),
-                    "about_edges": len(about_edges),
-                    "entity_edges": len(entity_edges),
-                    "mem_edges": len(mem_edges),
-                }
-            },
-        )
-
-        # 2. Drop old tables (edges first, then nodes)
+        # Drop old tables.
         old_edge_tables = list(_OLD_ABOUT_EDGES.values()) + [e[0] for e in _OLD_ENTITY_EDGES] + _OLD_MEMORY_EDGES
         for table in old_edge_tables:
             try:
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
             except RuntimeError:
                 pass
-
         for etype in _OLD_ENTITY_TYPES:
             try:
                 self._conn.execute(f"DROP TABLE IF EXISTS {etype}")
             except RuntimeError:
                 pass
-
         try:
             self._conn.execute("DROP TABLE IF EXISTS Memory")
         except RuntimeError:
             pass
 
-        # 3. Create new tables
-        self._conn.execute(
-            "CREATE NODE TABLE IF NOT EXISTS Entity "
-            "(id STRING, name STRING, type STRING, props STRING DEFAULT '', "
-            "aliases STRING DEFAULT '[]', PRIMARY KEY (id))"
-        )
-        self._conn.execute("CREATE NODE TABLE IF NOT EXISTS Memory (id STRING, PRIMARY KEY (id))")
-        self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
-        self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
-        self._conn.execute(
-            "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
-        )
+        self._create_new_tables()
 
-        # 4. Re-insert data
-        for ent in entities:
-            entity_id = _entity_id(ent["type"], ent["name"])
+        # Re-insert.
+        for ent in entities_payload:
             self._conn.execute(
-                "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props, n.aliases = $aliases",
-                parameters={
-                    "id": entity_id,
-                    "name": ent["name"],
-                    "type": ent["type"],
-                    "props": ent["props"],
-                    "aliases": ent["aliases"],
-                },
+                "MERGE (n:Entity {id: $id}) SET n.primary_name = $name, "
+                "n.aliases = $aliases, n.types = $types, n.description = $description, n.props = $props",
+                parameters=ent,
             )
 
         for mid in memory_ids:
             self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": mid})
 
         for ae in about_edges:
-            eid = _entity_id(ae["entity_type"], ae["entity_name"])
+            new_eid = old_key_to_new.get((ae["etype"], ae["ename"]))
+            if not new_eid:
+                continue
             self._conn.execute(
                 "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) CREATE (m)-[:ABOUT]->(e)",
-                parameters={"mid": ae["memory_id"], "eid": eid},
+                parameters={"mid": ae["mid"], "eid": new_eid},
             )
 
         for ee in entity_edges:
-            fid = _entity_id(ee["from_type"], ee["from_name"])
-            tid = _entity_id(ee["to_type"], ee["to_name"])
+            fid = old_key_to_new.get((ee["from_t"], ee["from_n"]))
+            tid = old_key_to_new.get((ee["to_t"], ee["to_n"]))
+            if not (fid and tid):
+                continue
             self._conn.execute(
                 "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
-                parameters={"fid": fid, "tid": tid, "et": ee["edge_type"]},
+                parameters={"fid": fid, "tid": tid, "et": ee["edge"]},
             )
 
         for me in mem_edges:
             self._conn.execute(
                 "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
-                parameters={"fid": me["from_id"], "tid": me["to_id"], "et": me["edge_type"]},
+                parameters={"fid": me["fid"], "tid": me["tid"], "et": me["edge"]},
             )
 
         log.info(
-            "Migration complete — %d entities, %d memories, %d about, %d rel, %d mem_rel edges",
-            len(entities),
+            "per-type migration complete — %d entities, %d memories, %d about, %d rel, %d mem_rel",
+            len(entities_payload),
             len(memory_ids),
             len(about_edges),
             len(entity_edges),
@@ -326,135 +521,302 @@ class GraphStore:
         """No-op — KuzuDB connections close automatically on GC."""
 
     # ------------------------------------------------------------------
-    # Entity node operations
+    # Entity linking (extraction-time disambiguation)
     # ------------------------------------------------------------------
 
-    def _resolve_canonical(self, node_type: str, name: str) -> tuple[str, str]:
-        """Snap (type, name) onto the canonical pair already stored in the graph.
-
-        Without normalization, the LLM's call-to-call casing drift (Tool vs
-        tool, Phileas vs phileas, Person vs person) creates a fresh Entity
-        node every time. The 2026-04-26 audit showed 31 exact dup clusters
-        and 89 type-confusion groups touching 71.5% of memories — duplicates
-        have Jaccard=0, i.e. they fragment a single referent across siloed
-        nodes rather than overlap.
-
-        Resolution rule:
-          1. If any existing entity matches case-insensitively on BOTH type
-             and name, return its stored (type, name) verbatim. Among
-             multiple matches, prefer the one with the most ABOUT edges so
-             new writes accumulate on the highest-mass variant.
-          2. Otherwise, return a fresh canonical: type as ``.strip().title()``
-             (Tool, Project, Person…) and name as ``.strip()`` (preserves
-             user/handle casing like ``minhnt``).
-
-        We intentionally do NOT collapse across types — Project:Phileas and
-        Tool:Phileas may be the same referent, but that's a semantic call
-        for a separate merge migration, not a normalization decision.
-
-        Caller must hold the connection lock and have already called
-        ``_ensure_connected``.
-        """
-        norm_type = node_type.strip().lower()
-        norm_name = name.strip().lower()
+    def _candidate_rows(self, name: str) -> list[dict[str, Any]]:
+        """Gather entity rows whose primary_name or alias matches ``name`` case-insensitively."""
         result = self._conn.execute(
             "MATCH (e:Entity) "
-            "WHERE lower(e.type) = $t AND lower(e.name) = $n "
+            "WHERE lower(e.primary_name) = lower($n) OR lower(e.aliases) CONTAINS lower($n) "
             "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
             "WITH e, COUNT(m) AS cnt "
-            "RETURN e.type, e.name "
-            "ORDER BY cnt DESC LIMIT 1",
-            parameters={"t": norm_type, "n": norm_name},
+            "RETURN e.id, e.primary_name, e.types, e.aliases, e.description, cnt",
+            parameters={"n": name.strip()},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            aliases = _parse_list(r[3])
+            # Filter alias false-positives: substring match on JSON list may
+            # hit a longer alias that contains the query as a substring. Keep
+            # only candidates where the name truly matches as primary or
+            # alias (case-insensitive equality on either).
+            if r[1].strip().lower() == name.strip().lower() or any(
+                a.strip().lower() == name.strip().lower() for a in aliases
+            ):
+                rows.append(
+                    {
+                        "id": r[0],
+                        "primary_name": r[1],
+                        "types": _parse_list(r[2]),
+                        "aliases": aliases,
+                        "description": r[4] or "",
+                        "memory_count": int(r[5]),
+                    }
+                )
+        return rows
+
+    def _neighborhood_overlap(self, candidate_id: str, context_neighbors: list[str]) -> float:
+        """Fraction of ``context_neighbors`` already linked to ``candidate_id``.
+
+        ``context_neighbors`` is a list of entity uuids appearing in the
+        same memory as the mention. Overlap counts neighbors that have an
+        ABOUT-incoming-shared-memory or a direct REL with the candidate.
+        """
+        if not context_neighbors:
+            return 0.0
+        neighbor_set = {n for n in context_neighbors if n and n != candidate_id}
+        if not neighbor_set:
+            return 0.0
+        params = {"eid": candidate_id, "ns": list(neighbor_set)}
+        # REL-connected neighbors (in or out)
+        result = self._conn.execute(
+            "MATCH (e:Entity {id: $eid})-[:REL]-(n:Entity) WHERE n.id IN $ns RETURN n.id",
+            parameters=params,
+        )
+        hit: set[str] = set()
+        while result.has_next():
+            hit.add(result.get_next()[0])
+        # Co-occurring-via-shared-memory neighbors
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}), (m)-[:ABOUT]->(n:Entity) "
+            "WHERE n.id IN $ns RETURN DISTINCT n.id",
+            parameters=params,
+        )
+        while result.has_next():
+            hit.add(result.get_next()[0])
+        return len(hit) / len(neighbor_set)
+
+    def _max_memory_count(self) -> int:
+        """Top ABOUT-edge count across all entities. Used to normalize the prior."""
+        result = self._conn.execute(
+            "MATCH (e:Entity) OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) WITH e, COUNT(m) AS cnt RETURN MAX(cnt)"
         )
         if result.has_next():
             row = result.get_next()
-            return row[0], row[1]
-        return node_type.strip().title(), name.strip()
+            return int(row[0]) if row[0] is not None else 0
+        return 0
+
+    def _score_candidate(
+        self,
+        candidate: dict[str, Any],
+        hint_types: list[str],
+        context_neighbors: list[str],
+        max_count: int,
+    ) -> float:
+        type_overlap = _jaccard(_types_lower(candidate["types"]), _types_lower(hint_types))
+        nbhd = self._neighborhood_overlap(candidate["id"], context_neighbors)
+        if max_count > 0:
+            prior = math.log1p(candidate["memory_count"]) / math.log1p(max_count)
+        else:
+            prior = 0.0
+        return _W_TYPE * type_overlap + _W_NEIGHBORHOOD * nbhd + _W_PRIOR * prior
+
+    def entity_lookup(
+        self,
+        name: str,
+        hint_types: list[str] | None = None,
+        context_neighbors: list[str] | None = None,
+        description: str = "",
+    ) -> str:
+        """Resolve a mention to an existing entity uuid, or mint a new one.
+
+        Caller must hold ``_lock`` and have an open connection. Returns
+        the entity uuid.
+        """
+        hint_types = [_norm_type(t) for t in (hint_types or []) if t]
+        context_neighbors = context_neighbors or []
+        name = (name or "").strip()
+        if not name:
+            return ""
+
+        candidates = self._candidate_rows(name)
+
+        if candidates:
+            # Hot path: if the mention's types are already a subset of an
+            # existing candidate's types (or empty when no hint was given
+            # and the name uniquely picks out one candidate), this is the
+            # ordinary "same entity" case — reuse without scoring. Scoring
+            # is reserved for the genuinely ambiguous cases (new type
+            # added, name collision, multi-type aspect emerging).
+            hint_lower = _types_lower(hint_types)
+            for c in candidates:
+                cand_lower = _types_lower(c["types"])
+                if hint_lower and hint_lower.issubset(cand_lower):
+                    self._merge_into_existing(c["id"], hint_types, description)
+                    return c["id"]
+
+            max_count = self._max_memory_count()
+            best = max(
+                candidates,
+                key=lambda c: self._score_candidate(c, hint_types, context_neighbors, max_count),
+            )
+            best_score = self._score_candidate(best, hint_types, context_neighbors, max_count)
+            if best_score >= LINK_HIGH:
+                self._merge_into_existing(best["id"], hint_types, description)
+                return best["id"]
+            # Below LINK_HIGH (including the LINK_LOW..LINK_HIGH mid-band)
+            # falls through to mint-new for safety, per the design doc.
+
+        # Mint new.
+        new_id = _new_entity_id()
+        self._conn.execute(
+            "MERGE (n:Entity {id: $id}) SET n.primary_name = $name, "
+            "n.aliases = $aliases, n.types = $types, n.description = $description, n.props = $props",
+            parameters={
+                "id": new_id,
+                "name": name,
+                "aliases": "[]",
+                "types": _dump_list(hint_types),
+                "description": description or "",
+                "props": "",
+            },
+        )
+        return new_id
+
+    def _merge_into_existing(self, entity_id: str, new_types: list[str], description: str) -> None:
+        """Union new types into the entity row; leave name + description alone."""
+        result = self._conn.execute(
+            "MATCH (e:Entity {id: $id}) RETURN e.types, e.description",
+            parameters={"id": entity_id},
+        )
+        if not result.has_next():
+            return
+        row = result.get_next()
+        existing_types = _parse_list(row[0])
+        existing_desc = row[1] or ""
+        # Stable ordering: existing types first, new types appended.
+        ordered: list[str] = []
+        for t in (*existing_types, *new_types):
+            if t and t not in ordered:
+                ordered.append(t)
+        new_desc = existing_desc if existing_desc else (description or "")
+        if set(ordered) == set(existing_types) and new_desc == existing_desc:
+            return
+        self._conn.execute(
+            "MATCH (e:Entity {id: $id}) SET e.types = $types, e.description = $description",
+            parameters={"id": entity_id, "types": _dump_list(ordered), "description": new_desc},
+        )
+
+    def _lookup_id(self, node_type: str, name: str) -> str | None:
+        """Find an entity uuid for a (type, name) pair using the same scoring path as writes.
+
+        Used by the public ``find_nodes`` / ``link_memory`` / ``get_memories_about``
+        readers so reads see the same disambiguation choices as writes.
+        """
+        candidates = self._candidate_rows(name)
+        if not candidates:
+            return None
+        if node_type:
+            tlower = node_type.strip().lower()
+            typed = [c for c in candidates if tlower in _types_lower(c["types"])]
+            if typed:
+                # Prefer the typed candidate with the most ABOUT-edge mass.
+                typed.sort(key=lambda c: c["memory_count"], reverse=True)
+                return typed[0]["id"]
+            # No type-overlap candidate: fall back to highest-mass any-type
+            # match — readers tolerate this since callers commonly pass a
+            # hint type that may have been dropped from a multi-type entity.
+        candidates.sort(key=lambda c: c["memory_count"], reverse=True)
+        return candidates[0]["id"]
+
+    # ------------------------------------------------------------------
+    # Entity node operations (public API)
+    # ------------------------------------------------------------------
 
     @_locked
-    def upsert_node(self, node_type: str, name: str, props: dict[str, Any] | None = None) -> None:
-        """Insert or update an entity node.
+    def upsert_node(
+        self,
+        node_type: str,
+        name: str,
+        props: dict[str, Any] | None = None,
+        description: str = "",
+        context_neighbors: list[str] | None = None,
+    ) -> str | None:
+        """Resolve / mint an entity uuid and update its props.
 
-        Parameters
-        ----------
-        node_type:
-            Any string (e.g., Person, Project, Company, Language).
-        name:
-            Display name for the entity.
-        props:
-            Optional dict of additional properties, serialised to JSON.
+        Returns the resolved entity_id (or None if the graph is unavailable).
         """
         if not self._ensure_connected():
-            return
-        node_type, name = self._resolve_canonical(node_type, name)
-        entity_id = _entity_id(node_type, name)
-        props_str = json.dumps(props, ensure_ascii=False) if props else ""
-        self._conn.execute(
-            "MERGE (n:Entity {id: $id}) SET n.name = $name, n.type = $type, n.props = $props",
-            parameters={"id": entity_id, "name": name, "type": node_type, "props": props_str},
+            return None
+        eid = self.entity_lookup(
+            name,
+            hint_types=[node_type] if node_type else [],
+            context_neighbors=context_neighbors,
+            description=description,
         )
+        if not eid:
+            return None
+        if props:
+            props_str = json.dumps(props, ensure_ascii=False)
+            self._conn.execute(
+                "MATCH (n:Entity {id: $id}) SET n.props = $props",
+                parameters={"id": eid, "props": props_str},
+            )
+        return eid
 
     @_locked
     def find_nodes(self, node_type: str, name: str) -> list[dict[str, Any]]:
-        """Return nodes matching an exact type + name (case-insensitively)."""
+        """Return entities matching ``(node_type, name)`` case-insensitively.
+
+        Each returned dict carries the resolved primary_type (the requested
+        type if present, else the entity's first stored type) plus the full
+        ``types`` list for callers that want the whole multi-type picture.
+        """
         if not self._ensure_connected():
             return []
-        node_type, name = self._resolve_canonical(node_type, name)
-        entity_id = _entity_id(node_type, name)
-        result = self._conn.execute(
-            "MATCH (n:Entity {id: $id}) RETURN n.name AS name, n.type AS type, n.props AS props, n.aliases AS aliases",
-            parameters={"id": entity_id},
-        )
-        rows = []
-        while result.has_next():
-            row = result.get_next()
+        candidates = self._candidate_rows(name)
+        tlower = node_type.strip().lower() if node_type else ""
+        rows: list[dict[str, Any]] = []
+        for c in candidates:
+            types_l = _types_lower(c["types"])
+            if tlower and tlower not in types_l:
+                continue
+            primary = node_type.strip().title() if tlower else (c["types"][0] if c["types"] else "")
             rows.append(
                 {
-                    "name": row[0],
-                    "type": row[1],
-                    "props": row[2],
-                    "aliases": row[3] or "[]",
+                    "id": c["id"],
+                    "name": c["primary_name"],
+                    "type": primary,
+                    "types": c["types"],
+                    "props": "",
+                    "aliases": _dump_list(c["aliases"]),
+                    "description": c["description"],
                 }
             )
         return rows
 
     @_locked
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
-        """Search entity nodes by name or alias using case-insensitive CONTAINS.
-
-        Kuzu's CONTAINS is case-sensitive by default, which made real-world
-        casing drift ("Phileas" stored, "phileas" queried) invisible to graph
-        retrieval. lower()-normalising both sides closes that gap.
-        """
+        """Search entity nodes by name or alias using case-insensitive CONTAINS."""
         if not self._ensure_connected():
             return []
         result = self._conn.execute(
             "MATCH (n:Entity) "
-            "WHERE lower(n.name) CONTAINS lower($q) OR lower(n.aliases) CONTAINS lower($q) "
-            "RETURN n.name AS name, n.type AS type",
+            "WHERE lower(n.primary_name) CONTAINS lower($q) OR lower(n.aliases) CONTAINS lower($q) "
+            "RETURN n.primary_name AS name, n.types AS types",
             parameters={"q": name_query},
         )
         results = []
         while result.has_next():
             row = result.get_next()
-            results.append({"name": row[0], "type": row[1]})
+            types = _parse_list(row[1])
+            primary_type = types[0] if types else ""
+            results.append({"name": row[0], "type": primary_type, "types": types})
         return results
 
     @_locked
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
-        """Set aliases for an entity node (e.g., "mom" for a Person)."""
+        """Set aliases for an entity (resolved by type+name)."""
         if not self._ensure_connected():
             return
-        node_type, name = self._resolve_canonical(node_type, name)
-        entity_id = _entity_id(node_type, name)
-        # ensure_ascii=False so non-ASCII aliases (e.g. Vietnamese kinship
-        # terms like "chị") stay as literal characters in the stored string.
-        # Kuzu's CONTAINS match runs against this raw value, and escaped
-        # forms like "ị" never match a query of "chị".
-        aliases_str = json.dumps(aliases, ensure_ascii=False)
+        eid = self._lookup_id(node_type, name)
+        if not eid:
+            return
         self._conn.execute(
             "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases",
-            parameters={"id": entity_id, "aliases": aliases_str},
+            parameters={"id": eid, "aliases": _dump_list(aliases)},
         )
 
     # ------------------------------------------------------------------
@@ -462,67 +824,82 @@ class GraphStore:
     # ------------------------------------------------------------------
 
     @_locked
-    def link_memory(self, memory_id: str, entity_type: str, entity_name: str) -> None:
-        """Link a Memory node to an Entity via an ABOUT edge.
+    def link_memory(
+        self,
+        memory_id: str,
+        entity_type: str,
+        entity_name: str,
+        description: str = "",
+        context_neighbors: list[str] | None = None,
+    ) -> str | None:
+        """Resolve / mint an entity for ``(entity_type, entity_name)`` and link a memory to it.
 
-        Creates both nodes if they don't exist.
+        Returns the resolved entity_id, or None if unavailable.
         """
         if not self._ensure_connected():
-            return
-        entity_type, entity_name = self._resolve_canonical(entity_type, entity_name)
-        entity_id = _entity_id(entity_type, entity_name)
-        # Ensure both nodes exist
-        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": memory_id})
-        self._conn.execute(
-            "MERGE (e:Entity {id: $eid}) SET e.name = $name, e.type = $type",
-            parameters={"eid": entity_id, "name": entity_name, "type": entity_type},
+            return None
+        eid = self.entity_lookup(
+            entity_name,
+            hint_types=[entity_type] if entity_type else [],
+            context_neighbors=context_neighbors,
+            description=description,
         )
-        # Idempotent edge
+        if not eid:
+            return None
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": memory_id})
+        # Idempotent edge.
         count_result = self._conn.execute(
             "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity {id: $eid}) RETURN COUNT(*) AS cnt",
-            parameters={"mid": memory_id, "eid": entity_id},
+            parameters={"mid": memory_id, "eid": eid},
         )
-        row = count_result.get_next()
-        if row[0] > 0:
-            return
+        if count_result.get_next()[0] > 0:
+            return eid
         self._conn.execute(
             "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) CREATE (m)-[:ABOUT]->(e)",
-            parameters={"mid": memory_id, "eid": entity_id},
+            parameters={"mid": memory_id, "eid": eid},
         )
+        return eid
 
     @_locked
     def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
-        """Return memory IDs linked to the given entity (case-insensitive lookup)."""
+        """Return memory IDs linked to the entity (resolved by type+name)."""
         if not self._ensure_connected():
             return []
-        entity_type, entity_name = self._resolve_canonical(entity_type, entity_name)
-        entity_id = _entity_id(entity_type, entity_name)
+        eid = self._lookup_id(entity_type, entity_name)
+        if not eid:
+            return []
         result = self._conn.execute(
             "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
-            parameters={"eid": entity_id},
+            parameters={"eid": eid},
         )
         ids = []
         while result.has_next():
-            row = result.get_next()
-            ids.append(row[0])
+            ids.append(result.get_next()[0])
         return ids
 
     @_locked
     def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
         """Find all entities linked to a memory via ABOUT edges.
 
-        Returns [{"name": str, "type": str}].
+        Returns [{"name": str, "type": str, "types": list[str]}].
         """
         if not self._ensure_connected():
             return []
         result = self._conn.execute(
-            "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity) RETURN e.name, e.type",
+            "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity) RETURN e.primary_name, e.types",
             parameters={"mid": memory_id},
         )
         results = []
         while result.has_next():
             row = result.get_next()
-            results.append({"name": row[0], "type": row[1]})
+            types = _parse_list(row[1])
+            results.append(
+                {
+                    "name": row[0],
+                    "type": types[0] if types else "",
+                    "types": types,
+                }
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -538,23 +915,22 @@ class GraphStore:
         to_type: str,
         to_name: str,
     ) -> None:
-        """Create a typed edge between two entities, idempotently.
+        """Create a typed REL edge between two entities, idempotently.
 
-        Any edge_type string is accepted (BUILDS, KNOWS, LIKES, etc.).
+        Either endpoint can be a multi-type entity; we resolve by
+        (type, name) using the same path as upsert.
         """
         if not self._ensure_connected():
             return
-        from_type, from_name = self._resolve_canonical(from_type, from_name)
-        to_type, to_name = self._resolve_canonical(to_type, to_name)
-        from_id = _entity_id(from_type, from_name)
-        to_id = _entity_id(to_type, to_name)
-        # Check existence
+        from_id = self.entity_lookup(from_name, hint_types=[from_type] if from_type else [])
+        to_id = self.entity_lookup(to_name, hint_types=[to_type] if to_type else [])
+        if not (from_id and to_id):
+            return
         count_result = self._conn.execute(
             "MATCH (a:Entity {id: $fid})-[r:REL]->(b:Entity {id: $tid}) WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
-        row = count_result.get_next()
-        if row[0] > 0:
+        if count_result.get_next()[0] > 0:
             return
         self._conn.execute(
             "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
@@ -568,49 +944,36 @@ class GraphStore:
         entity_name: str,
         edge_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return entities connected to the given entity via REL edges.
-
-        Follows both outgoing and incoming edges. Optionally filter by edge_type.
-
-        Returns [{"name": str, "type": str, "edge_type": str, "direction": "out"|"in"}].
-        """
+        """Return entities connected to the given entity via REL edges (in + out)."""
         if not self._ensure_connected():
             return []
-        entity_id = _entity_id(entity_type, entity_name)
+        eid = self._lookup_id(entity_type, entity_name)
+        if not eid:
+            return []
         results = []
-
-        # Outgoing
-        if edge_type:
-            out_result = self._conn.execute(
-                "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) "
-                "WHERE r.edge_type = $et RETURN b.name, b.type, r.edge_type",
-                parameters={"eid": entity_id, "et": edge_type},
-            )
-        else:
-            out_result = self._conn.execute(
-                "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.name, b.type, r.edge_type",
-                parameters={"eid": entity_id},
-            )
-        while out_result.has_next():
-            row = out_result.get_next()
-            results.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "out"})
-
-        # Incoming
-        if edge_type:
-            in_result = self._conn.execute(
-                "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) "
-                "WHERE r.edge_type = $et RETURN b.name, b.type, r.edge_type",
-                parameters={"eid": entity_id, "et": edge_type},
-            )
-        else:
-            in_result = self._conn.execute(
-                "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) RETURN b.name, b.type, r.edge_type",
-                parameters={"eid": entity_id},
-            )
-        while in_result.has_next():
-            row = in_result.get_next()
-            results.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "in"})
-
+        for direction, cypher in (
+            ("out", "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) "),
+            ("in", "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) "),
+        ):
+            if edge_type:
+                q = cypher + "WHERE r.edge_type = $et RETURN b.primary_name, b.types, r.edge_type"
+                params = {"eid": eid, "et": edge_type}
+            else:
+                q = cypher + "RETURN b.primary_name, b.types, r.edge_type"
+                params = {"eid": eid}
+            result = self._conn.execute(q, parameters=params)
+            while result.has_next():
+                row = result.get_next()
+                types = _parse_list(row[1])
+                results.append(
+                    {
+                        "name": row[0],
+                        "type": types[0] if types else "",
+                        "types": types,
+                        "edge_type": row[2],
+                        "direction": direction,
+                    }
+                )
         return results
 
     # ------------------------------------------------------------------
@@ -622,17 +985,14 @@ class GraphStore:
         """Create an edge between two Memory nodes with a given edge_type."""
         if not self._ensure_connected():
             return
-        # Ensure both Memory nodes exist
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": to_id})
-        # Check existence
         count_result = self._conn.execute(
             "MATCH (a:Memory {id: $fid})-[r:MEM_REL]->(b:Memory {id: $tid}) "
             "WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
-        row = count_result.get_next()
-        if row[0] > 0:
+        if count_result.get_next()[0] > 0:
             return
         self._conn.execute(
             "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
@@ -648,36 +1008,38 @@ class GraphStore:
         """Return nodes connected to the given entity within the specified depth."""
         if not self._ensure_connected():
             return []
-        entity_id = _entity_id(node_type, name)
+        eid = self._lookup_id(node_type, name)
+        if not eid:
+            return []
+        neighbors: list[dict[str, Any]] = []
 
-        neighbors = []
+        for direction, cypher in (
+            ("out", "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) "),
+            ("in", "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) "),
+        ):
+            result = self._conn.execute(
+                cypher + "RETURN b.primary_name, b.types, r.edge_type",
+                parameters={"eid": eid},
+            )
+            while result.has_next():
+                row = result.get_next()
+                types = _parse_list(row[1])
+                neighbors.append(
+                    {
+                        "name": row[0],
+                        "type": types[0] if types else "",
+                        "types": types,
+                        "edge_type": row[2],
+                        "direction": direction,
+                    }
+                )
 
-        # Outgoing REL edges (Entity → Entity)
-        out_rel = self._conn.execute(
-            "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.name, b.type, r.edge_type",
-            parameters={"eid": entity_id},
-        )
-        while out_rel.has_next():
-            row = out_rel.get_next()
-            neighbors.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "out"})
-
-        # Incoming REL edges (Entity → this Entity)
-        in_rel = self._conn.execute(
-            "MATCH (b:Entity)-[r:REL]->(a:Entity {id: $eid}) RETURN b.name, b.type, r.edge_type",
-            parameters={"eid": entity_id},
-        )
-        while in_rel.has_next():
-            row = in_rel.get_next()
-            neighbors.append({"name": row[0], "type": row[1], "edge_type": row[2], "direction": "in"})
-
-        # Incoming ABOUT edges (Memory → this Entity)
         about_result = self._conn.execute(
             "MATCH (m:Memory)-[:ABOUT]->(a:Entity {id: $eid}) RETURN m.id",
-            parameters={"eid": entity_id},
+            parameters={"eid": eid},
         )
         while about_result.has_next():
-            row = about_result.get_next()
-            neighbors.append({"id": row[0], "label": "Memory", "direction": "in"})
+            neighbors.append({"id": about_result.get_next()[0], "label": "Memory", "direction": "in"})
 
         return neighbors
 
@@ -687,34 +1049,40 @@ class GraphStore:
 
     @_locked
     def get_top_entities_by_type(self, entity_type: str, top_n: int = 15) -> list[dict[str, Any]]:
-        """Return the top-N entities of a type, ranked by ABOUT-edge count.
+        """Return the top-N entities carrying ``entity_type`` (multi-type-aware), by ABOUT count.
 
-        Used by the recall-time referent disambiguation step: given an
-        ambiguous query like "who is she", we pass these candidates to an LLM
-        and let it pick the likely referent by vibe/recency. Recency itself
-        isn't in Kuzu (Memory dates live in SQLite), so the caller joins
-        per-entity recency in a second pass.
+        Kuzu has no native list-membership predicate on JSON-string columns,
+        so we fetch all entities and filter in Python. The graph holds ~1k
+        rows; this is comfortably fast and avoids a CONTAINS-based query
+        that would over-match on substring collisions.
         """
         if not self._ensure_connected():
             return []
+        type_lower = entity_type.strip().lower() if entity_type else ""
         result = self._conn.execute(
-            "MATCH (m:Memory)-[:ABOUT]->(e:Entity) "
-            "WHERE e.type = $t "
-            "RETURN e.name AS name, e.aliases AS aliases, COUNT(m) AS cnt "
-            "ORDER BY cnt DESC LIMIT $n",
-            parameters={"t": entity_type, "n": int(top_n)},
+            "MATCH (e:Entity) "
+            "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+            "WITH e, COUNT(m) AS cnt "
+            "RETURN e.primary_name, e.types, e.aliases, cnt "
+            "ORDER BY cnt DESC"
         )
         rows: list[dict[str, Any]] = []
         while result.has_next():
             r = result.get_next()
+            types = _parse_list(r[1])
+            if type_lower and type_lower not in {t.lower() for t in types}:
+                continue
             rows.append(
                 {
                     "name": r[0],
                     "type": entity_type,
-                    "aliases": r[1] or "[]",
-                    "memory_count": int(r[2]),
+                    "types": types,
+                    "aliases": r[2] or "[]",
+                    "memory_count": int(r[3]),
                 }
             )
+            if len(rows) >= int(top_n):
+                break
         return rows
 
     @_locked
@@ -723,44 +1091,35 @@ class GraphStore:
         limit: int = 500,
         type_filter: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return all entities with their ABOUT-edge counts.
-
-        Powers the web entity-explorer list page; ranking by memory_count
-        keeps the most-mentioned nodes near the top so the list is useful
-        even before the user filters.
-        """
+        """Return all entities with their ABOUT-edge counts (multi-type-aware)."""
         if not self._ensure_connected():
             return []
-        if type_filter:
-            cypher = (
-                "MATCH (e:Entity) WHERE e.type = $t "
-                "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
-                "WITH e, COUNT(m) AS cnt "
-                "RETURN e.name AS name, e.type AS type, e.aliases AS aliases, cnt "
-                "ORDER BY cnt DESC, e.type, e.name LIMIT $n"
-            )
-            params: dict[str, Any] = {"t": type_filter, "n": int(limit)}
-        else:
-            cypher = (
-                "MATCH (e:Entity) "
-                "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
-                "WITH e, COUNT(m) AS cnt "
-                "RETURN e.name AS name, e.type AS type, e.aliases AS aliases, cnt "
-                "ORDER BY cnt DESC, e.type, e.name LIMIT $n"
-            )
-            params = {"n": int(limit)}
-        result = self._conn.execute(cypher, parameters=params)
+        result = self._conn.execute(
+            "MATCH (e:Entity) "
+            "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+            "WITH e, COUNT(m) AS cnt "
+            "RETURN e.primary_name, e.types, e.aliases, cnt "
+            "ORDER BY cnt DESC, e.primary_name"
+        )
         rows: list[dict[str, Any]] = []
+        type_lower = type_filter.strip().lower() if type_filter else ""
         while result.has_next():
             r = result.get_next()
+            types = _parse_list(r[1])
+            if type_lower and type_lower not in {t.lower() for t in types}:
+                continue
+            primary_type = types[0] if types else ""
             rows.append(
                 {
                     "name": r[0],
-                    "type": r[1],
+                    "type": primary_type,
+                    "types": types,
                     "aliases": r[2] or "[]",
                     "memory_count": int(r[3]),
                 }
             )
+            if len(rows) >= int(limit):
+                break
         return rows
 
     # ------------------------------------------------------------------
@@ -792,30 +1151,30 @@ class GraphStore:
 
     @_locked
     def status(self) -> dict[str, Any]:
-        """Detailed stats: node counts by type, edge counts by table."""
+        """Detailed stats: entity-type breakdown (multi-type-aware), edge counts."""
         if not self._ensure_connected():
             return {"nodes": -1, "edges": -1}
 
-        # Entity count by type
-        type_result = self._conn.execute("MATCH (n:Entity) RETURN n.type AS type, COUNT(*) AS cnt ORDER BY cnt DESC")
-        entity_types = {}
-        while type_result.has_next():
-            row = type_result.get_next()
-            entity_types[row[0]] = row[1]
+        # Entity count by type — each type-aspect counts the entity once,
+        # so an Ownego with types=[Place, Company, Project] adds 1 to each
+        # of those buckets. Sum across buckets ≠ entity count.
+        entity_types: dict[str, int] = {}
+        result = self._conn.execute("MATCH (e:Entity) RETURN e.types")
+        entity_count = 0
+        while result.has_next():
+            row = result.get_next()
+            entity_count += 1
+            for t in _parse_list(row[0]):
+                entity_types[t] = entity_types.get(t, 0) + 1
+        # Sort by count desc for stable display.
+        entity_types = dict(sorted(entity_types.items(), key=lambda kv: kv[1], reverse=True))
 
-        # Memory count
         mem_result = self._conn.execute("MATCH (n:Memory) RETURN COUNT(*) AS cnt")
         memory_count = mem_result.get_next()[0]
 
-        # Edge counts
-        about_result = self._conn.execute("MATCH ()-[:ABOUT]->() RETURN COUNT(*) AS cnt")
-        about_count = about_result.get_next()[0]
-
-        rel_result = self._conn.execute("MATCH ()-[:REL]->() RETURN COUNT(*) AS cnt")
-        rel_count = rel_result.get_next()[0]
-
-        mem_rel_result = self._conn.execute("MATCH ()-[:MEM_REL]->() RETURN COUNT(*) AS cnt")
-        mem_rel_count = mem_rel_result.get_next()[0]
+        about_count = self._conn.execute("MATCH ()-[:ABOUT]->() RETURN COUNT(*) AS cnt").get_next()[0]
+        rel_count = self._conn.execute("MATCH ()-[:REL]->() RETURN COUNT(*) AS cnt").get_next()[0]
+        mem_rel_count = self._conn.execute("MATCH ()-[:MEM_REL]->() RETURN COUNT(*) AS cnt").get_next()[0]
 
         return {
             "entity_types": entity_types,
@@ -823,6 +1182,6 @@ class GraphStore:
             "about_edges": about_count,
             "rel_edges": rel_count,
             "mem_rel_edges": mem_rel_count,
-            "nodes": sum(entity_types.values()) + memory_count,
+            "nodes": entity_count + memory_count,
             "edges": about_count + rel_count + mem_rel_count,
         }

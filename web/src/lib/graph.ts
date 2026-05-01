@@ -6,6 +6,7 @@ import type { EntityRelation, EntitySummary } from "./types";
 type RawEntity = {
   name: string;
   type: string;
+  types?: string[];
   aliases?: string;
   memory_count?: number;
 };
@@ -13,8 +14,10 @@ type RawEntity = {
 type RawNode = {
   name: string;
   type: string;
+  types?: string[];
   props?: string;
   aliases?: string;
+  description?: string;
 };
 
 function parseAliases(raw: string | undefined): string[] {
@@ -52,6 +55,7 @@ export async function listEntities(opts: {
   return (rows ?? []).map((r) => ({
     name: r.name,
     type: r.type,
+    types: r.types ?? [r.type],
     aliases: parseAliases(r.aliases),
     memory_count: r.memory_count ?? 0,
   }));
@@ -63,6 +67,8 @@ export async function findEntity(
 ): Promise<{
   name: string;
   type: string;
+  types: string[];
+  description: string;
   props: Record<string, unknown>;
   aliases: string[];
 } | null> {
@@ -76,6 +82,8 @@ export async function findEntity(
   return {
     name: first.name,
     type: first.type,
+    types: first.types ?? [first.type],
+    description: first.description ?? "",
     props: parseProps(first.props),
     aliases: parseAliases(first.aliases),
   };

@@ -266,9 +266,9 @@ class MemoryEngine:
                 for entity in entities:
                     name = entity.get("name")
                     etype = entity.get("type")
+                    desc = entity.get("description") or ""
                     if name and etype:
-                        self.graph.upsert_node(etype, name)
-                        self.graph.link_memory(item.id, etype, name)
+                        self.graph.link_memory(item.id, etype, name, description=desc)
 
             if relationships:
                 for rel in relationships:
@@ -278,8 +278,6 @@ class MemoryEngine:
                     to_name = rel.get("to_name")
                     to_type = rel.get("to_type")
                     if from_name and from_type and edge and to_name and to_type:
-                        self.graph.upsert_node(from_type, from_name)
-                        self.graph.upsert_node(to_type, to_name)
                         try:
                             self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
                         except Exception as e:
@@ -1118,9 +1116,9 @@ class MemoryEngine:
                 for entity in entities:
                     name = entity.get("name")
                     etype = entity.get("type")
+                    desc = entity.get("description") or ""
                     if name and etype:
-                        self.graph.upsert_node(etype, name)
-                        self.graph.link_memory(memory_id, etype, name)
+                        self.graph.link_memory(memory_id, etype, name, description=desc)
 
             if relationships:
                 for rel in relationships:
@@ -1130,8 +1128,6 @@ class MemoryEngine:
                     to_name = rel.get("to_name")
                     to_type = rel.get("to_type")
                     if from_name and from_type and edge and to_name and to_type:
-                        self.graph.upsert_node(from_type, from_name)
-                        self.graph.upsert_node(to_type, to_name)
                         try:
                             self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
                         except Exception as e:
@@ -1194,8 +1190,6 @@ class MemoryEngine:
             "relate",
             edge=f"{from_name}({from_type})-[{edge_type}]->{to_name}({to_type})",
         ):
-            self.graph.upsert_node(from_type, from_name)
-            self.graph.upsert_node(to_type, to_name)
             self.graph.create_edge(from_type, from_name, edge_type, to_type, to_name)
             if memory_id:
                 self.graph.link_memory(memory_id, from_type, from_name)

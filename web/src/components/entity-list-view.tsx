@@ -92,7 +92,10 @@ export function EntityListView({
 
   const types = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const e of items) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    for (const e of items) {
+      const ts = e.types && e.types.length > 0 ? e.types : [e.type];
+      for (const t of ts) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [items]);
 
@@ -232,12 +235,19 @@ export function EntityListView({
                       </span>
                     )}
                   </div>
-                  <Badge
-                    variant="outline"
-                    className="shrink-0 text-[10px]"
-                  >
-                    {e.type}
-                  </Badge>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    {(e.types && e.types.length > 0 ? e.types : [e.type]).map(
+                      (t) => (
+                        <Badge
+                          key={t}
+                          variant="outline"
+                          className="text-[10px]"
+                        >
+                          {t}
+                        </Badge>
+                      ),
+                    )}
+                  </div>
                   <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
                     {e.memory_count}
                   </span>
