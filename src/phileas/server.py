@@ -73,7 +73,10 @@ def memorize(
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
         importance: Importance score 1-10 (10 = most important).
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
-        entities: List or JSON string of {"name": str, "type": str} objects to link in the graph.
+        entities: List or JSON string of {"name": str, "type": str, "description"?: str} objects.
+            description is an optional one-line disambiguator — written once at
+            entity creation, never overwritten. Helps the linker keep
+            same-name distinct referents apart (Apple fruit vs Apple Inc.).
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
     """
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
@@ -103,7 +106,7 @@ def memorize_batch(memories: list | str) -> str:
             - memory_type: One of "profile", "event", "knowledge", "behavior", "reflection". Default "knowledge".
             - importance: 1-10. Default 5.
             - daily_ref: YYYY-MM-DD. Defaults to today.
-            - entities: List of {"name": str, "type": str}.
+            - entities: List of {"name": str, "type": str, "description"?: str}.
             - relationships: List of {"from_name", "from_type", "edge", "to_name", "to_type"}.
     """
     items = json.loads(memories) if isinstance(memories, str) else memories

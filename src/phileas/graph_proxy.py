@@ -52,8 +52,24 @@ class GraphProxy:
 
     # -- Entity node operations --
 
-    def upsert_node(self, node_type: str, name: str, props: dict[str, Any] | None = None) -> None:
-        self._write("upsert_node", {"node_type": node_type, "name": name, "props": props})
+    def upsert_node(
+        self,
+        node_type: str,
+        name: str,
+        props: dict[str, Any] | None = None,
+        description: str = "",
+        context_neighbors: list[str] | None = None,
+    ) -> None:
+        self._write(
+            "upsert_node",
+            {
+                "node_type": node_type,
+                "name": name,
+                "props": props,
+                "description": description,
+                "context_neighbors": context_neighbors or [],
+            },
+        )
 
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         self._write("set_aliases", {"node_type": node_type, "name": name, "aliases": aliases})
@@ -66,8 +82,24 @@ class GraphProxy:
 
     # -- Memory <-> Entity edges (ABOUT) --
 
-    def link_memory(self, memory_id: str, entity_type: str, entity_name: str) -> None:
-        self._write("link_memory", {"memory_id": memory_id, "entity_type": entity_type, "entity_name": entity_name})
+    def link_memory(
+        self,
+        memory_id: str,
+        entity_type: str,
+        entity_name: str,
+        description: str = "",
+        context_neighbors: list[str] | None = None,
+    ) -> None:
+        self._write(
+            "link_memory",
+            {
+                "memory_id": memory_id,
+                "entity_type": entity_type,
+                "entity_name": entity_name,
+                "description": description,
+                "context_neighbors": context_neighbors or [],
+            },
+        )
 
     def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
         return self._read("get_memories_about", {"entity_type": entity_type, "entity_name": entity_name}, default=[])

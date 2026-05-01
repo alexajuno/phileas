@@ -387,10 +387,22 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         op = params.get("op")
         graph = engine.graph
         if op == "upsert_node":
-            graph.upsert_node(params["node_type"], params["name"], params.get("props"))
+            graph.upsert_node(
+                params["node_type"],
+                params["name"],
+                params.get("props"),
+                description=params.get("description", ""),
+                context_neighbors=params.get("context_neighbors") or None,
+            )
             return {"ok": True}
         elif op == "link_memory":
-            graph.link_memory(params["memory_id"], params["entity_type"], params["entity_name"])
+            graph.link_memory(
+                params["memory_id"],
+                params["entity_type"],
+                params["entity_name"],
+                description=params.get("description", ""),
+                context_neighbors=params.get("context_neighbors") or None,
+            )
             return {"ok": True}
         elif op == "create_edge":
             graph.create_edge(

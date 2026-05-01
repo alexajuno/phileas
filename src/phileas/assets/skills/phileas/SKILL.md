@@ -103,6 +103,17 @@ Before calling `memorize`, do a quick `recall` on the core entity or topic. If a
 - `summary` should be one sentence, self-contained — readable without the original turn for context.
 - `importance` ranges 0.0–1.0. Reserve ≥0.8 for things that shape how you should act going forward (strong preferences, identity, major life events). Routine facts are 0.4–0.6.
 
+### Language
+
+**Always write `summary` (and any `raw_text` you pass) in English, even when the source turn is in Vietnamese or mixed language.** Translate the user's words; preserve proper nouns (people, places, projects, @mentions, brand names, and Vietnamese terms with no clean English equivalent — keep those in italics or quotes).
+
+*Why:* Phileas embeds with `all-MiniLM-L6-v2`, an English-centric model. Vietnamese-vs-Vietnamese similarity peaks around 0.40–0.49, below the 0.5 recall floor — so non-English memories store cleanly but never surface in recall. See `docs/2026-04-09-vietnamese-to-english-migration.md`. The 2026-04-09 migration translated 104 existing VN memories; this rule keeps the corpus from drifting back.
+
+*Examples:*
+- Source: "Sếp bảo phải nộp báo cáo trước thứ 6." → Summary: "Boss said the report must be submitted before Friday."
+- Source: "Tung nhắc Giao về *tiền đen* trong ngành." → Summary: "Tung warned Giao about *tiền đen* (off-the-books money) in the industry." (preserve the term, gloss it once)
+- Don't store: "user mới biết hả" — translate: "User just learned this."
+
 ### Batching
 
 When a single turn yields several distinct memories, prefer `memorize_batch` over N sequential `memorize` calls — it's faster and cheaper.
@@ -117,3 +128,13 @@ When calling `memorize` with `entities=[...]`, only tag an entity whose presence
 - **Don't tag `Person:<user>`** on `event`, `knowledge`, `project`, `feedback`, `preference` memories — the user is the implicit narrator; the tag adds noise, not signal.
 
 **Other people and entities** (colleagues, partners, projects, tools) can be tagged freely — they're not implicit narrators, so `about(them)` is a useful retrieval primitive.
+
+### Disambiguating same-name entities
+
+Identity in the graph is an opaque uuid; `name` and `type` are attributes. The linker decides whether a new mention reuses an existing entity or mints a new one. Provide an optional `description` (one short line) on entity records when the name is potentially ambiguous — `Apple` the fruit vs. `Apple` the company, two people both named Alex, etc. Description is written once at entity creation and never overwritten, so it stays a stable disambiguator.
+
+```
+{"name": "Apple", "type": "Company", "description": "consumer electronics maker (Tim Cook era)"}
+```
+
+Skip `description` when the name is unambiguous in the user's world (their colleagues, their projects). For multi-type referents the same physical thing may carry — `Ownego` is a place AND the company that owns it AND a project name — let the linker collapse them onto one uuid by tagging consistently and the migration script handles legacy splits.
