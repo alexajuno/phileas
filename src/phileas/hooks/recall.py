@@ -3,22 +3,22 @@
 Reads the hook payload from stdin, then branches on the user's recall config:
 
   recall.mode:
-    - "never"     -> hook is a no-op (used to fully suppress recall in a project).
-    - "auto"      -> fire only when the prompt content matches a memory-relevance
-                     heuristic (the same kind of cue the SKILL.md description
-                     gates on -- past-tense queries, decision phrases, dates).
-    - "always"    -> fire on every prompt (the legacy behavior).
+    - "never"   -> hook is a no-op (used to fully suppress recall in a project).
+    - "auto"    -> emit a hint unless the prompt is obviously irrelevant
+                   (single-word ack, very short, etc — see `obvious_skip`).
+                   Final dispatch decision is made by the host Claude session,
+                   not by this hook.
+    - "always"  -> emit a hint on every prompt.
 
   recall.pipeline:
     - "rerank"            -> call daemon `recall` with `_skip_llm=True`, format
                               the top results inline as a `<phileas-recall>`
                               block. Cheap deterministic CPU-only path.
-    - "agent_summarizer"  -> call daemon `recall_raw`, then emit a
-                              `<phileas-recall-task>` directive instructing the
-                              parent agent to dispatch the `phileas-recall`
-                              subagent via the Task tool. The subagent fetches
-                              and ranks its own pool. Pays one paid LLM call per
-                              fired prompt; uses Sonnet 4.6 as the judge.
+    - "agent_summarizer"  -> call daemon `recall_raw`, then emit a passive
+                              `<phileas-recall-hint>` block telling Claude how
+                              many candidates exist and how to dispatch the
+                              `phileas-recall` subagent if it judges the prompt
+                              memory-relevant. Zero LLM cost on the hot path.
 
 Failure surfaces as an inline `<phileas-recall>` error block -- better to know
 the recall is broken than to silently miss memory context.
@@ -37,28 +37,44 @@ TOP_K = 10
 CONFIG_PATH = Path.home() / ".phileas" / "config.toml"
 METRICS_DB_PATH = Path.home() / ".phileas" / "metrics.db"
 
-# Triggers used by `mode = "auto"` to decide whether the prompt looks
-# memory-relevant. Mirror the cues called out in SKILL.md's description so the
-# auto-fire heuristic stays consistent with the skill's stated trigger criteria.
-_AUTO_TRIGGERS = re.compile(
-    r"\b("
-    r"remember(?:ed|ing|s)?|"
-    r"recall(?:ed|ing|s)?|"
-    r"forgot|"
-    r"memor(?:y|ize|ies)|"
-    r"(?:did|do|does|have)\s+(?:we|i|you|they)|"
-    r"(?:did|does|has)\s+\w+\s+(?:say|tell|mention|do|ever)|"
-    r"recently|"
-    r"last\s+(?:time|week|month|year|night|session)|"
-    r"yesterday|tonight|earlier|previously|"
-    r"decid(?:e|ed|ing|ion)|chose|chosen|picked|"
-    r"before|since|ago|past|history|"
-    r"happen(?:ed|ing|s)?|"
-    r"\d{4}-\d{2}-\d{2}|"
-    r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
-    r")\b",
-    re.IGNORECASE,
+# Cheap clear-skip patterns. The goal is "obviously not memory relevant" —
+# we do NOT try to detect *positive* relevance here. Positive relevance is
+# judged by the host Claude session itself when it reads the
+# <phileas-recall-hint> block, which has the full conversation context and
+# can decide better than any prompt-only heuristic could.
+_OBVIOUS_SKIP_TOKENS = frozenset(
+    {
+        "ok",
+        "okay",
+        "k",
+        "kk",
+        "yes",
+        "y",
+        "yep",
+        "yup",
+        "no",
+        "n",
+        "nope",
+        "thanks",
+        "thx",
+        "ty",
+        "lgtm",
+        "sure",
+        "go",
+        "cool",
+        "nice",
+        "done",
+        "stop",
+        "wait",
+        "right",
+        "great",
+        "good",
+        "fine",
+        "yeah",
+        "yea",
+    }
 )
+_TRAILING_PUNCT = re.compile(r"[!?.,;:]+$")
 
 
 def read_prompt() -> str:
@@ -110,10 +126,20 @@ def read_recall_config() -> tuple[str, str]:
     return mode, pipeline
 
 
-def should_fire_auto(prompt: str) -> bool:
-    """Heuristic match for `mode = "auto"`. Returns True if the prompt looks
-    memory-relevant per the SKILL.md description's stated trigger criteria."""
-    return bool(_AUTO_TRIGGERS.search(prompt))
+def obvious_skip(prompt: str) -> bool:
+    """Clear-deny check. True = skip recall entirely (no hint emitted).
+
+    Conservative — only filter the most unambiguous non-relevant prompts.
+    Anything that passes here gets a passive `<phileas-recall-hint>`; the
+    host Claude session decides whether to actually dispatch recall.
+    """
+    s = prompt.strip()
+    if len(s) < 3:
+        return True
+    one_word = _TRAILING_PUNCT.sub("", s).lower()
+    if one_word in _OBVIOUS_SKIP_TOKENS:
+        return True
+    return False
 
 
 def format_memories(memories: list[dict]) -> str:
@@ -138,21 +164,25 @@ def format_memories(memories: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def format_dispatch_directive(prompt: str, candidates: int) -> str:
-    """Directive block telling the parent agent to dispatch the phileas-recall
-    subagent. Used when `pipeline = "agent_summarizer"`."""
+def format_dispatch_hint(prompt: str, candidates: int) -> str:
+    """Passive hint: tell Claude how many candidate memories exist for this
+    prompt and let it decide whether to dispatch the `phileas-recall` agent.
+
+    Deliberately not an ACTION REQUIRED directive — Claude judges relevance
+    using full conversation context (better than any external gate) and
+    consumes zero extra LLM calls beyond its own normal turn.
+    """
     return (
-        "<phileas-recall-task>\n"
-        f"Phileas: this prompt looks memory-relevant. The Stage-1 candidate pool "
-        f"({candidates} memories) has been gathered server-side as a sizing signal.\n"
-        "ACTION REQUIRED before responding to the user: dispatch the "
-        "`phileas-recall` subagent via the Task tool.\n"
+        "<phileas-recall-hint>\n"
+        f"Phileas has {candidates} candidate memories for this prompt.\n"
+        "If this prompt would benefit from long-term memory (past decisions, "
+        "named people/projects, prior incidents, user preferences, recurring "
+        "patterns), dispatch the `phileas-recall` subagent via the Task tool:\n"
         '  Task(subagent_type="phileas-recall", description="Phileas pool judge",\n'
         f'       prompt="Query: {prompt}")\n'
-        "The subagent will fetch its own pools (`recall_raw` + `recall_recent`), "
-        "merge them, and return a single `<phileas-recall>` block. Use that block "
-        "as background context.\n"
-        "</phileas-recall-task>"
+        "If the prompt is purely about the current task/code/conversation, "
+        "ignore this hint and proceed normally.\n"
+        "</phileas-recall-hint>"
     )
 
 
@@ -309,7 +339,7 @@ def run_agent_summarizer(prompt: str) -> int:
         # noisy directive that the agent then has to reason about.
         return 0
     _write_hook_trace(prompt, payload, _elapsed_ms)
-    print(format_dispatch_directive(prompt, len(payload)))
+    print(format_dispatch_hint(prompt, len(payload)))
     return 0
 
 
@@ -322,7 +352,7 @@ def main() -> int:
 
     if mode == "never":
         return 0
-    if mode == "auto" and not should_fire_auto(prompt):
+    if mode == "auto" and obvious_skip(prompt):
         return 0
 
     if pipeline == "agent_summarizer":
