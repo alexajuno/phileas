@@ -302,6 +302,74 @@ def test_alias_lookup_finds_existing(kuzu_path):
     gs.close()
 
 
+def test_entity_lookup_appends_alias_on_reuse(kuzu_path):
+    """When entity_lookup reuses an existing entity for a new name variant,
+    the variant is appended to the alias list (AA-57 — auto-alias learning)."""
+    import json
+
+    gs = GraphStore(path=kuzu_path)
+    eid = gs.upsert_node("Person", "alex")
+    # Mention by a casing variant — same type, so the hot-path subset reuses
+    # the existing entity.
+    eid_again = gs.upsert_node("Person", "Alex")
+    assert eid_again == eid
+
+    nodes = gs.find_nodes("Person", "alex")
+    assert len(nodes) == 1
+    aliases = json.loads(nodes[0]["aliases"])
+    assert aliases == ["Alex"], f"expected primary 'alex' to gain alias 'Alex'; got {aliases}"
+    gs.close()
+
+
+def test_entity_lookup_alias_append_is_idempotent(kuzu_path):
+    """Calling entity_lookup twice with the same variant doesn't duplicate the alias."""
+    import json
+
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Person", "alex")
+    gs.upsert_node("Person", "Alex")
+    gs.upsert_node("Person", "Alex")  # second-time reuse
+
+    nodes = gs.find_nodes("Person", "alex")
+    aliases = json.loads(nodes[0]["aliases"])
+    assert aliases == ["Alex"], f"alias must be appended once, not duplicated; got {aliases}"
+    gs.close()
+
+
+def test_entity_lookup_alias_append_case_insensitive(kuzu_path):
+    """Case-only variants of an existing alias are not re-appended."""
+    import json
+
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Person", "alex")
+    gs.set_aliases("Person", "alex", ["Alex"])
+    # Differ only by casing from the existing alias — must be a no-op.
+    gs.upsert_node("Person", "aleX")
+
+    nodes = gs.find_nodes("Person", "alex")
+    aliases = json.loads(nodes[0]["aliases"])
+    assert aliases == ["Alex"], f"case-only variant must not duplicate; got {aliases}"
+    gs.close()
+
+
+def test_entity_lookup_does_not_alias_on_mint(kuzu_path):
+    """When entity_lookup mints a new entity, no alias cross-pollination occurs."""
+    import json
+
+    gs = GraphStore(path=kuzu_path)
+    # Disjoint types, same name → mint-new path (collision-safe default).
+    eid_fruit = gs.upsert_node("Fruit", "Apple")
+    eid_company = gs.upsert_node("Company", "Apple")
+    assert eid_fruit != eid_company
+
+    fruit_aliases = json.loads(gs.find_nodes("Fruit", "Apple")[0]["aliases"])
+    company_aliases = json.loads(gs.find_nodes("Company", "Apple")[0]["aliases"])
+    assert fruit_aliases == [] and company_aliases == [], (
+        f"mint-new path should not append aliases; fruit={fruit_aliases} company={company_aliases}"
+    )
+    gs.close()
+
+
 def test_description_set_once(kuzu_path):
     """description is captured at entity creation and never overwritten."""
     gs = GraphStore(path=kuzu_path)

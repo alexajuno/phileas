@@ -662,6 +662,7 @@ class GraphStore:
                 cand_lower = _types_lower(c["types"])
                 if hint_lower and hint_lower.issubset(cand_lower):
                     self._merge_into_existing(c["id"], hint_types, description)
+                    self._maybe_add_alias(c["id"], name)
                     return c["id"]
 
             max_count = self._max_memory_count()
@@ -672,6 +673,7 @@ class GraphStore:
             best_score = self._score_candidate(best, hint_types, context_neighbors, max_count)
             if best_score >= LINK_HIGH:
                 self._merge_into_existing(best["id"], hint_types, description)
+                self._maybe_add_alias(best["id"], name)
                 return best["id"]
             # Below LINK_HIGH (including the LINK_LOW..LINK_HIGH mid-band)
             # falls through to mint-new for safety, per the design doc.
@@ -691,6 +693,43 @@ class GraphStore:
             },
         )
         return new_id
+
+    def _maybe_add_alias(self, entity_id: str, incoming_name: str) -> None:
+        """Append ``incoming_name`` to the entity's alias list iff it's a new variant.
+
+        Self-improving step on the entity_lookup reuse paths (AA-57 / Phase 2 of
+        AA-55): once the scorer has accepted that this mention names an
+        existing entity, persist that decision so the *next* mention by the
+        same variant exact-matches in ``_candidate_rows`` and skips scoring.
+        Idempotent + case-insensitive against both primary_name and the
+        existing alias list.
+        """
+        result = self._conn.execute(
+            "MATCH (e:Entity {id: $id}) RETURN e.primary_name, e.aliases",
+            parameters={"id": entity_id},
+        )
+        if not result.has_next():
+            return
+        row = result.get_next()
+        primary = (row[0] or "").strip()
+        aliases = _parse_list(row[1])
+        name = incoming_name.strip()
+        if not name:
+            return
+        # Skip the no-op surface form (exact-case match against primary).
+        # A case-only variant of primary is still worth capturing as an alias —
+        # downstream display/search may want the actual surface form, even
+        # though _candidate_rows already lowercases primary_name on lookup.
+        if name == primary:
+            return
+        name_lower = name.lower()
+        if any(a.strip().lower() == name_lower for a in aliases):
+            return
+        aliases.append(name)
+        self._conn.execute(
+            "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases",
+            parameters={"id": entity_id, "aliases": _dump_list(aliases)},
+        )
 
     def _merge_into_existing(self, entity_id: str, new_types: list[str], description: str) -> None:
         """Union new types into the entity row; leave name + description alone."""
