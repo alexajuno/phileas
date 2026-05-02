@@ -419,6 +419,92 @@ def test_migration_from_old_schema(kuzu_path):
     gs.close()
 
 
+def test_merge_entities_folds_duplicate_into_canonical(kuzu_path):
+    """merge_entities moves edges, unions aliases+types, deletes duplicates,
+    and writes a MergeLog row per duplicate (audit trail)."""
+    import json
+
+    gs = GraphStore(path=kuzu_path)
+    canonical = gs.upsert_node("Person", "nganvt", description="6yr partner")
+    dup_a = gs.upsert_node("Person", "Ngan")
+    dup_b = gs.upsert_node("Person", "Ngân")
+
+    gs.set_aliases("Person", "Ngan", ["NganVT"])
+
+    # Edges to be folded.
+    gs.link_memory("mem-1", "Person", "nganvt")
+    gs.link_memory("mem-2", "Person", "Ngan")
+    gs.link_memory("mem-3", "Person", "Ngân")
+    # Memory linked to BOTH canonical and a duplicate — must dedupe.
+    gs.link_memory("mem-shared", "Person", "nganvt")
+    gs.link_memory("mem-shared", "Person", "Ngan")
+
+    gs.upsert_node("Place", "Japan")
+    gs.create_edge("Person", "Ngan", "VISITED", "Place", "Japan")
+
+    summary = gs.merge_entities(canonical, [dup_a, dup_b])
+
+    assert summary["merged_count"] == 2
+    assert summary["edges_moved"] >= 3  # mem-2, mem-3, REL→Japan; mem-shared is a no-op move
+    assert summary["aliases_added"] >= 2  # "Ngan", "Ngân" (and "NganVT")
+
+    # Duplicates are gone.
+    assert gs._fetch_entity_row(dup_a) is None
+    assert gs._fetch_entity_row(dup_b) is None
+
+    # All four memories now resolve to canonical via any of the names.
+    for name in ("nganvt", "Ngan", "Ngân"):
+        mems = set(gs.get_memories_about("Person", name))
+        assert mems == {"mem-1", "mem-2", "mem-3", "mem-shared"}, f"name={name} mems={mems}"
+
+    # REL edge survived the move.
+    related = gs.get_related_entities("Person", "nganvt")
+    assert any(r["name"] == "Japan" and r["edge_type"] == "VISITED" for r in related)
+
+    # Canonical row absorbed name + aliases of duplicates.
+    canon_row = gs._fetch_entity_row(canonical)
+    assert "Ngan" in canon_row["aliases"]
+    assert "Ngân" in canon_row["aliases"]
+
+    # Two MergeLog rows were written, one per duplicate.
+    log_result = gs._conn.execute(
+        "MATCH (l:MergeLog) WHERE l.canonical_id = $cid RETURN l.duplicate_id, l.duplicate_snapshot, l.edges_snapshot",
+        parameters={"cid": canonical},
+    )
+    log_rows = []
+    while log_result.has_next():
+        log_rows.append(log_result.get_next())
+    assert len(log_rows) == 2
+    snapshot_dup_ids = {row[0] for row in log_rows}
+    assert snapshot_dup_ids == {dup_a, dup_b}
+    # Snapshots are valid JSON with the expected fields.
+    for _dup_id, dup_blob, edges_blob in log_rows:
+        snap = json.loads(dup_blob)
+        assert "primary_name" in snap and "aliases" in snap and "types" in snap
+        edges = json.loads(edges_blob)
+        assert "about" in edges and "rel" in edges
+
+    gs.close()
+
+
+def test_merge_entities_skips_self_and_missing(kuzu_path):
+    """canonical-as-its-own-duplicate is filtered; missing duplicates are skipped."""
+    gs = GraphStore(path=kuzu_path)
+    canonical = gs.upsert_node("Person", "Alice")
+    summary = gs.merge_entities(canonical, [canonical, "no-such-uuid"])
+    assert summary["merged_count"] == 0
+    gs.close()
+
+
+def test_merge_entities_unknown_canonical_raises(kuzu_path):
+    gs = GraphStore(path=kuzu_path)
+    import pytest as _pt
+
+    with _pt.raises(ValueError):
+        gs.merge_entities("does-not-exist", ["also-not-real"])
+    gs.close()
+
+
 def test_locked_graph_degrades_gracefully(kuzu_path):
     """When another process holds the KuzuDB lock, graph ops degrade to no-ops."""
     import subprocess

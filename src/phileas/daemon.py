@@ -419,6 +419,9 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         elif op == "set_aliases":
             graph.set_aliases(params["node_type"], params["name"], params["aliases"])
             return {"ok": True}
+        elif op == "merge_entities":
+            summary = graph.merge_entities(params["canonical_id"], params["duplicate_ids"])
+            return {"ok": True, "summary": summary}
         else:
             raise ValueError(f"Unknown graph_write op: {op}")
     elif method == "graph_read":

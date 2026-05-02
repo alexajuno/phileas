@@ -186,6 +186,8 @@ class GraphStore:
             self._migrate_to_uuid_schema()
             return
 
+        # Idempotent — covers fresh installs and existing uuid-schema graphs
+        # that pre-date the MergeLog table (added 2026-05).
         self._create_new_tables()
 
     def _create_new_tables(self) -> None:
@@ -200,6 +202,21 @@ class GraphStore:
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
         self._conn.execute(
             "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+        )
+        self._ensure_merge_log_table()
+
+    def _ensure_merge_log_table(self) -> None:
+        """Create the MergeLog audit table if missing.
+
+        Stores a per-duplicate snapshot of node attrs + edge endpoints so a
+        merge can be inspected (and a future replay-inverse CLI can undo it).
+        Called at schema init time and idempotent for existing graphs.
+        """
+        self._conn.execute(
+            "CREATE NODE TABLE IF NOT EXISTS MergeLog ("
+            "id STRING, canonical_id STRING, duplicate_id STRING, "
+            "duplicate_snapshot STRING, edges_snapshot STRING, "
+            "merged_at STRING, PRIMARY KEY (id))"
         )
 
     def _has_table(self, table_name: str) -> bool:
@@ -817,6 +834,254 @@ class GraphStore:
         self._conn.execute(
             "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases",
             parameters={"id": eid, "aliases": _dump_list(aliases)},
+        )
+
+    @_locked
+    def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:
+        """Fold duplicate entity rows into a canonical one.
+
+        For each duplicate: snapshot it to MergeLog, move its ABOUT and REL
+        edges onto canonical (de-duped, REL self-edges dropped), append its
+        primary_name + aliases to canonical's alias list, union its types
+        in, then delete the duplicate node. Returns an audit summary.
+
+        Cleanup primitive for AA-55 — used to reunify entities that drifted
+        apart because the linker didn't catch a name variant. Phase 2
+        (auto-alias learning) prevents the recurrence; this fixes already-split
+        clusters and is the same primitive Phase 5 will call from a periodic
+        dedup pass.
+        """
+        if not self._ensure_connected():
+            return {"canonical_id": canonical_id, "merged_count": 0, "edges_moved": 0, "aliases_added": 0}
+
+        canonical = self._fetch_entity_row(canonical_id)
+        if canonical is None:
+            raise ValueError(f"canonical entity {canonical_id} not found")
+
+        duplicate_ids = [d for d in duplicate_ids if d and d != canonical_id]
+        if not duplicate_ids:
+            return {"canonical_id": canonical_id, "merged_count": 0, "edges_moved": 0, "aliases_added": 0}
+
+        merged_count = 0
+        edges_moved = 0
+        # Track alias and type sets across the whole merge so we batch-write
+        # canonical once at the end.
+        new_aliases = list(canonical["aliases"])
+        new_types = list(canonical["types"])
+
+        for dup_id in duplicate_ids:
+            dup = self._fetch_entity_row(dup_id)
+            if dup is None:
+                log.warning("merge_entities: duplicate %s not found, skipping", dup_id)
+                continue
+
+            about_edges = self._collect_about_edges(dup_id)
+            rel_edges = self._collect_rel_edges(dup_id)
+
+            self._write_merge_log(canonical_id, dup_id, dup, about_edges, rel_edges)
+
+            edges_moved += self._move_about_edges(dup_id, canonical_id, about_edges)
+            edges_moved += self._move_rel_edges(dup_id, canonical_id, rel_edges)
+
+            for candidate in (dup["primary_name"], *dup["aliases"]):
+                if candidate and candidate not in new_aliases and candidate != canonical["primary_name"]:
+                    new_aliases.append(candidate)
+            for t in dup["types"]:
+                if t and t not in new_types:
+                    new_types.append(t)
+
+            # Detach any remaining edges (defensive — shouldn't be any after
+            # the move helpers, but DROP fails if edges still attach) and
+            # drop the duplicate node.
+            self._conn.execute(
+                "MATCH (m:Memory)-[r:ABOUT]->(d:Entity {id: $did}) DELETE r",
+                parameters={"did": dup_id},
+            )
+            self._conn.execute(
+                "MATCH (a:Entity {id: $did})-[r:REL]->(b:Entity) DELETE r",
+                parameters={"did": dup_id},
+            )
+            self._conn.execute(
+                "MATCH (a:Entity)-[r:REL]->(b:Entity {id: $did}) DELETE r",
+                parameters={"did": dup_id},
+            )
+            self._conn.execute(
+                "MATCH (d:Entity {id: $did}) DELETE d",
+                parameters={"did": dup_id},
+            )
+            merged_count += 1
+
+        aliases_added = len(new_aliases) - len(canonical["aliases"])
+        if merged_count:
+            self._conn.execute(
+                "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases, e.types = $types",
+                parameters={
+                    "id": canonical_id,
+                    "aliases": _dump_list(new_aliases),
+                    "types": _dump_list(new_types),
+                },
+            )
+
+        return {
+            "canonical_id": canonical_id,
+            "merged_count": merged_count,
+            "edges_moved": edges_moved,
+            "aliases_added": aliases_added,
+        }
+
+    def _fetch_entity_row(self, entity_id: str) -> dict[str, Any] | None:
+        result = self._conn.execute(
+            "MATCH (e:Entity {id: $id}) RETURN e.primary_name, e.aliases, e.types, e.description, e.props",
+            parameters={"id": entity_id},
+        )
+        if not result.has_next():
+            return None
+        row = result.get_next()
+        return {
+            "id": entity_id,
+            "primary_name": row[0] or "",
+            "aliases": _parse_list(row[1]),
+            "types": _parse_list(row[2]),
+            "description": row[3] or "",
+            "props": row[4] or "",
+        }
+
+    def _collect_about_edges(self, entity_id: str) -> list[str]:
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
+            parameters={"eid": entity_id},
+        )
+        out: list[str] = []
+        while result.has_next():
+            out.append(result.get_next()[0])
+        return out
+
+    def _collect_rel_edges(self, entity_id: str) -> list[dict[str, str]]:
+        edges: list[dict[str, str]] = []
+        result = self._conn.execute(
+            "MATCH (a:Entity {id: $eid})-[r:REL]->(b:Entity) RETURN b.id, r.edge_type",
+            parameters={"eid": entity_id},
+        )
+        while result.has_next():
+            row = result.get_next()
+            edges.append({"direction": "out", "peer_id": row[0], "edge_type": row[1] or ""})
+        result = self._conn.execute(
+            "MATCH (a:Entity)-[r:REL]->(b:Entity {id: $eid}) RETURN a.id, r.edge_type",
+            parameters={"eid": entity_id},
+        )
+        while result.has_next():
+            row = result.get_next()
+            edges.append({"direction": "in", "peer_id": row[0], "edge_type": row[1] or ""})
+        return edges
+
+    def _move_about_edges(self, dup_id: str, canonical_id: str, mem_ids: list[str]) -> int:
+        moved = 0
+        for mid in mem_ids:
+            count_result = self._conn.execute(
+                "MATCH (m:Memory {id: $mid})-[:ABOUT]->(c:Entity {id: $cid}) RETURN COUNT(*) AS cnt",
+                parameters={"mid": mid, "cid": canonical_id},
+            )
+            already = count_result.get_next()[0] > 0
+            if not already:
+                self._conn.execute(
+                    "MATCH (m:Memory {id: $mid}), (c:Entity {id: $cid}) CREATE (m)-[:ABOUT]->(c)",
+                    parameters={"mid": mid, "cid": canonical_id},
+                )
+                moved += 1
+            self._conn.execute(
+                "MATCH (m:Memory {id: $mid})-[r:ABOUT]->(d:Entity {id: $did}) DELETE r",
+                parameters={"mid": mid, "did": dup_id},
+            )
+        return moved
+
+    def _move_rel_edges(self, dup_id: str, canonical_id: str, edges: list[dict[str, str]]) -> int:
+        moved = 0
+        for e in edges:
+            peer = e["peer_id"]
+            etype = e["edge_type"]
+            # Drop self-edges that would be created if the duplicate had a
+            # REL with canonical itself.
+            if peer == canonical_id:
+                if e["direction"] == "out":
+                    self._conn.execute(
+                        "MATCH (a:Entity {id: $did})-[r:REL]->(b:Entity {id: $cid}) WHERE r.edge_type = $et DELETE r",
+                        parameters={"did": dup_id, "cid": canonical_id, "et": etype},
+                    )
+                else:
+                    self._conn.execute(
+                        "MATCH (a:Entity {id: $cid})-[r:REL]->(b:Entity {id: $did}) WHERE r.edge_type = $et DELETE r",
+                        parameters={"did": dup_id, "cid": canonical_id, "et": etype},
+                    )
+                continue
+
+            if e["direction"] == "out":
+                from_id, to_id = canonical_id, peer
+                delete_q = (
+                    "MATCH (a:Entity {id: $did})-[r:REL]->(b:Entity {id: $peer}) WHERE r.edge_type = $et DELETE r"
+                )
+            else:
+                from_id, to_id = peer, canonical_id
+                delete_q = (
+                    "MATCH (a:Entity {id: $peer})-[r:REL]->(b:Entity {id: $did}) WHERE r.edge_type = $et DELETE r"
+                )
+
+            count_result = self._conn.execute(
+                "MATCH (a:Entity {id: $fid})-[r:REL]->(b:Entity {id: $tid}) "
+                "WHERE r.edge_type = $et RETURN COUNT(*) AS cnt",
+                parameters={"fid": from_id, "tid": to_id, "et": etype},
+            )
+            already = count_result.get_next()[0] > 0
+            if not already:
+                self._conn.execute(
+                    "MATCH (a:Entity {id: $fid}), (b:Entity {id: $tid}) CREATE (a)-[:REL {edge_type: $et}]->(b)",
+                    parameters={"fid": from_id, "tid": to_id, "et": etype},
+                )
+                moved += 1
+            self._conn.execute(
+                delete_q,
+                parameters={"did": dup_id, "peer": peer, "et": etype},
+            )
+        return moved
+
+    def _write_merge_log(
+        self,
+        canonical_id: str,
+        duplicate_id: str,
+        snapshot: dict[str, Any],
+        about_edges: list[str],
+        rel_edges: list[dict[str, str]],
+    ) -> None:
+        import datetime as _dt
+
+        log_id = _uuid.uuid4().hex
+        dup_blob = json.dumps(
+            {
+                "primary_name": snapshot["primary_name"],
+                "aliases": snapshot["aliases"],
+                "types": snapshot["types"],
+                "description": snapshot["description"],
+                "props": snapshot["props"],
+            },
+            ensure_ascii=False,
+        )
+        edges_blob = json.dumps(
+            {
+                "about": about_edges,
+                "rel": rel_edges,
+            },
+            ensure_ascii=False,
+        )
+        self._conn.execute(
+            "CREATE (l:MergeLog {id: $id, canonical_id: $cid, duplicate_id: $did, "
+            "duplicate_snapshot: $dup, edges_snapshot: $edges, merged_at: $ts})",
+            parameters={
+                "id": log_id,
+                "cid": canonical_id,
+                "did": duplicate_id,
+                "dup": dup_blob,
+                "edges": edges_blob,
+                "ts": _dt.datetime.now(_dt.UTC).isoformat(),
+            },
         )
 
     # ------------------------------------------------------------------

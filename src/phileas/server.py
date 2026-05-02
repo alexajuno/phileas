@@ -647,6 +647,34 @@ def mark_event_extracted(event_id: str, memory_count: int = 0) -> str:
 
 
 @mcp.tool()
+def merge_entities(canonical_id: str, duplicate_ids: list[str]) -> str:
+    """Fold duplicate entity rows into a canonical one.
+
+    Cleanup primitive for entity-aliasing drift (AA-55). Use when the same
+    person/place/topic was minted under multiple ids because the linker did
+    not recognize a name variant — e.g. "Ngân", "Ngan", and "nganvt" sitting
+    as three separate Person nodes for the same person.
+
+    Picks the canonical id by highest memory mass. Snapshots each duplicate
+    to a MergeLog node before deleting it (so the merge is auditable). All
+    ABOUT and REL edges are re-pointed at canonical and de-duplicated; the
+    duplicates' primary_name + aliases are unioned into canonical's alias
+    list and types are unioned in.
+
+    Args:
+        canonical_id: Entity uuid that should survive the merge.
+        duplicate_ids: Entity uuids to fold into canonical and delete.
+    """
+    summary = graph.merge_entities(canonical_id, duplicate_ids)
+    if not summary or not summary.get("merged_count"):
+        return "No entities merged (graph unavailable, canonical missing, or no valid duplicates)."
+    return (
+        f"Merged {summary['merged_count']} entity/entities into {summary['canonical_id']} — "
+        f"{summary['edges_moved']} edges moved, {summary['aliases_added']} aliases added."
+    )
+
+
+@mcp.tool()
 def status() -> str:
     """Get system health and memory statistics."""
     stats = engine.status()

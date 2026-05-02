@@ -74,6 +74,22 @@ class GraphProxy:
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         self._write("set_aliases", {"node_type": node_type, "name": name, "aliases": aliases})
 
+    def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:
+        try:
+            from phileas.daemon import call
+
+            response = call(
+                "graph_write",
+                {"op": "merge_entities", "canonical_id": canonical_id, "duplicate_ids": duplicate_ids},
+            )
+            if response is not None and response.get("ok", False):
+                inner = response.get("result") or {}
+                if inner.get("ok", False):
+                    return inner.get("summary") or {}
+        except Exception:
+            pass
+        return {"canonical_id": canonical_id, "merged_count": 0, "edges_moved": 0, "aliases_added": 0}
+
     def find_nodes(self, node_type: str, name: str) -> list[dict[str, Any]]:
         return self._read("find_nodes", {"node_type": node_type, "name": name}, default=[])
 
