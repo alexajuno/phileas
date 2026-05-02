@@ -352,6 +352,77 @@ def test_entity_lookup_alias_append_case_insensitive(kuzu_path):
     gs.close()
 
 
+def test_normalize_name_strips_diacritics_and_handles(kuzu_path):
+    """_normalize_name folds NFD-decomposable diacritics, lowercases, strips '@'."""
+    from phileas.graph import _normalize_name
+
+    assert _normalize_name("Café") == "cafe"
+    assert _normalize_name("CAFE") == "cafe"
+    assert _normalize_name("Renée") == "renee"
+    assert _normalize_name("Naïve") == "naive"
+    assert _normalize_name("@phuongtq") == "phuongtq"
+    assert _normalize_name(" Renée ") == "renee"
+    assert _normalize_name("") == ""
+    assert _normalize_name(None) == ""
+
+
+def test_entity_lookup_finds_diacritic_variant_on_first_encounter(kuzu_path):
+    """A name differing only by a diacritic finds the existing entity even
+    before any alias has been registered (AA-58 — wide candidate gathering)."""
+    import json
+
+    gs = GraphStore(path=kuzu_path)
+    eid = gs.upsert_node("Person", "Cafe")
+    # First-ever mention with the diacritic. Pre-AA-58, this would mint a
+    # new entity because _candidate_rows used exact-lowercased match.
+    eid_again = gs.upsert_node("Person", "Café")
+    assert eid_again == eid
+
+    # The variant landed in the alias list (Phase 2 catches it once Phase 3
+    # has put the candidate in the pool).
+    nodes = gs.find_nodes("Person", "Cafe")
+    aliases = json.loads(nodes[0]["aliases"])
+    assert aliases == ["Café"], f"diacritic variant should auto-alias; got {aliases}"
+    gs.close()
+
+
+def test_candidate_rows_filters_substring_false_positives(kuzu_path):
+    """aliases_norm CONTAINS may match a longer alias as substring — the
+    Python-side guard rejects those so unrelated queries don't return rows."""
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Person", "Anna")
+    gs.set_aliases("Person", "Anna", ["Annabelle"])
+
+    # Direct match against the alias resolves the entity.
+    rows = gs._candidate_rows("Annabelle")
+    assert len(rows) == 1 and rows[0]["primary_name"] == "Anna"
+
+    # "belle" is a substring of the alias "Annabelle" — the Cypher CONTAINS
+    # match would pull the row, but the Python guard requires equality on
+    # the normalized form and rejects it.
+    rows = gs._candidate_rows("belle")
+    assert rows == [], f"'belle' must not match 'Annabelle' as substring; got {rows}"
+    gs.close()
+
+
+def test_norm_columns_backfilled_for_existing_rows(kuzu_path):
+    """Migration is idempotent: if rows have populated primary_name but
+    empty primary_name_norm, the next _init_schema fills them in."""
+    gs = GraphStore(path=kuzu_path)
+    gs.upsert_node("Person", "Renée")
+    # Force the norm columns to empty to simulate a row that pre-dates AA-58.
+    gs._conn.execute(
+        "MATCH (e:Entity) WHERE e.primary_name = 'Renée' SET e.primary_name_norm = '', e.aliases_norm = '[]'"
+    )
+    # Re-trigger schema init — backfill should populate the empty norm.
+    gs._ensure_normalized_columns()
+
+    result = gs._conn.execute("MATCH (e:Entity) WHERE e.primary_name = 'Renée' RETURN e.primary_name_norm")
+    assert result.has_next()
+    assert result.get_next()[0] == "renee"
+    gs.close()
+
+
 def test_entity_lookup_does_not_alias_on_mint(kuzu_path):
     """When entity_lookup mints a new entity, no alias cross-pollination occurs."""
     import json
@@ -493,46 +564,49 @@ def test_merge_entities_folds_duplicate_into_canonical(kuzu_path):
     import json
 
     gs = GraphStore(path=kuzu_path)
-    canonical = gs.upsert_node("Person", "nganvt", description="6yr partner")
-    dup_a = gs.upsert_node("Person", "Ngan")
-    dup_b = gs.upsert_node("Person", "Ngân")
+    # Three distinct names that don't collide under diacritic + case
+    # normalization — without this AA-58 would auto-merge them on upsert
+    # and the test would have no duplicates to fold.
+    canonical = gs.upsert_node("Person", "alice-handle", description="long-time friend")
+    dup_a = gs.upsert_node("Person", "Alice Smith")
+    dup_b = gs.upsert_node("Person", "alice-old")
 
-    gs.set_aliases("Person", "Ngan", ["NganVT"])
+    gs.set_aliases("Person", "Alice Smith", ["A. Smith"])
 
     # Edges to be folded.
-    gs.link_memory("mem-1", "Person", "nganvt")
-    gs.link_memory("mem-2", "Person", "Ngan")
-    gs.link_memory("mem-3", "Person", "Ngân")
+    gs.link_memory("mem-1", "Person", "alice-handle")
+    gs.link_memory("mem-2", "Person", "Alice Smith")
+    gs.link_memory("mem-3", "Person", "alice-old")
     # Memory linked to BOTH canonical and a duplicate — must dedupe.
-    gs.link_memory("mem-shared", "Person", "nganvt")
-    gs.link_memory("mem-shared", "Person", "Ngan")
+    gs.link_memory("mem-shared", "Person", "alice-handle")
+    gs.link_memory("mem-shared", "Person", "Alice Smith")
 
     gs.upsert_node("Place", "Japan")
-    gs.create_edge("Person", "Ngan", "VISITED", "Place", "Japan")
+    gs.create_edge("Person", "Alice Smith", "VISITED", "Place", "Japan")
 
     summary = gs.merge_entities(canonical, [dup_a, dup_b])
 
     assert summary["merged_count"] == 2
     assert summary["edges_moved"] >= 3  # mem-2, mem-3, REL→Japan; mem-shared is a no-op move
-    assert summary["aliases_added"] >= 2  # "Ngan", "Ngân" (and "NganVT")
+    assert summary["aliases_added"] >= 2  # "Alice Smith", "alice-old" (and "A. Smith")
 
     # Duplicates are gone.
     assert gs._fetch_entity_row(dup_a) is None
     assert gs._fetch_entity_row(dup_b) is None
 
     # All four memories now resolve to canonical via any of the names.
-    for name in ("nganvt", "Ngan", "Ngân"):
+    for name in ("alice-handle", "Alice Smith", "alice-old"):
         mems = set(gs.get_memories_about("Person", name))
         assert mems == {"mem-1", "mem-2", "mem-3", "mem-shared"}, f"name={name} mems={mems}"
 
     # REL edge survived the move.
-    related = gs.get_related_entities("Person", "nganvt")
+    related = gs.get_related_entities("Person", "alice-handle")
     assert any(r["name"] == "Japan" and r["edge_type"] == "VISITED" for r in related)
 
     # Canonical row absorbed name + aliases of duplicates.
     canon_row = gs._fetch_entity_row(canonical)
-    assert "Ngan" in canon_row["aliases"]
-    assert "Ngân" in canon_row["aliases"]
+    assert "Alice Smith" in canon_row["aliases"]
+    assert "alice-old" in canon_row["aliases"]
 
     # Two MergeLog rows were written, one per duplicate.
     log_result = gs._conn.execute(

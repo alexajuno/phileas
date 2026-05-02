@@ -28,6 +28,7 @@ import json
 import logging
 import math
 import threading
+import unicodedata
 import uuid as _uuid
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,35 @@ def _types_lower(types: list[str]) -> set[str]:
     return {t.strip().lower() for t in types if t}
 
 
+def _normalize_name(name: str | None) -> str:
+    """Strip diacritics, leading ``@``, and casing for matching purposes.
+
+    NFD-decomposes Unicode, drops combining marks, lowercases, strips a
+    leading ``@``. Intent: bring "Ngân", "Ngan", "@Ngan" all to the same
+    form so ``_candidate_rows`` finds them on first encounter (AA-58).
+    """
+    if not name:
+        return ""
+    s = name.strip()
+    if s.startswith("@"):
+        s = s[1:]
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return s.lower()
+
+
+def _normalize_aliases(aliases: list[str]) -> list[str]:
+    """Normalize each alias and dedupe, preserving order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for a in aliases:
+        n = _normalize_name(a)
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
 class GraphStore:
     """Graph store backed by KuzuDB.
 
@@ -180,20 +210,22 @@ class GraphStore:
         """
         if self._has_table("Person"):
             self._migrate_from_per_type_schema()
-            return
-
-        if self._has_old_entity_schema():
+        elif self._has_old_entity_schema():
             self._migrate_to_uuid_schema()
-            return
-
-        # Idempotent — covers fresh installs and existing uuid-schema graphs
-        # that pre-date the MergeLog table (added 2026-05).
-        self._create_new_tables()
+        else:
+            # Idempotent — covers fresh installs and existing uuid-schema graphs
+            # that pre-date the MergeLog table (added 2026-05).
+            self._create_new_tables()
+        # Final pass after any path: ensures AA-58 norm columns exist and
+        # are populated even for rows that the older migrations inserted
+        # before this column was added.
+        self._ensure_normalized_columns()
 
     def _create_new_tables(self) -> None:
         self._conn.execute(
             "CREATE NODE TABLE IF NOT EXISTS Entity ("
-            "id STRING, primary_name STRING, aliases STRING DEFAULT '[]', "
+            "id STRING, primary_name STRING, primary_name_norm STRING DEFAULT '', "
+            "aliases STRING DEFAULT '[]', aliases_norm STRING DEFAULT '[]', "
             "types STRING DEFAULT '[]', description STRING DEFAULT '', "
             "props STRING DEFAULT '', PRIMARY KEY (id))"
         )
@@ -204,6 +236,47 @@ class GraphStore:
             "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
         )
         self._ensure_merge_log_table()
+
+    def _ensure_normalized_columns(self) -> None:
+        """Add and backfill ``primary_name_norm`` + ``aliases_norm`` if absent.
+
+        Phase 3 of AA-55 (AA-58): widens candidate gathering to find
+        diacritic / case variants on first encounter. Existing graphs
+        get the columns added here. The backfill is idempotent and
+        also catches rows that the older-schema migrations inserted
+        without populating the norm columns.
+        """
+        column_present = True
+        try:
+            self._conn.execute("MATCH (e:Entity) RETURN e.primary_name_norm LIMIT 1")
+        except RuntimeError:
+            column_present = False
+        if not column_present:
+            log.info("AA-58: adding primary_name_norm + aliases_norm columns")
+            self._conn.execute("ALTER TABLE Entity ADD primary_name_norm STRING DEFAULT ''")
+            self._conn.execute("ALTER TABLE Entity ADD aliases_norm STRING DEFAULT '[]'")
+
+        # Backfill any row where the norm column is empty but a primary_name
+        # exists. Idempotent — no-op once every row has been normalized.
+        result = self._conn.execute(
+            "MATCH (e:Entity) "
+            "WHERE e.primary_name <> '' AND (e.primary_name_norm = '' OR e.primary_name_norm IS NULL) "
+            "RETURN e.id, e.primary_name, e.aliases"
+        )
+        rows: list[tuple[str, str, str]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append((r[0], r[1] or "", r[2] or "[]"))
+        if not rows:
+            return
+        for eid, pname, aliases_raw in rows:
+            norm_primary = _normalize_name(pname)
+            norm_aliases = _normalize_aliases(_parse_list(aliases_raw))
+            self._conn.execute(
+                "MATCH (e:Entity {id: $id}) SET e.primary_name_norm = $pn, e.aliases_norm = $an",
+                parameters={"id": eid, "pn": norm_primary, "an": _dump_list(norm_aliases)},
+            )
+        log.info("AA-58 backfill: normalized %d entities", len(rows))
 
     def _ensure_merge_log_table(self) -> None:
         """Create the MergeLog audit table if missing.
@@ -542,26 +615,36 @@ class GraphStore:
     # ------------------------------------------------------------------
 
     def _candidate_rows(self, name: str) -> list[dict[str, Any]]:
-        """Gather entity rows whose primary_name or alias matches ``name`` case-insensitively."""
+        """Gather entity rows whose name matches ``name`` after diacritic + case normalization.
+
+        AA-58: matches on the precomputed ``primary_name_norm`` /
+        ``aliases_norm`` columns rather than raw lowercased forms, so a
+        mention of "Ngân" finds "Ngan" and "Renée" finds "Renee" on
+        first encounter — not just on a name that already differs only
+        by case.
+        """
+        name_norm = _normalize_name(name)
+        if not name_norm:
+            return []
         result = self._conn.execute(
             "MATCH (e:Entity) "
-            "WHERE lower(e.primary_name) = lower($n) OR lower(e.aliases) CONTAINS lower($n) "
+            "WHERE e.primary_name_norm = $n OR e.aliases_norm CONTAINS $n "
             "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
             "WITH e, COUNT(m) AS cnt "
-            "RETURN e.id, e.primary_name, e.types, e.aliases, e.description, cnt",
-            parameters={"n": name.strip()},
+            "RETURN e.id, e.primary_name, e.types, e.aliases, e.description, e.aliases_norm, cnt",
+            parameters={"n": name_norm},
         )
         rows: list[dict[str, Any]] = []
         while result.has_next():
             r = result.get_next()
             aliases = _parse_list(r[3])
-            # Filter alias false-positives: substring match on JSON list may
-            # hit a longer alias that contains the query as a substring. Keep
-            # only candidates where the name truly matches as primary or
-            # alias (case-insensitive equality on either).
-            if r[1].strip().lower() == name.strip().lower() or any(
-                a.strip().lower() == name.strip().lower() for a in aliases
-            ):
+            aliases_norm = _parse_list(r[5])
+            # Filter alias false-positives: substring match on the JSON
+            # alias-list column may hit a longer alias that contains the
+            # query as a substring. Compare against the normalized form to
+            # avoid keeping accidental partial matches.
+            primary_norm = _normalize_name(r[1])
+            if primary_norm == name_norm or any(a == name_norm for a in aliases_norm):
                 rows.append(
                     {
                         "id": r[0],
@@ -569,7 +652,7 @@ class GraphStore:
                         "types": _parse_list(r[2]),
                         "aliases": aliases,
                         "description": r[4] or "",
-                        "memory_count": int(r[5]),
+                        "memory_count": int(r[6]),
                     }
                 )
         return rows
@@ -682,11 +765,15 @@ class GraphStore:
         new_id = _new_entity_id()
         self._conn.execute(
             "MERGE (n:Entity {id: $id}) SET n.primary_name = $name, "
-            "n.aliases = $aliases, n.types = $types, n.description = $description, n.props = $props",
+            "n.primary_name_norm = $name_norm, n.aliases = $aliases, "
+            "n.aliases_norm = $aliases_norm, n.types = $types, "
+            "n.description = $description, n.props = $props",
             parameters={
                 "id": new_id,
                 "name": name,
+                "name_norm": _normalize_name(name),
                 "aliases": "[]",
+                "aliases_norm": "[]",
                 "types": _dump_list(hint_types),
                 "description": description or "",
                 "props": "",
@@ -719,7 +806,7 @@ class GraphStore:
         # Skip the no-op surface form (exact-case match against primary).
         # A case-only variant of primary is still worth capturing as an alias —
         # downstream display/search may want the actual surface form, even
-        # though _candidate_rows already lowercases primary_name on lookup.
+        # though _candidate_rows normalizes primary_name on lookup.
         if name == primary:
             return
         name_lower = name.lower()
@@ -727,8 +814,12 @@ class GraphStore:
             return
         aliases.append(name)
         self._conn.execute(
-            "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases",
-            parameters={"id": entity_id, "aliases": _dump_list(aliases)},
+            "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases, e.aliases_norm = $aliases_norm",
+            parameters={
+                "id": entity_id,
+                "aliases": _dump_list(aliases),
+                "aliases_norm": _dump_list(_normalize_aliases(aliases)),
+            },
         )
 
     def _merge_into_existing(self, entity_id: str, new_types: list[str], description: str) -> None:
@@ -871,8 +962,12 @@ class GraphStore:
         if not eid:
             return
         self._conn.execute(
-            "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases",
-            parameters={"id": eid, "aliases": _dump_list(aliases)},
+            "MATCH (n:Entity {id: $id}) SET n.aliases = $aliases, n.aliases_norm = $aliases_norm",
+            parameters={
+                "id": eid,
+                "aliases": _dump_list(aliases),
+                "aliases_norm": _dump_list(_normalize_aliases(aliases)),
+            },
         )
 
     @_locked
@@ -953,10 +1048,11 @@ class GraphStore:
         aliases_added = len(new_aliases) - len(canonical["aliases"])
         if merged_count:
             self._conn.execute(
-                "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases, e.types = $types",
+                "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases, e.aliases_norm = $aliases_norm, e.types = $types",
                 parameters={
                     "id": canonical_id,
                     "aliases": _dump_list(new_aliases),
+                    "aliases_norm": _dump_list(_normalize_aliases(new_aliases)),
                     "types": _dump_list(new_types),
                 },
             )
