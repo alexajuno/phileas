@@ -1,6 +1,6 @@
 # phileas/web
 
-Local monitoring dashboard for your Phileas long-term memory. v1 is a single polished page that lists the memories captured throughout the day — with live polling, per-type breakdown, and a calendar for historical days.
+Local monitoring dashboard for your Phileas long-term memory.
 
 Stack: Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · Tailwind v4 · shadcn/ui (base-nova) · better-sqlite3 · motion.
 
@@ -35,10 +35,6 @@ PHILEAS_HOME=/elsewhere/.phileas pnpm dev
 - Keyboard: `←`/`→` move a day, `t` jumps to today (ignored when typing).
 - Motion stagger on list mount; honored `prefers-reduced-motion`.
 
-## Scope (v1)
-
-Read-only. No mutations (forget / edit / consolidate). No daemon-health, LLM-cost, or graph widgets yet. Localhost only, no auth. Binds to `127.0.0.1:3000` by default.
-
 ## Gotchas
 
 - `better-sqlite3` is a native module. pnpm's `onlyBuiltDependencies` is set in `package.json` so the install script runs. If you see `Could not locate the bindings file`, run `pnpm rebuild better-sqlite3`.
@@ -52,11 +48,3 @@ pnpm build        # production build + typecheck
 pnpm lint         # ESLint flat config
 ```
 
-Cross-check today's count:
-
-```bash
-sqlite3 ~/.phileas/memory.db \
-  "SELECT COUNT(*) FROM memory_items WHERE status='active'
-     AND created_at >= '<local-midnight-UTC>'
-     AND created_at <  '<next-midnight-UTC>';"
-```
