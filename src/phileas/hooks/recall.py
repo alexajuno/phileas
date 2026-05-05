@@ -19,6 +19,15 @@ Reads the hook payload from stdin, then branches on the user's recall config:
                               many candidates exist and how to dispatch the
                               `phileas-recall` subagent if it judges the prompt
                               memory-relevant. Zero LLM cost on the hot path.
+    - "direct"            -> call daemon `recall_raw` for the candidate count,
+                              then emit a `<phileas-recall-hint>` block with a
+                              cognitive routing ladder (entity -> about(),
+                              date -> list_day_memories(), recency ->
+                              recall_recent(), topic -> recall(), multi-hop
+                              fallback -> phileas-recall subagent). Main Claude
+                              calls tools directly with full conversation
+                              context — no Sonnet judging hop, no 500KB pool
+                              read. Recommended default.
 
 Failure surfaces as an inline `<phileas-recall>` error block -- better to know
 the recall is broken than to silently miss memory context.
@@ -186,6 +195,30 @@ def format_dispatch_hint(prompt: str, candidates: int) -> str:
     )
 
 
+def format_routing_hint(prompt: str, candidates: int) -> str:
+    """Cognitive routing ladder: tell Claude how to fetch the right slice
+    directly via phileas tools, instead of dispatching a Sonnet subagent to
+    judge a 500KB pool. Mirrors how a human would consult their own memory:
+    name -> "who is X", date -> "what happened on D", recency -> "what was
+    on my mind lately", concept -> "what do I know about Y".
+    """
+    return (
+        "<phileas-recall-hint>\n"
+        f"Phileas has {candidates} candidate memories for this prompt. "
+        "Route by query shape (call tools directly, no subagent):\n"
+        "  - Named entity (person, project, @handle)  -> mcp__phileas__about(name)\n"
+        "  - Explicit date (YYYY-MM-DD, 'Apr 14')      -> mcp__phileas__list_day_memories(date)\n"
+        "  - Time-relative (yesterday/recent/last X)   -> mcp__phileas__recall_recent(days=N)\n"
+        "  - Topic / concept question                  -> mcp__phileas__recall(query)\n"
+        "  - Multiple shapes -> call several in parallel, merge by id\n"
+        "  - Multi-hop reasoning over the full pool needed -> dispatch phileas-recall subagent (fallback)\n"
+        "Skip if prompt is purely about current code/task/conversation. Avoid "
+        "`recall_raw` directly — its output is sized for subagent judgement, "
+        "not for the main session context.\n"
+        "</phileas-recall-hint>"
+    )
+
+
 def format_error(msg: str) -> str:
     return (
         "<phileas-recall>\n"
@@ -318,6 +351,32 @@ def run_agent_summarizer(prompt: str) -> int:
     return 0
 
 
+def run_direct(prompt: str) -> int:
+    """Direct-tool pipeline: count candidates, emit a routing-ladder hint.
+
+    Same daemon call shape as `run_agent_summarizer` (reuses recall_raw to
+    size the pool), but the emitted hint instructs Claude to call phileas
+    tools directly rather than dispatching the subagent. Cheaper and
+    higher-fidelity for the common case (entity / date / recency queries).
+    """
+    from time import perf_counter
+
+    _t0 = perf_counter()
+    ok, payload = call_daemon("recall_raw", {"query": prompt})
+    _elapsed_ms = (perf_counter() - _t0) * 1000
+    if not ok:
+        print(format_error(str(payload)))
+        return 0
+    if not isinstance(payload, list):
+        print(format_error(f"unexpected daemon response shape: {type(payload).__name__}"))
+        return 0
+    if not payload:
+        return 0
+    _write_hook_trace(prompt, payload, _elapsed_ms)
+    print(format_routing_hint(prompt, len(payload)))
+    return 0
+
+
 def main() -> int:
     prompt = read_prompt()
     if not prompt:
@@ -332,6 +391,8 @@ def main() -> int:
 
     if pipeline == "agent_summarizer":
         rc = run_agent_summarizer(prompt)
+    elif pipeline == "direct":
+        rc = run_direct(prompt)
     else:
         rc = run_rerank(prompt)
 

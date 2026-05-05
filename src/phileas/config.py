@@ -84,7 +84,7 @@ class RecallConfig:
     # Skill-driven recall delivery (PHI-39).
     mode: str = "auto"  # always | never | auto
     format: str = "pointer"  # inline | pointer
-    pipeline: str = "rerank"  # rerank | agent_summarizer (PHI-40)
+    pipeline: str = "rerank"  # rerank | agent_summarizer | direct
 
 
 @dataclass

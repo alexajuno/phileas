@@ -1,9 +1,11 @@
 ---
 name: phileas-recall
-description: Judge relevance of a merged Phileas pool (recall_raw + recall_recent) against a query. Invoke from the phileas skill's agent_summarizer pipeline or from the agent_summarizer hook directive — pass the query, get back a brief and ranked memory IDs. Pool-only judging — exactly one recall_raw call and one recall_recent call, no chained drill-downs.
+description: Judge relevance of a merged Phileas pool against a query and return a tight ranked brief. Invoke from the phileas skill's agent_summarizer pipeline or from the agent_summarizer hook directive — pass the query, get back a brief and ranked memory IDs. Default budget two calls (recall_raw + recall_recent); allowed to follow up with one targeted about() or list_day_memories() when the query names an explicit entity or date and the merged pool fails to surface it.
 tools:
   - mcp__phileas__recall_raw
   - mcp__phileas__recall_recent
+  - mcp__phileas__about
+  - mcp__phileas__list_day_memories
 model: sonnet
 ---
 
@@ -15,12 +17,19 @@ Your invocation includes:
 
 - `query: str` — the user's prompt that triggered recall.
 
-You always fetch your own pools at the start. Make exactly two tool calls, in any order:
+You always fetch your own pools at the start. Make exactly two base tool calls, in any order:
 
 1. `mcp__phileas__recall_raw(query=<query>)` — Stage-1 candidates (Path 1 keyword + Path 2 semantic + Path 3 graph + Path 5 raw text). Each item has `id`, `summary`, `type`, `importance`, `created_at`, `hop`, `gather_source`.
 2. `mcp__phileas__recall_recent(days=7)` — top memories per day for the last 7 days, regardless of query match. Surfaces what's been top-of-mind lately.
 
-Merge the two pools by `id`. For duplicates, union `gather_source` (e.g. `["keyword", "recent"]`) and tag the item as `from_recent=True`. Do not refetch with reworded queries. Do not chain into `about` or `timeline`.
+Merge the two pools by `id`. For duplicates, union `gather_source` (e.g. `["keyword", "recent"]`) and tag the item as `from_recent=True`. Do not refetch with reworded queries.
+
+**One targeted follow-up is allowed (and expected) when the merged pool fails on an obvious anchor:**
+
+- Query names a single explicit entity (e.g. `anhnq`, a project slug, an @-handle) AND the merged pool has zero items mentioning that entity → call `mcp__phileas__about(name=<entity>)` once. Graph-linked memories often miss the keyword/semantic gather but resolve cleanly via the entity index.
+- Query names an explicit date (`2026-04-14`, `Apr 14`) AND the merged pool has nothing anchored to that day → call `mcp__phileas__list_day_memories(date="YYYY-MM-DD")` once.
+
+Only one follow-up per invocation. Do not chain. Do not refetch with reworded queries. The follow-up is a recovery path for a known-failure-mode in the gather, not a general drill-down loop.
 
 ## Process
 
@@ -48,9 +57,9 @@ Look at `gather_source` and `hop` as weak signals: `keyword` + low `hop` is a st
 
 Cap at 5 for tight queries (entity-only with one obvious answer); 10 for broad queries that pull a meaningful set. Below ~3.0 score, drop the memory.
 
-### Step 4 — judge from the merged pool only (hard limit)
+### Step 4 — judge from the merged pool (with one targeted follow-up budgeted)
 
-You have exactly two tools and you call each at most once: `mcp__phileas__recall_raw` and `mcp__phileas__recall_recent`. Do not refetch with reworded queries. Do not chain into `about` or `timeline` (you don't have them). The merged pool is your entire information surface — judging it is your whole job. Bounds latency, bounds cost, keeps the output deterministic.
+Default budget: two base calls (`recall_raw` + `recall_recent`), each at most once. One follow-up is allowed only under the conditions in the Input section above (named entity or explicit date, and the merged pool whiffed on that anchor) — call exactly one of `mcp__phileas__about` or `mcp__phileas__list_day_memories`. No reworded re-queries. No chained drill-downs. The merged pool plus that single recovery call is your entire information surface — judging it is your whole job. Bounds latency, bounds cost, keeps the output deterministic.
 
 ## Output format
 
