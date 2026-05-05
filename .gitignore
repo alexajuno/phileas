@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+
+# local data + transient artifacts
+phileas.db
+simulation_results.json
+.claude/
+.playwright-mcp/
+experiments/
+research/
