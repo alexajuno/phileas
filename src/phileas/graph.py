@@ -158,6 +158,27 @@ class GraphStore:
         self._warned_locked: bool = False
         self._lock = threading.RLock()
 
+    def recycle(self) -> None:
+        """Close and forget the kuzu Database/Connection so they reopen lazily.
+
+        Workaround for kuzu issue #4797 — buffer pool grows per query and
+        is never released back to the OS even after QueryResult.close().
+        Reopening forces the buffer pool to be freed.
+        """
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+            if self._db is not None:
+                try:
+                    self._db.close()
+                except Exception:
+                    pass
+            self._conn = None
+            self._db = None
+
     def _ensure_connected(self) -> bool:
         """Lazily open KuzuDB. Returns True if connected, False if unavailable."""
         if self._conn is not None:
@@ -634,28 +655,31 @@ class GraphStore:
             "RETURN e.id, e.primary_name, e.types, e.aliases, e.description, e.aliases_norm, cnt",
             parameters={"n": name_norm},
         )
-        rows: list[dict[str, Any]] = []
-        while result.has_next():
-            r = result.get_next()
-            aliases = _parse_list(r[3])
-            aliases_norm = _parse_list(r[5])
-            # Filter alias false-positives: substring match on the JSON
-            # alias-list column may hit a longer alias that contains the
-            # query as a substring. Compare against the normalized form to
-            # avoid keeping accidental partial matches.
-            primary_norm = _normalize_name(r[1])
-            if primary_norm == name_norm or any(a == name_norm for a in aliases_norm):
-                rows.append(
-                    {
-                        "id": r[0],
-                        "primary_name": r[1],
-                        "types": _parse_list(r[2]),
-                        "aliases": aliases,
-                        "description": r[4] or "",
-                        "memory_count": int(r[6]),
-                    }
-                )
-        return rows
+        try:
+            rows: list[dict[str, Any]] = []
+            while result.has_next():
+                r = result.get_next()
+                aliases = _parse_list(r[3])
+                aliases_norm = _parse_list(r[5])
+                # Filter alias false-positives: substring match on the JSON
+                # alias-list column may hit a longer alias that contains the
+                # query as a substring. Compare against the normalized form to
+                # avoid keeping accidental partial matches.
+                primary_norm = _normalize_name(r[1])
+                if primary_norm == name_norm or any(a == name_norm for a in aliases_norm):
+                    rows.append(
+                        {
+                            "id": r[0],
+                            "primary_name": r[1],
+                            "types": _parse_list(r[2]),
+                            "aliases": aliases,
+                            "description": r[4] or "",
+                            "memory_count": int(r[6]),
+                        }
+                    )
+            return rows
+        finally:
+            result.close()
 
     def _neighborhood_overlap(self, candidate_id: str, context_neighbors: list[str]) -> float:
         """Fraction of ``context_neighbors`` already linked to ``candidate_id``.
@@ -945,13 +969,16 @@ class GraphStore:
             "RETURN n.primary_name AS name, n.types AS types",
             parameters={"q": name_query},
         )
-        results = []
-        while result.has_next():
-            row = result.get_next()
-            types = _parse_list(row[1])
-            primary_type = types[0] if types else ""
-            results.append({"name": row[0], "type": primary_type, "types": types})
-        return results
+        try:
+            results = []
+            while result.has_next():
+                row = result.get_next()
+                types = _parse_list(row[1])
+                primary_type = types[0] if types else ""
+                results.append({"name": row[0], "type": primary_type, "types": types})
+            return results
+        finally:
+            result.close()
 
     @_locked
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
@@ -1272,10 +1299,13 @@ class GraphStore:
             "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
             parameters={"eid": eid},
         )
-        ids = []
-        while result.has_next():
-            ids.append(result.get_next()[0])
-        return ids
+        try:
+            ids = []
+            while result.has_next():
+                ids.append(result.get_next()[0])
+            return ids
+        finally:
+            result.close()
 
     @_locked
     def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
@@ -1289,18 +1319,21 @@ class GraphStore:
             "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity) RETURN e.primary_name, e.types",
             parameters={"mid": memory_id},
         )
-        results = []
-        while result.has_next():
-            row = result.get_next()
-            types = _parse_list(row[1])
-            results.append(
-                {
-                    "name": row[0],
-                    "type": types[0] if types else "",
-                    "types": types,
-                }
-            )
-        return results
+        try:
+            results = []
+            while result.has_next():
+                row = result.get_next()
+                types = _parse_list(row[1])
+                results.append(
+                    {
+                        "name": row[0],
+                        "type": types[0] if types else "",
+                        "types": types,
+                    }
+                )
+            return results
+        finally:
+            result.close()
 
     # ------------------------------------------------------------------
     # Entity ↔ Entity edges (REL)
@@ -1362,18 +1395,21 @@ class GraphStore:
                 q = cypher + "RETURN b.primary_name, b.types, r.edge_type"
                 params = {"eid": eid}
             result = self._conn.execute(q, parameters=params)
-            while result.has_next():
-                row = result.get_next()
-                types = _parse_list(row[1])
-                results.append(
-                    {
-                        "name": row[0],
-                        "type": types[0] if types else "",
-                        "types": types,
-                        "edge_type": row[2],
-                        "direction": direction,
-                    }
-                )
+            try:
+                while result.has_next():
+                    row = result.get_next()
+                    types = _parse_list(row[1])
+                    results.append(
+                        {
+                            "name": row[0],
+                            "type": types[0] if types else "",
+                            "types": types,
+                            "edge_type": row[2],
+                            "direction": direction,
+                        }
+                    )
+            finally:
+                result.close()
         return results
 
     # ------------------------------------------------------------------

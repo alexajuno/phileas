@@ -287,10 +287,63 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     reinforce_thread = threading.Thread(target=_reinforcement_loop, daemon=True)
     reinforce_thread.start()
 
-    # Note: daemon-side LLM extraction was removed during the agent-driven
-    # migration. Events land in the `events` table as `pending` and are
-    # drained by the host Claude Code session via the `pending_events` /
-    # `mark_event_extracted` MCP tools.
+    # RSS watchdog — KuzuDB issue #4797 leaks ~400 MB per recall via
+    # buffer-pool retention that QueryResult.close()/gc/malloc_trim don't
+    # release. Empirically: 8 recalls = +3.3 GB RSS; recycling the kuzu
+    # Database/Connection drops the leak ~92% (34 MB/call residual).
+    # We watchdog VmRSS and recycle when the daemon crosses a threshold
+    # so steady-state stays bounded between recalls without paying the
+    # ~50-200ms reopen latency on every call.
+    _RSS_HIGH_WATER_KB = 2 * 1024 * 1024  # 2 GB
+    _RSS_POLL_SEC = 30
+
+    def _rss_watchdog_loop():
+        import gc
+        import time
+
+        while True:
+            time.sleep(_RSS_POLL_SEC)
+            rss_kb = _read_vmrss_kb()
+            if rss_kb < _RSS_HIGH_WATER_KB:
+                continue
+            try:
+                engine.graph.recycle()
+                gc.collect()
+                try:
+                    import ctypes
+
+                    ctypes.CDLL("libc.so.6").malloc_trim(0)
+                except OSError:
+                    pass
+                after_kb = _read_vmrss_kb()
+                log.info(
+                    "kuzu recycle (rss high-water)",
+                    extra={
+                        "op": "rss_watchdog",
+                        "data": {
+                            "before_mb": round(rss_kb / 1024, 1),
+                            "after_mb": round(after_kb / 1024, 1),
+                            "threshold_mb": _RSS_HIGH_WATER_KB // 1024,
+                        },
+                    },
+                )
+                try:
+                    engine._metrics.record_daemon(
+                        "rss_recycle",
+                        payload={"before_mb": rss_kb // 1024, "after_mb": after_kb // 1024},
+                    )
+                except Exception:
+                    pass
+            except Exception as e:
+                log.debug("rss watchdog recycle failed", extra={"op": "rss_watchdog", "data": {"error": str(e)}})
+
+    rss_thread = threading.Thread(target=_rss_watchdog_loop, daemon=True, name="phileas-rss-watchdog")
+    rss_thread.start()
+
+    # Daemon-side LLM extraction was removed during the agent-driven
+    # migration. Events land in the `events` table; memories are extracted
+    # in-turn by the host Claude Code session via the Stop hook's
+    # <phileas-memorize-hint>.
 
     # Run the HTTP server on a worker thread; the main thread parks on
     # stop_event so it can do cleanup safely after SIGTERM/SIGINT.
@@ -305,6 +358,18 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     _pid_path(config).unlink(missing_ok=True)
     _port_path(config).unlink(missing_ok=True)
     return port
+
+
+def _read_vmrss_kb() -> int:
+    """Read this process's VmRSS in KB from /proc. Returns 0 on failure."""
+    try:
+        with open(f"/proc/{os.getpid()}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    return 0
 
 
 def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | str:
@@ -331,9 +396,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "status":
         stats = engine.status()
         stats["sessions_processed"] = engine.db.get_processed_session_count()
-        event_counts = engine.db.get_event_counts()
-        stats["events_pending"] = event_counts.get("pending", 0)
-        stats["events_failed"] = event_counts.get("failed", 0)
         return stats
     elif method == "list":
         memory_type = params.get("memory_type")
@@ -380,9 +442,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "infer_graph":
         return engine.infer_graph()
     elif method == "ingest":
-        # Store the raw turn as a pending event. The host Claude Code session
-        # drains pending events via the `pending_events` / `mark_event_extracted`
-        # MCP tools — no LLM call happens inside the daemon anymore.
+        # Store the raw turn as an event for thread() recall and the
+        # in-turn memorize-hint trigger. No LLM call happens here.
         text = params.get("text", "")
         if not text:
             return {"queued": False, "reason": "empty text"}
@@ -390,24 +451,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
 
         event = Event(text=text)
         engine.save_event(event)
-        pending_count = engine.db.get_event_counts().get("pending", 0)
-        return {"queued": True, "event_id": event.id, "queue_depth": pending_count}
-    elif method == "retry_events":
-        # Reset failed events to pending so the host agent can pick them up.
-        event_ids = params.get("event_ids")
-        if event_ids:
-            events = [engine.db.get_event(eid) for eid in event_ids]
-            events = [e for e in events if e is not None]
-        else:
-            events = engine.db.get_failed_events()
-        queued = 0
-        for event in events:
-            if engine.db.reset_event_to_pending(event.id):
-                queued += 1
-        pending_count = engine.db.get_event_counts().get("pending", 0)
-        return {"queued": queued, "queue_depth": pending_count}
-    elif method == "event_counts":
-        return engine.db.get_event_counts()
+        return {"queued": True, "event_id": event.id}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.

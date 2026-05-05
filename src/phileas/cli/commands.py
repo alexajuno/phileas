@@ -547,13 +547,18 @@ def migrate_recall_cmd(force: bool):
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground (for systemd).")
 def start(foreground: bool):
     """Start the Phileas daemon (keeps models loaded for fast CLI)."""
-    # Cap glibc's secondary arenas before libc initializes. On a 20-core box the
-    # default (8×ncpus = 160) lets ~115 × 64 MB arenas accumulate (~3 GB RSS).
-    # The env var is only read at libc startup, so we re-exec ourselves once.
-    if os.environ.get("MALLOC_ARENA_MAX") is None:
+    # Cap glibc's secondary arenas + OpenMP/MKL pool before libc/openmp init.
+    # Env vars are read once at libc/openmp startup, so re-exec if missing.
+    # - MALLOC_ARENA_MAX=4: cap secondary arenas (default 8×ncpus = 160 here).
+    # - OMP_NUM_THREADS / MKL_NUM_THREADS: each ThreadPoolExecutor worker that
+    #   triggers the cross-encoder spawns its own OpenMP fan-out; cap at 2.
+    needs_reexec = any(os.environ.get(k) is None for k in ("MALLOC_ARENA_MAX", "OMP_NUM_THREADS"))
+    if needs_reexec:
         import sys
 
-        os.environ["MALLOC_ARENA_MAX"] = "4"
+        os.environ.setdefault("MALLOC_ARENA_MAX", "4")
+        os.environ.setdefault("OMP_NUM_THREADS", "2")
+        os.environ.setdefault("MKL_NUM_THREADS", "2")
         os.execvpe(sys.executable, [sys.executable, *sys.argv], os.environ)
 
     from phileas.daemon import is_running

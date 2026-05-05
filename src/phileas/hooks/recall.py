@@ -196,31 +196,6 @@ def format_error(msg: str) -> str:
     )
 
 
-def format_pending_notice(pending: int, failed: int) -> str:
-    """Emit a short nudge when the ingest queue has anything waiting."""
-    return (
-        "<phileas-pending>\n"
-        f"Phileas has {pending} pending event(s)"
-        + (f" and {failed} failed event(s)" if failed else "")
-        + " awaiting extraction.\n"
-        "Call the `phileas:pending_events` MCP tool to drain when convenient:\n"
-        "read each event, call `memorize` for memories worth keeping, then call\n"
-        "`mark_event_extracted(event_id, memory_count)`.\n"
-        "</phileas-pending>"
-    )
-
-
-def emit_pending_notice() -> None:
-    """Best-effort pending-queue nudge. Silent on any failure."""
-    ok, payload = call_daemon("event_counts", {})
-    if not ok or not isinstance(payload, dict):
-        return
-    pending = int(payload.get("pending", 0) or 0)
-    failed = int(payload.get("failed", 0) or 0)
-    if pending or failed:
-        print(format_pending_notice(pending, failed))
-
-
 def run_rerank(prompt: str) -> int:
     ok, payload = call_daemon(
         "recall",
@@ -360,7 +335,6 @@ def main() -> int:
     else:
         rc = run_rerank(prompt)
 
-    emit_pending_notice()
     return rc
 
 
