@@ -61,6 +61,7 @@ def memorize(
     daily_ref: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
+    source_event_id: str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -78,6 +79,10 @@ def memorize(
             entity creation, never overwritten. Helps the linker keep
             same-name distinct referents apart (Apple fruit vs Apple Inc.).
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
+        source_event_id: Event id this memory was extracted from. The
+            <phileas-memorize-hint> block surfaces it as `event_id=...`;
+            pass it through so recall can hydrate this memory with its
+            originating conversation thread.
     """
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
@@ -89,6 +94,7 @@ def memorize(
         daily_ref=daily_ref,
         entities=parsed_entities,
         relationships=parsed_relationships,
+        source_event_id=source_event_id,
     )
 
     return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
@@ -108,6 +114,9 @@ def memorize_batch(memories: list | str) -> str:
             - daily_ref: YYYY-MM-DD. Defaults to today.
             - entities: List of {"name": str, "type": str, "description"?: str}.
             - relationships: List of {"from_name", "from_type", "edge", "to_name", "to_type"}.
+            - source_event_id: Event id this memory came from (optional). The
+              <phileas-memorize-hint> surfaces it as `event_id=...`; pass it
+              through so recall can hydrate the originating thread.
     """
     items = json.loads(memories) if isinstance(memories, str) else memories
     if not items:
@@ -134,6 +143,7 @@ def memorize_batch(memories: list | str) -> str:
             daily_ref=mem.get("daily_ref"),
             entities=parsed_entities,
             relationships=parsed_relationships,
+            source_event_id=mem.get("source_event_id"),
         )
 
         results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
@@ -572,78 +582,6 @@ def mark_session_done(session_path: str) -> str:
     db.mark_session_processed(session_id, file_path=session_path)
     total = db.get_processed_session_count()
     return f"Session {session_id} marked as processed. Total processed sessions: {total}."
-
-
-@mcp.tool()
-def pending_events(limit: int = 20, include_failed: bool = True) -> str:
-    """List events awaiting memory extraction.
-
-    Each event is one user+assistant turn captured by the Stop hook. The daemon
-    no longer extracts memories itself — it stores the raw turn and waits for
-    the host Claude Code session to drain the queue. For each event returned:
-    read the text, decide what memories (if any) are worth keeping, call
-    memorize() for each, then call mark_event_extracted(event_id, memory_count).
-
-    Args:
-        limit: Max events to return (default 20).
-        include_failed: Also include events whose previous extraction attempt
-            failed (typically stranded from the pre-migration LLM path). They are
-            reset to pending on return so you can drain them.
-
-    Returns a human-readable listing. Call the companion tools to drain.
-    """
-    if include_failed:
-        failed = db.get_failed_events(limit=limit)
-        for ev in failed:
-            db.reset_event_to_pending(ev.id)
-
-    events = db.get_pending_events(limit=limit)
-    counts = db.get_event_counts()
-    if not events:
-        return (
-            f"No pending events. (pending={counts.get('pending', 0)}, "
-            f"extracted={counts.get('extracted', 0)}, failed={counts.get('failed', 0)})"
-        )
-
-    lines = [
-        f"Pending events: {len(events)} shown (queue total: "
-        f"pending={counts.get('pending', 0)}, failed={counts.get('failed', 0)}).",
-        "",
-        "For each, extract memories and call memorize() per memory, then call",
-        "mark_event_extracted(event_id, memory_count).",
-        "Write all summaries in English; translate VN/mixed-language turns and preserve proper nouns.",
-        "---",
-    ]
-    for ev in events:
-        text = ev.text
-        if len(text) > 2000:
-            text = text[:2000] + "... [truncated]"
-        lines.append(f"event_id: {ev.id}")
-        lines.append(f"received_at: {ev.received_at.isoformat() if ev.received_at else '?'}")
-        lines.append("text:")
-        lines.append(text)
-        lines.append("---")
-    return "\n".join(lines)
-
-
-@mcp.tool()
-def mark_event_extracted(event_id: str, memory_count: int = 0) -> str:
-    """Mark a pending event as fully extracted.
-
-    Call this after calling memorize() for every memory you pulled out of the
-    event's text. memory_count is for bookkeeping only; pass 0 if nothing was
-    worth storing (the event is still removed from the pending queue).
-
-    Args:
-        event_id: The event_id returned by pending_events().
-        memory_count: How many memorize() calls you made for this event.
-    """
-    event = db.get_event(event_id)
-    if event is None:
-        return f"Event {event_id} not found."
-    db.mark_event_extracted(event_id, memory_count=memory_count)
-    remaining = db.get_event_counts().get("pending", 0)
-    return f"Marked {event_id} extracted ({memory_count} memories). Pending remaining: {remaining}."
 
 
 @mcp.tool()

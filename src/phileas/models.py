@@ -24,9 +24,6 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-EventExtractionStatus = Literal["pending", "extracted", "failed", "skipped"]
-
-
 @dataclass
 class MemoryItem:
     """A structured memory. The core unit of Phileas."""
@@ -55,6 +52,3 @@ class Event:
     id: str = field(default_factory=_uuid)
     text: str = ""
     received_at: datetime = field(default_factory=_now)
-    extraction_status: EventExtractionStatus = "pending"
-    extraction_error: str | None = None
-    memory_count: int = 0  # number of memories produced by extraction
