@@ -24,119 +24,12 @@ from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.logging import get_logger
 from phileas.models import MemoryItem
+from phileas.stopwords import STOP_WORDS, strip_stopwords
 from phileas.vector import VectorStore
 
 log = get_logger()
 
 _MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
-
-_STOP_WORDS = {
-    "a",
-    "an",
-    "the",
-    "and",
-    "or",
-    "but",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "of",
-    "with",
-    "by",
-    "from",
-    "is",
-    "it",
-    "its",
-    "be",
-    "as",
-    "that",
-    "this",
-    "was",
-    "are",
-    "were",
-    "been",
-    "have",
-    "has",
-    "had",
-    "do",
-    "did",
-    "does",
-    "will",
-    "would",
-    "could",
-    "should",
-    "may",
-    "might",
-    "shall",
-    "can",
-    "not",
-    "no",
-    "so",
-    "if",
-    "then",
-    "than",
-    "about",
-    "us",
-    "we",
-    "i",
-    "you",
-    "he",
-    "she",
-    "they",
-    "me",
-    "him",
-    "her",
-    "them",
-    "my",
-    "our",
-    "your",
-    "his",
-    "their",
-    "still",
-    "just",
-    "also",
-    "up",
-    "out",
-    "what",
-    "which",
-    "who",
-    "when",
-    "where",
-    "how",
-    "why",
-    "between",
-    "into",
-    "through",
-    "during",
-    "before",
-    "after",
-    "while",
-    "am",
-    "any",
-    "all",
-    "both",
-    "each",
-    "few",
-    "more",
-    "most",
-    "other",
-    "same",
-    "such",
-    "own",
-    "too",
-    "very",
-    "now",
-    "remember",
-}
-
-
-def _strip_stopwords(text: str) -> str:
-    """Return query with stop words removed, preserving any remainder."""
-    words_in = re.findall(r"\w+", text, flags=re.UNICODE)
-    meaningful = [w for w in words_in if w.lower() not in _STOP_WORDS and len(w) >= 2]
-    return " ".join(meaningful) if meaningful else text
 
 
 def gather_candidates_raw(
@@ -190,7 +83,7 @@ def gather_candidates_raw(
                     candidates[mem_id] = item
 
     # Path 1: keyword search (SQLite)
-    filtered_q = _strip_stopwords(query)
+    filtered_q = strip_stopwords(query)
     keyword_hits = db.search_by_keyword(filtered_q, top_k=None)  # no cap; ~1500-row scan is cheap
     for item in keyword_hits:
         candidates[item.id] = item
@@ -222,7 +115,7 @@ def gather_candidates_raw(
                     break
 
     # Path 3: graph search by query word
-    words = [w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in _STOP_WORDS and len(w) >= 2]
+    words = [w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in STOP_WORDS and len(w) >= 2]
     for word in words:
         graph_nodes = graph.search_nodes(word)
         for node in graph_nodes:

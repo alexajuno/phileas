@@ -20,6 +20,7 @@ from phileas.hot import HotMemorySet
 from phileas.logging import OpTimer, get_logger
 from phileas.models import MemoryItem
 from phileas.scoring import compute_score, mmr_select
+from phileas.stopwords import STOP_WORDS, strip_stopwords
 from phileas.vector import VectorStore
 
 log = get_logger()
@@ -446,123 +447,9 @@ class MemoryEngine:
             # Stage 1: Gather candidates from multiple paths
             # ----------------------------------------------------------
 
-            # Stop words filtered out of keyword search and graph entity lookup.
-            # Common English function words match almost every summary and every
-            # entity name, inflating both keyword_ids and graph hop-0 counts with
-            # false positives that then dominate scoring via the importance/access
-            # tiebreaker. Filtering them keeps both paths precise.
-            _STOP_WORDS = {
-                "a",
-                "an",
-                "the",
-                "and",
-                "or",
-                "but",
-                "in",
-                "on",
-                "at",
-                "to",
-                "for",
-                "of",
-                "with",
-                "by",
-                "from",
-                "is",
-                "it",
-                "its",
-                "be",
-                "as",
-                "that",
-                "this",
-                "was",
-                "are",
-                "were",
-                "been",
-                "have",
-                "has",
-                "had",
-                "do",
-                "did",
-                "does",
-                "will",
-                "would",
-                "could",
-                "should",
-                "may",
-                "might",
-                "shall",
-                "can",
-                "not",
-                "no",
-                "so",
-                "if",
-                "then",
-                "than",
-                "about",
-                "us",
-                "we",
-                "i",
-                "you",
-                "he",
-                "she",
-                "they",
-                "me",
-                "him",
-                "her",
-                "them",
-                "my",
-                "our",
-                "your",
-                "his",
-                "their",
-                "still",
-                "just",
-                "also",
-                "up",
-                "out",
-                "what",
-                "which",
-                "who",
-                "when",
-                "where",
-                "how",
-                "why",
-                "between",
-                "into",
-                "through",
-                "during",
-                "before",
-                "after",
-                "while",
-                "am",
-                "any",
-                "all",
-                "both",
-                "each",
-                "few",
-                "more",
-                "most",
-                "other",
-                "same",
-                "such",
-                "own",
-                "too",
-                "very",
-                "now",
-                "remember",
-            }
-
-            def _strip_stopwords(text: str) -> str:
-                """Return query with stop words removed, preserving any remainder."""
-                import re as _re
-
-                words_in = _re.findall(r"\w+", text, flags=_re.UNICODE)
-                meaningful = [w for w in words_in if w.lower() not in _STOP_WORDS and len(w) >= 2]
-                return " ".join(meaningful) if meaningful else text
-
             # Path 1: keyword search (SQLite) — run for each query variant
             for q in queries:
-                filtered_q = _strip_stopwords(q)
+                filtered_q = strip_stopwords(q)
                 keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
                 for item in keyword_hits:
                     candidates[item.id] = item
@@ -610,7 +497,7 @@ class MemoryEngine:
             import re
 
             words = [
-                w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in _STOP_WORDS and len(w) >= 2
+                w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in STOP_WORDS and len(w) >= 2
             ]
             seen_entities: set[tuple[str, str]] = set()
 
