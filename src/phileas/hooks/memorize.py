@@ -180,13 +180,21 @@ def format_hint(event_id: str | None) -> str:
     return (
         "<phileas-memorize-hint>\n"
         "End of turn — evaluate whether this exchange produced anything worth "
-        "saving to long-term memory:\n"
+        "saving to long-term memory. Phileas's scope is *personal*: who the "
+        "user is, how he works, what he feels, recurring self-patterns. "
+        "Quit-tomorrow test: would this still matter if the user quit his "
+        "current job tomorrow? If yes -> Phileas. If no -> repo CLAUDE.md/docs.\n"
+        "Save:\n"
         '  - stated user preferences ("I prefer X")\n'
-        '  - decisions with reasoning ("we\'re going with X because Y")\n'
+        '  - decisions about self/work-style/life with reasoning ("I\'m doing X because Y")\n'
         "  - validated non-obvious approaches the user accepted without pushback\n"
-        "  - personal context, recurring patterns, project state not in code/git\n"
-        "Skip: code conventions, in-progress task state, routine acks, anything "
-        "already in CLAUDE.md or the repo's own docs.\n"
+        "  - personal context, recurring patterns, emotional throughlines, life events\n"
+        "Skip:\n"
+        "  - project-technical decisions (library choices, API field selections, "
+        "schema/architecture calls, framework-specific patterns) -- those go in "
+        "the repo's CLAUDE.md or docs/, not Phileas\n"
+        "  - code conventions, in-progress task state, routine acks\n"
+        "  - anything already in CLAUDE.md or the repo's own docs\n"
         + link_line
         + "If anything qualifies, call `mcp__phileas__memorize` (or "
         "`memorize_batch` for several) and then stop. If nothing qualifies, "
