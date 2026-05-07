@@ -4,9 +4,6 @@ For each query in `tests/eval/gold-recall/queries/`, loads the paired
 snapshot into an isolated `PHILEAS_HOME`, invokes `engine.recall()`, and
 scores whether the expected memory appears in top-K.
 
-Calls `recall()` with `_skip_llm=True` so query-rewrite doesn't talk to
-the network — this eval measures retrieval, not query understanding.
-
 Writes under `<gold>/runs/<timestamp>-<slug>/`:
     per_query.jsonl — one JSON line per query
     summary.json    — aggregate metrics (global + per-tag)
@@ -84,7 +81,6 @@ def run_one(case: RecallCase) -> dict[str, Any]:
             results = loaded.engine.recall(
                 query=case.query,
                 top_k=max(case.tolerance, 1),
-                _skip_llm=True,
             )
             error = None
         except Exception as exc:

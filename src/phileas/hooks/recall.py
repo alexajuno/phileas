@@ -11,7 +11,7 @@ Reads the hook payload from stdin, then branches on the user's recall config:
     - "always"  -> emit a hint on every prompt.
 
   recall.pipeline:
-    - "rerank"            -> call daemon `recall` with `_skip_llm=True`, format
+    - "rerank"            -> call daemon `recall`, format
                               the top results inline as a `<phileas-recall>`
                               block. Cheap deterministic CPU-only path.
     - "agent_summarizer"  -> call daemon `recall_raw`, then emit a passive
@@ -232,7 +232,7 @@ def format_error(msg: str) -> str:
 def run_rerank(prompt: str) -> int:
     ok, payload = call_daemon(
         "recall",
-        {"query": prompt, "top_k": TOP_K, "_skip_llm": True},
+        {"query": prompt, "top_k": TOP_K},
     )
     if not ok:
         print(format_error(str(payload)))

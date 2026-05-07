@@ -409,7 +409,6 @@ class MemoryEngine:
         top_k: int | None = None,
         memory_type: str | None = None,
         min_importance: int | None = None,
-        _skip_llm: bool = False,
     ) -> list[dict]:
         """Three-stage retrieval: gather → rerank → MMR select.
 
@@ -934,7 +933,6 @@ class MemoryEngine:
                     "top_k": _effective_top_k,
                     "memory_type": memory_type,
                     "min_importance": min_importance,
-                    "skip_llm": _skip_llm,
                     "top_score": round(results[0]["score"], 3) if results else None,
                 },
             )
