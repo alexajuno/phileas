@@ -431,11 +431,9 @@ class MemoryEngine:
             memory_type=memory_type,
             min_importance=min_importance,
         ) as timer:
-            # Query analysis (alternate phrasings, pronoun referent resolution)
-            # is now the host agent's job — if it wants richer recall it calls
-            # this tool multiple times with rewritten queries. The daemon
-            # stays LLM-free.
-            queries = [query]
+            # Query rewriting (alternate phrasings, pronoun referent resolution)
+            # is the host agent's job — if it wants richer recall it calls this
+            # tool multiple times with rewritten queries. Daemon stays LLM-free.
             referent_names: list[tuple[str, str]] = []
 
             candidates: dict[str, MemoryItem] = {}  # id -> item
@@ -446,16 +444,14 @@ class MemoryEngine:
             # Stage 1: Gather candidates from multiple paths
             # ----------------------------------------------------------
 
-            # Path 1: keyword search (SQLite) — run for each query variant
-            for q in queries:
-                filtered_q = strip_stopwords(q)
-                keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
-                for item in keyword_hits:
-                    candidates[item.id] = item
-                    keyword_ids.add(item.id)
+            # Path 1: keyword search (SQLite)
+            filtered_q = strip_stopwords(query)
+            keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
+            for item in keyword_hits:
+                candidates[item.id] = item
+                keyword_ids.add(item.id)
 
-            # Path 2: semantic search (ChromaDB) — bucketed by type,
-            # run for each query variant
+            # Path 2: semantic search (ChromaDB) — bucketed by type
             search_types = [memory_type] if memory_type else _MEMORY_TYPES
 
             # Pre-cache type → active items (avoids repeated DB queries)
@@ -467,11 +463,9 @@ class MemoryEngine:
                 type_item_cache[mtype] = active
                 all_type_ids.update(active.keys())
 
-            # Search vector once per query (not per type), filter client-side
-            for q in queries:
-                if not all_type_ids:
-                    break
-                semantic_hits = self.vector.search(q, top_k=_effective_top_k * 3)
+            # Search vector once, filter client-side
+            if all_type_ids:
+                semantic_hits = self.vector.search(query, top_k=_effective_top_k * 3)
                 for mem_id, sim in semantic_hits:
                     if sim < self.config.recall.similarity_floor:
                         continue
@@ -664,15 +658,14 @@ class MemoryEngine:
             # Path 5: raw text search (verbatim conversation snippets)
             # Searches the raw_memories ChromaDB collection — catches details
             # lost during summarization (names, places, specific phrases).
-            for q in queries:
-                raw_hits = self.vector.search_raw(q, top_k=_effective_top_k * 3)
-                for mem_id, sim in raw_hits:
-                    if sim < self.config.recall.similarity_floor:
-                        continue
-                    if mem_id not in candidates:
-                        item = self.db.get_item(mem_id)
-                        if item:
-                            candidates[mem_id] = item
+            raw_hits = self.vector.search_raw(query, top_k=_effective_top_k * 3)
+            for mem_id, sim in raw_hits:
+                if sim < self.config.recall.similarity_floor:
+                    continue
+                if mem_id not in candidates:
+                    item = self.db.get_item(mem_id)
+                    if item:
+                        candidates[mem_id] = item
 
             # Path 6: event-text search → sibling-memory fanout.
             # An event hit drags in every memory extracted from that event,
@@ -683,15 +676,14 @@ class MemoryEngine:
             # Lower floor than memory search: long event chunks score lower
             # under cosine than focused summaries. See engine_gather.py.
             event_floor = min(0.25, self.config.recall.similarity_floor)
-            for q in queries:
-                event_hits = self.vector.search_events(q, top_k=20)
-                for event_id, sim in event_hits:
-                    if sim < event_floor:
-                        continue
-                    for sibling in self.db.get_memories_for_event(event_id):
-                        if sibling.id not in candidates:
-                            candidates[sibling.id] = sibling
-                            candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
+            event_hits = self.vector.search_events(query, top_k=20)
+            for event_id, sim in event_hits:
+                if sim < event_floor:
+                    continue
+                for sibling in self.db.get_memories_for_event(event_id):
+                    if sibling.id not in candidates:
+                        candidates[sibling.id] = sibling
+                        candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
 
             # Apply filters
             filtered: dict[str, MemoryItem] = {}
