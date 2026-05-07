@@ -157,6 +157,12 @@ class GraphStore:
         self._conn: kuzu.Connection | None = None
         self._warned_locked: bool = False
         self._lock = threading.RLock()
+        # Per-process cache for _candidate_rows. A single recall can fan out
+        # to thousands of (type, name) resolutions that all funnel through
+        # _candidate_rows; without memoization each one re-scans the full
+        # Entity table. Cleared by every write method that touches Entity
+        # rows or ABOUT edges (since memory_count comes from COUNT(:ABOUT)).
+        self._candidate_cache: dict[str, list[dict[str, Any]]] = {}
 
     def recycle(self) -> None:
         """Close and forget the kuzu Database/Connection so they reopen lazily.
@@ -178,6 +184,18 @@ class GraphStore:
                     pass
             self._conn = None
             self._db = None
+            self._candidate_cache.clear()
+
+    def _invalidate_candidate_cache(self) -> None:
+        """Drop memoized _candidate_rows entries.
+
+        Must be called by every write path that touches Entity rows or
+        ABOUT edges, since cached rows include aliases (mutated by
+        _maybe_add_alias / set_aliases / merge_entities) and a
+        memory_count derived from COUNT(:ABOUT) (changed by link_memory
+        and merge_entities).
+        """
+        self._candidate_cache.clear()
 
     def _ensure_connected(self) -> bool:
         """Lazily open KuzuDB. Returns True if connected, False if unavailable."""
@@ -647,6 +665,12 @@ class GraphStore:
         name_norm = _normalize_name(name)
         if not name_norm:
             return []
+        cached = self._candidate_cache.get(name_norm)
+        if cached is not None:
+            # Callers (e.g. _lookup_id, find_nodes) sort the returned list,
+            # so hand back a shallow copy. Inner dicts are read-only by
+            # convention.
+            return list(cached)
         result = self._conn.execute(
             "MATCH (e:Entity) "
             "WHERE e.primary_name_norm = $n OR e.aliases_norm CONTAINS $n "
@@ -677,7 +701,8 @@ class GraphStore:
                             "memory_count": int(r[6]),
                         }
                     )
-            return rows
+            self._candidate_cache[name_norm] = rows
+            return list(rows)
         finally:
             result.close()
 
@@ -803,6 +828,7 @@ class GraphStore:
                 "props": "",
             },
         )
+        self._invalidate_candidate_cache()
         return new_id
 
     def _maybe_add_alias(self, entity_id: str, incoming_name: str) -> None:
@@ -845,6 +871,7 @@ class GraphStore:
                 "aliases_norm": _dump_list(_normalize_aliases(aliases)),
             },
         )
+        self._invalidate_candidate_cache()
 
     def _merge_into_existing(self, entity_id: str, new_types: list[str], description: str) -> None:
         """Union new types into the entity row; leave name + description alone."""
@@ -869,6 +896,7 @@ class GraphStore:
             "MATCH (e:Entity {id: $id}) SET e.types = $types, e.description = $description",
             parameters={"id": entity_id, "types": _dump_list(ordered), "description": new_desc},
         )
+        self._invalidate_candidate_cache()
 
     def _lookup_id(self, node_type: str, name: str) -> str | None:
         """Find an entity uuid for a (type, name) pair using the same scoring path as writes.
@@ -996,6 +1024,7 @@ class GraphStore:
                 "aliases_norm": _dump_list(_normalize_aliases(aliases)),
             },
         )
+        self._invalidate_candidate_cache()
 
     @_locked
     def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:
@@ -1084,6 +1113,7 @@ class GraphStore:
                 },
             )
 
+        self._invalidate_candidate_cache()
         return {
             "canonical_id": canonical_id,
             "merged_count": merged_count,
@@ -1285,6 +1315,7 @@ class GraphStore:
             "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) CREATE (m)-[:ABOUT]->(e)",
             parameters={"mid": memory_id, "eid": eid},
         )
+        self._invalidate_candidate_cache()
         return eid
 
     @_locked
