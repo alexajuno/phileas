@@ -34,7 +34,7 @@ The wizard walks you through:
 Expected output:
 
 ```
-Welcome to Phileas -- long-term memory for AI companions.
+Welcome to Phileas -- persistent memory for AI.
 
 Where should Phileas store data? [~/.phileas]:
 LLM provider (used for extraction, consolidation, contradiction detection):

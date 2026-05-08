@@ -38,7 +38,7 @@ from phileas.stats.cli import stats
 @click.group()
 @click.version_option(version=__version__, prog_name="phileas")
 def app():
-    """Phileas -- long-term memory for AI companions."""
+    """Phileas -- persistent memory for AI."""
 
 
 app.add_command(status)

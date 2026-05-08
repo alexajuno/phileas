@@ -1,3 +1,3 @@
-"""Phileas — local-first long-term memory for AI companions."""
+"""Phileas — local-first persistent memory for AI."""
 
 __version__ = "0.1.0"

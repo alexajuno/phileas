@@ -2,31 +2,25 @@
 
 ## The problem
 
-AI conversations reset. Every session starts from zero. You can talk to the most capable model in the world, but it doesn't *know* you. There's no continuity, no relationship that deepens over time.
+LLM conversations reset between sessions. Anything the model learned about you, your work, or your decisions is gone the next time you open a new chat. There is no shared substrate.
 
-The models themselves are increasingly good. What's missing is the layer around them — the memory, the context, the sense of who you are and where you've been.
+Existing solutions are either model-specific (ChatGPT memory, Claude projects), task-specific (RAG over notes, project ledgers), or cloud-bound. None of them give you a single, portable memory layer that travels with you across models and tools.
 
 ## What Phileas is
 
-Phileas is a long-term relationship with an AI that holds your throughline.
+Phileas is a persistent memory layer for AI. It stores facts, decisions, and context locally and exposes them to any LLM through MCP.
 
-Not a project ledger. Not a RAG over your notes. Not "ChatGPT but it remembers your tasks." Those things exist, and they're crowded. The gap Phileas fills is upstream of all of them: **continuity as substrate**. The recurring tensions, the identity arcs, the patterns that take months to see, the parts of a life that aren't task-shaped and never make it into Notion or Linear — that's the territory.
+That's the whole scope. Not a companion, not a throughline-keeper, not an identity model. A memory layer.
 
-Project decisions, technical context, day-to-day facts — those fall out as byproducts. You talk about your work, Phileas remembers it. But the primary frame is the person, not the project.
-
-## What that requires
-
-- **Long-term memory** — not just storing conversations, but building a living understanding that evolves: facts consolidate, irrelevant details fade, connections form between experiences.
-- **Context retrieval** — surfacing the right memories at the right time, so the companion responds with awareness of your history, not just your last message.
-- **Pattern-holding** — noticing the throughline you can't see from inside it. The recurring spiral, the obsession that's been bending your career arc for years, the tension that keeps coming back in different costumes.
+What you do with it is up to you and the model on the other end of the MCP connection.
 
 ## Design principles
 
-- **Local-first** — your personal history doesn't belong on someone else's server.
+- **Local-first** — your history doesn't belong on someone else's server.
 - **Model-agnostic** — the memory layer should work with any capable LLM.
-- **Human-like memory, not perfect recall** — databases remember everything. Companions remember what matters. Natural forgetting is a feature.
+- **Natural forgetting** — perfect recall is noise. Memories decay, consolidate, and fade based on use and relevance.
 - **Open** — anyone should be able to run this for themselves.
 
 ## The name
 
-Phileas Fogg — a companion for the journey. Not a servant, not a tool. Someone who's present, who travels alongside you.
+Phileas Fogg — a traveler who kept careful notes. The name is a wink, not a thesis.

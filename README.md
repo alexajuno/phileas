@@ -1,12 +1,6 @@
-# Phileas — long-term memory for AI companions
+# Phileas — persistent memory for AI
 
-Your AI forgets you every session. You can talk to the most capable model in the world, but it doesn't *know* you. No continuity. No relationship that deepens over time.
-
-The models are good enough. What's missing is the layer around them — the memory, the context, the sense of who you are and where you've been.
-
-Phileas is that layer. It runs on your machine, stores everything locally, and connects to any AI through [MCP](https://modelcontextprotocol.io/).
-
-Named after Phileas Fogg — a companion for the journey.
+AI conversations reset every session. Phileas is a local memory layer that any LLM can read and write through [MCP](https://modelcontextprotocol.io/), so context survives across sessions and tools.
 
 ## Get started
 
@@ -15,7 +9,7 @@ pip install phileas-memory
 phileas init
 ```
 
-The setup wizard walks you through connecting to your AI (Claude, GPT, Ollama, or any MCP client) and choosing where to store your memories. That's it.
+The setup wizard connects Phileas to your MCP client (Claude, GPT, Ollama, or any other) and chooses where to store memories.
 
 ## Connect to your AI
 
@@ -29,12 +23,12 @@ phileas serve
 
 See [MCP Integration](docs/mcp-integration.md) for client-specific setup.
 
-## What it believes
+## Principles
 
-- **Local-first** — your memories stay on your machine
-- **Model-agnostic** — works with any LLM
-- **Human-like, not perfect** — remembers what matters, lets the rest fade
-- **Open** — run it yourself, see how it works
+- **Local-first** — memories stay on your machine
+- **Model-agnostic** — works with any LLM via MCP
+- **Natural forgetting** — irrelevant detail decays; recall favors what stays useful
+- **Open** — run it yourself, read the code
 
 ## Learn more
 

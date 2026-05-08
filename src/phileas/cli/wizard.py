@@ -395,7 +395,7 @@ def _download_reranker_model() -> bool:
 def run_wizard() -> None:
     """Run the interactive init wizard."""
     console.print()
-    console.print("[bold cyan]Welcome to Phileas[/bold cyan] -- long-term memory for AI companions.")
+    console.print("[bold cyan]Welcome to Phileas[/bold cyan] -- persistent memory for AI.")
     console.print()
 
     # 1. Usage mode
