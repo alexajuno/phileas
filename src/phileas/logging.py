@@ -1,10 +1,13 @@
 """Structured JSON logging for Phileas operations."""
 
+import contextvars
+import functools
 import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from time import perf_counter
+from typing import Any, Callable
 
 _DEFAULT_LOG_DIR = Path.home() / ".phileas"
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024
@@ -81,3 +84,40 @@ class OpTimer:
             self.op,
             extra={"op": self.op, "data": data},
         )
+
+
+_current_extra: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("phileas_op_extra")
+
+
+def op_extra(**kwargs: Any) -> None:
+    """Merge fields into the current `@timed_op` record. No-op outside one."""
+    try:
+        _current_extra.get().update(kwargs)
+    except LookupError:
+        pass
+
+
+def timed_op(op: str, **static_extra: Any) -> Callable:
+    """Decorator: time the wrapped callable and emit a structured log line.
+
+    Use `op_extra(**fields)` inside the body to add dynamic fields to the
+    same record. Nested calls get their own scope via contextvars, so async
+    and threaded code stay isolated.
+    """
+
+    def deco(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def wrap(*args: Any, **kwargs: Any) -> Any:
+            extra: dict[str, Any] = dict(static_extra)
+            token = _current_extra.set(extra)
+            start = perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                extra["elapsed_ms"] = round((perf_counter() - start) * 1000, 2)
+                get_logger().info(op, extra={"op": op, "data": extra})
+                _current_extra.reset(token)
+
+        return wrap
+
+    return deco

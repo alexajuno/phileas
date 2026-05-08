@@ -17,7 +17,7 @@ from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.hot import HotMemorySet
-from phileas.logging import OpTimer, get_logger
+from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem
 from phileas.scoring import compute_score, mmr_select
 from phileas.stopwords import STOP_WORDS, strip_stopwords
@@ -212,6 +212,7 @@ class MemoryEngine:
     # memorize
     # ------------------------------------------------------------------
 
+    @timed_op("memorize")
     def memorize(
         self,
         summary: str,
@@ -230,93 +231,92 @@ class MemoryEngine:
 
         Returns a dict with keys: id, summary.
         """
-        with OpTimer(
-            log,
-            "memorize",
+        op_extra(
             memory_type=memory_type,
             importance=importance,
             entity_count=len(entities or []),
             relationship_count=len(relationships or []),
-        ) as timer:
-            # 1. Default daily_ref to today
-            if daily_ref is None:
-                daily_ref = date.today().isoformat()
+        )
 
-            # 2. Default importance when caller didn't provide one. Agent-driven
-            # callers should always supply `importance`; this fallback exists
-            # for legacy paths that don't yet.
-            if importance is None:
-                importance = 5
+        # 1. Default daily_ref to today
+        if daily_ref is None:
+            daily_ref = date.today().isoformat()
 
-            # 3. Create and persist MemoryItem (summary only — raw lives in events)
-            item = MemoryItem(
-                summary=summary,
+        # 2. Default importance when caller didn't provide one. Agent-driven
+        # callers should always supply `importance`; this fallback exists
+        # for legacy paths that don't yet.
+        if importance is None:
+            importance = 5
+
+        # 3. Create and persist MemoryItem (summary only — raw lives in events)
+        item = MemoryItem(
+            summary=summary,
+            memory_type=memory_type,
+            importance=importance,
+            daily_ref=daily_ref,
+            source_event_id=source_event_id,
+        )
+
+        self.db.save_item(item)
+
+        # 4. Add to ChromaDB (with type metadata for future filtering)
+        self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
+
+        # 5. Link entities and relationships in KuzuDB
+        if entities:
+            for entity in entities:
+                name = entity.get("name")
+                etype = entity.get("type")
+                desc = entity.get("description") or ""
+                if name and etype:
+                    self.graph.link_memory(item.id, etype, name, description=desc)
+
+        if relationships:
+            for rel in relationships:
+                from_name = rel.get("from_name")
+                from_type = rel.get("from_type")
+                edge = rel.get("edge")
+                to_name = rel.get("to_name")
+                to_type = rel.get("to_type")
+                if from_name and from_type and edge and to_name and to_type:
+                    try:
+                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                    except Exception as e:
+                        log.debug(
+                            "graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}}
+                        )
+
+        # 6. Link memory to Day entity in graph
+        self._link_day_entity(item.id, daily_ref)
+
+        op_extra(id=item.id)
+
+        # 7. Queue reinforcement check to daemon (async)
+        self._queue_reinforcement(item.id, summary)
+
+        # 6. Contradiction check is now agent-driven: the host Claude can
+        # call `recall` before memorize and decide for itself whether the
+        # new memory supersedes anything. The daemon stays LLM-free.
+        result: dict = {"id": item.id, "summary": item.summary}
+
+        # 7. Entity extraction is agent-driven too: callers should pass
+        # `entities` / `relationships` when they have them.
+
+        # 8. Update hot set if this memory qualifies
+        self._hot.add(item)
+
+        try:
+            self._metrics.record_ingest(
                 memory_type=memory_type,
                 importance=importance,
-                daily_ref=daily_ref,
-                source_event_id=source_event_id,
+                entity_count=len(entities or []),
+                deduped=False,
+                source="engine",
             )
+        except Exception:
+            pass
 
-            self.db.save_item(item)
-
-            # 4. Add to ChromaDB (with type metadata for future filtering)
-            self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
-
-            # 5. Link entities and relationships in KuzuDB
-            if entities:
-                for entity in entities:
-                    name = entity.get("name")
-                    etype = entity.get("type")
-                    desc = entity.get("description") or ""
-                    if name and etype:
-                        self.graph.link_memory(item.id, etype, name, description=desc)
-
-            if relationships:
-                for rel in relationships:
-                    from_name = rel.get("from_name")
-                    from_type = rel.get("from_type")
-                    edge = rel.get("edge")
-                    to_name = rel.get("to_name")
-                    to_type = rel.get("to_type")
-                    if from_name and from_type and edge and to_name and to_type:
-                        try:
-                            self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                        except Exception as e:
-                            log.debug(
-                                "graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}}
-                            )
-
-            # 6. Link memory to Day entity in graph
-            self._link_day_entity(item.id, daily_ref)
-
-            timer.extra["id"] = item.id
-
-            # 7. Queue reinforcement check to daemon (async)
-            self._queue_reinforcement(item.id, summary)
-
-            # 6. Contradiction check is now agent-driven: the host Claude can
-            # call `recall` before memorize and decide for itself whether the
-            # new memory supersedes anything. The daemon stays LLM-free.
-            result: dict = {"id": item.id, "summary": item.summary}
-
-            # 7. Entity extraction is agent-driven too: callers should pass
-            # `entities` / `relationships` when they have them.
-
-            # 8. Update hot set if this memory qualifies
-            self._hot.add(item)
-
-            try:
-                self._metrics.record_ingest(
-                    memory_type=memory_type,
-                    importance=importance,
-                    entity_count=len(entities or []),
-                    deduped=False,
-                    source="engine",
-                )
-            except Exception:
-                pass
-
-            return result
+        return result
 
     def _queue_reinforcement(self, memory_id: str, summary: str) -> None:
         """Fire-and-forget: notify daemon to check reinforcement asynchronously."""
@@ -342,6 +342,7 @@ class MemoryEngine:
     # recall_raw — Stage-1 only (PHI-40)
     # ------------------------------------------------------------------
 
+    @timed_op("recall_raw")
     def recall_raw(
         self,
         query: str,
@@ -366,43 +367,38 @@ class MemoryEngine:
 
         from phileas.engine_gather import gather_candidates_raw
 
-        with OpTimer(
-            log,
-            "recall_raw",
+        op_extra(query=query, memory_type=memory_type, min_importance=min_importance)
+        _t0 = perf_counter()
+        result = gather_candidates_raw(
+            db=self.db,
+            vector=self.vector,
+            graph=self.graph,
+            config=self.config,
             query=query,
             memory_type=memory_type,
             min_importance=min_importance,
-        ) as timer:
-            _t0 = perf_counter()
-            result = gather_candidates_raw(
-                db=self.db,
-                vector=self.vector,
-                graph=self.graph,
-                config=self.config,
-                query=query,
-                memory_type=memory_type,
-                min_importance=min_importance,
-            )
-            timer.extra["candidates"] = len(result)
-            _trace_recall(
-                self._metrics,
-                source="engine.recall_raw",
-                query=query,
-                latency_ms=(perf_counter() - _t0) * 1000,
-                result=result,
-                extra={
-                    "memory_type": memory_type,
-                    "min_importance": min_importance,
-                    "gather_sources": _gather_source_histogram(result),
-                    "hop_distribution": _hop_histogram(result),
-                },
-            )
-            return result
+        )
+        op_extra(candidates=len(result))
+        _trace_recall(
+            self._metrics,
+            source="engine.recall_raw",
+            query=query,
+            latency_ms=(perf_counter() - _t0) * 1000,
+            result=result,
+            extra={
+                "memory_type": memory_type,
+                "min_importance": min_importance,
+                "gather_sources": _gather_source_histogram(result),
+                "hop_distribution": _hop_histogram(result),
+            },
+        )
+        return result
 
     # ------------------------------------------------------------------
     # recall
     # ------------------------------------------------------------------
 
+    @timed_op("recall")
     def recall(
         self,
         query: str,
@@ -423,518 +419,516 @@ class MemoryEngine:
         _t0 = perf_counter()
         _effective_top_k = top_k if top_k is not None else 9999
 
-        with OpTimer(
-            log,
-            "recall",
+        op_extra(
             query=query,
             top_k=_effective_top_k,
             memory_type=memory_type,
             min_importance=min_importance,
-        ) as timer:
-            # Query rewriting (alternate phrasings, pronoun referent resolution)
-            # is the host agent's job — if it wants richer recall it calls this
-            # tool multiple times with rewritten queries. Daemon stays LLM-free.
-            referent_names: list[tuple[str, str]] = []
+        )
 
-            candidates: dict[str, MemoryItem] = {}  # id -> item
-            keyword_ids: set[str] = set()  # track keyword-matched candidates
-            graph_ids: set[str] = set()  # track graph-matched candidates
+        # Query rewriting (alternate phrasings, pronoun referent resolution)
+        # is the host agent's job — if it wants richer recall it calls this
+        # tool multiple times with rewritten queries. Daemon stays LLM-free.
+        referent_names: list[tuple[str, str]] = []
 
-            # ----------------------------------------------------------
-            # Stage 1: Gather candidates from multiple paths
-            # ----------------------------------------------------------
+        candidates: dict[str, MemoryItem] = {}  # id -> item
+        keyword_ids: set[str] = set()  # track keyword-matched candidates
+        graph_ids: set[str] = set()  # track graph-matched candidates
 
-            # Path 1: keyword search (SQLite)
-            filtered_q = strip_stopwords(query)
-            keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
-            for item in keyword_hits:
-                candidates[item.id] = item
-                keyword_ids.add(item.id)
+        # ----------------------------------------------------------
+        # Stage 1: Gather candidates from multiple paths
+        # ----------------------------------------------------------
 
-            # Path 2: semantic search (ChromaDB) — bucketed by type
-            search_types = [memory_type] if memory_type else _MEMORY_TYPES
+        # Path 1: keyword search (SQLite)
+        filtered_q = strip_stopwords(query)
+        keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
+        for item in keyword_hits:
+            candidates[item.id] = item
+            keyword_ids.add(item.id)
 
-            # Pre-cache type → active items (avoids repeated DB queries)
-            type_item_cache: dict[str, dict[str, MemoryItem]] = {}
-            all_type_ids: set[str] = set()
-            for mtype in search_types:
-                items = self.db.get_items_by_type(mtype)
-                active = {item.id: item for item in items if item.status == "active"}
-                type_item_cache[mtype] = active
-                all_type_ids.update(active.keys())
+        # Path 2: semantic search (ChromaDB) — bucketed by type
+        search_types = [memory_type] if memory_type else _MEMORY_TYPES
 
-            # Search vector once, filter client-side
-            if all_type_ids:
-                semantic_hits = self.vector.search(query, top_k=_effective_top_k * 3)
-                for mem_id, sim in semantic_hits:
-                    if sim < self.config.recall.similarity_floor:
-                        continue
-                    if mem_id in candidates:
-                        continue
-                    if mem_id not in all_type_ids:
-                        continue
-                    # Find the item from the type cache (no extra DB query)
-                    for mtype in search_types:
-                        if mem_id in type_item_cache[mtype]:
-                            candidates[mem_id] = type_item_cache[mtype][mem_id]
-                            break
+        # Pre-cache type → active items (avoids repeated DB queries)
+        type_item_cache: dict[str, dict[str, MemoryItem]] = {}
+        all_type_ids: set[str] = set()
+        for mtype in search_types:
+            items = self.db.get_items_by_type(mtype)
+            active = {item.id: item for item in items if item.status == "active"}
+            type_item_cache[mtype] = active
+            all_type_ids.update(active.keys())
 
-            # Path 3: graph search (KuzuDB) — word-based entity lookup
-            # Also follows entity↔entity edges to discover related entities.
-            # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
-            # plain query.split() leaves trailing "?" on the last token and
-            # breaks CONTAINS match against entity names/aliases.
-            # Stop words are filtered: short function words match too many entity
-            # names ("the" → "The School of Life", "us" → "USD removal") and
-            # flood the graph_ids pool with unrelated hop-0 false positives.
-            import re
-
-            words = [
-                w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in STOP_WORDS and len(w) >= 2
-            ]
-            seen_entities: set[tuple[str, str]] = set()
-
-            day_ids: set[str] = set()  # memories from matched Day entities
-            referent_ids: set[str] = set()  # memories from LLM-resolved referents
-            # Per-memory referent rank (1 = best pick); smaller is better.
-            referent_rank: dict[str, int] = {}
-            # Hop distance at which each memory first entered the candidate pool via graph:
-            #   0 = query word matched an entity name directly
-            #   1 = one step removed (entity-entity neighbour, or pivot from a hop-0 memory)
-            #   2+ = further expansions
-            # Lower hop → higher relevance floor in scoring.
-            candidate_hop: dict[str, int] = {}
-
-            def _add_memories_for_entity(
-                etype: str,
-                ename: str,
-                *,
-                hop: int = 0,
-                referent_rank_value: int | None = None,
-            ) -> None:
-                """Add memories linked to an entity to the candidates pool.
-
-                ``hop`` tracks graph distance from the query: 0 = entity matched
-                a query word directly, higher = further expansion. Lower hop
-                means a higher relevance floor in the scoring stage.
-
-                ``referent_rank_value`` tracks whether the source entity came
-                from the LLM referent-resolution step and at what rank. Smaller
-                rank = more confident. Used by scoring to keep the resolver's
-                ranking visible in the final top-K order.
-                """
-                if (ename, etype) in seen_entities:
-                    return
-                seen_entities.add((ename, etype))
-                try:
-                    memory_ids = self.graph.get_memories_about(etype, ename)
-                except Exception as e:
-                    log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
-                    return
-                for mem_id in memory_ids:
-                    graph_ids.add(mem_id)
-                    # Keep the closest (lowest) hop seen for this memory.
-                    if mem_id not in candidate_hop or hop < candidate_hop[mem_id]:
-                        candidate_hop[mem_id] = hop
-                    if etype == "Day":
-                        day_ids.add(mem_id)
-                    if referent_rank_value is not None:
-                        referent_ids.add(mem_id)
-                        # Keep the best (lowest) rank seen for this memory.
-                        existing = referent_rank.get(mem_id)
-                        if existing is None or referent_rank_value < existing:
-                            referent_rank[mem_id] = referent_rank_value
-                    if mem_id not in candidates:
-                        item = self.db.get_item(mem_id)
-                        if item:
-                            candidates[mem_id] = item
-
-            for word in words:
-                if len(word) < 2:
-                    continue
-                graph_nodes = self.graph.search_nodes(word)
-                for node in graph_nodes:
-                    entity_name = node.get("name")
-                    entity_type = node.get("type")
-                    if not entity_name or not entity_type:
-                        continue
-                    _add_memories_for_entity(entity_type, entity_name, hop=0)
-                    # Follow entity↔entity edges to discover related entities
-                    # Skip Day-typed neighbours: they fan out to a whole day's
-                    # memories and flood day_ids with unrelated results.
-                    try:
-                        related = self.graph.get_related_entities(entity_type, entity_name)
-                        for rel in related:
-                            if rel["type"] == "Day":
-                                continue
-                            _add_memories_for_entity(rel["type"], rel["name"], hop=1)
-                    except Exception as e:
-                        log.debug(
-                            "graph traversal failed",
-                            extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
-                        )
-
-            # Path 3b: Memory pivot — graph-first expansion.
-            # For each memory found via entity lookup, discover ALL its entities,
-            # then pull ALL memories of those entities. This is the key graph-first
-            # mechanism: "badminton" → Activity:badminton → memories about badminton
-            # → those memories' entities (Ownego, Giang Vo, ...) → all their memories.
-            # Catches non-obvious connections that query embeddings miss.
-            graph_pivot_snapshot = set(graph_ids)
-            for mem_id in list(graph_pivot_snapshot):
-                try:
-                    pivot_entities = self.graph.get_entities_for_memory(mem_id)
-                except Exception as e:
-                    log.debug(
-                        "graph pivot entity lookup failed",
-                        extra={"op": "recall", "data": {"mem_id": mem_id, "error": str(e)}},
-                    )
-                    continue
-                for entity in pivot_entities:
-                    ename = entity["name"]
-                    etype = entity["type"]
-                    if etype == "Day":
-                        continue  # Day entities fan out too broadly
-                    _add_memories_for_entity(etype, ename, hop=1)
-                    try:
-                        related = self.graph.get_related_entities(etype, ename)
-                        for rel in related:
-                            if rel["type"] == "Day":
-                                continue
-                            _add_memories_for_entity(rel["type"], rel["name"], hop=2)
-                    except Exception as e:
-                        log.debug(
-                            "graph pivot traversal failed",
-                            extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
-                        )
-
-            # Path 3c: LLM-proposed referents (pronoun / kinship resolution)
-            # Fires only when stage 0 flagged the query as ambiguous.
-            # Only the directly resolved entity gets the referent boost —
-            # neighbours traversed via REL edges ride the regular graph_boost,
-            # so e.g. resolving "chị" → phuongtq doesn't pull every coworker's
-            # unrelated memory to the top. Rank (1-indexed) comes from the
-            # LLM output order so the most-confident pick wins ties.
-            for idx, (etype, ename) in enumerate(referent_names, start=1):
-                _add_memories_for_entity(etype, ename, hop=0, referent_rank_value=idx)
-                try:
-                    related = self.graph.get_related_entities(etype, ename)
-                    for rel in related:
-                        _add_memories_for_entity(rel["type"], rel["name"], hop=1)
-                except Exception as e:
-                    log.debug(
-                        "referent traversal failed",
-                        extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
-                    )
-
-            # Path 4: semantic-to-graph bridge
-            # Use semantic hits to discover entities, then follow graph
-            # edges (including entity↔entity) to find connected memories.
-            # Skip Day entities: almost every memory is linked to one, and
-            # pulling in a whole day's memories via an incidental date link
-            # on a keyword candidate floods day_ids with unrelated results.
-            bridge_source_ids = list(candidates.keys())
-            for mem_id in bridge_source_ids:
-                entities = self.graph.get_entities_for_memory(mem_id)
-                for entity in entities:
-                    ename = entity["name"]
-                    etype = entity["type"]
-                    if etype == "Day":
-                        continue
-                    _add_memories_for_entity(etype, ename, hop=1)
-                    # Follow entity↔entity edges from bridge entities
-                    try:
-                        related = self.graph.get_related_entities(etype, ename)
-                        for rel in related:
-                            if rel["type"] == "Day":
-                                continue
-                            _add_memories_for_entity(rel["type"], rel["name"], hop=2)
-                    except Exception as e:
-                        log.debug(
-                            "graph bridge traversal failed",
-                            extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
-                        )
-
-            # Path 5: raw text search (verbatim conversation snippets)
-            # Searches the raw_memories ChromaDB collection — catches details
-            # lost during summarization (names, places, specific phrases).
-            raw_hits = self.vector.search_raw(query, top_k=_effective_top_k * 3)
-            for mem_id, sim in raw_hits:
+        # Search vector once, filter client-side
+        if all_type_ids:
+            semantic_hits = self.vector.search(query, top_k=_effective_top_k * 3)
+            for mem_id, sim in semantic_hits:
                 if sim < self.config.recall.similarity_floor:
                     continue
+                if mem_id in candidates:
+                    continue
+                if mem_id not in all_type_ids:
+                    continue
+                # Find the item from the type cache (no extra DB query)
+                for mtype in search_types:
+                    if mem_id in type_item_cache[mtype]:
+                        candidates[mem_id] = type_item_cache[mtype][mem_id]
+                        break
+
+        # Path 3: graph search (KuzuDB) — word-based entity lookup
+        # Also follows entity↔entity edges to discover related entities.
+        # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
+        # plain query.split() leaves trailing "?" on the last token and
+        # breaks CONTAINS match against entity names/aliases.
+        # Stop words are filtered: short function words match too many entity
+        # names ("the" → "The School of Life", "us" → "USD removal") and
+        # flood the graph_ids pool with unrelated hop-0 false positives.
+        import re
+
+        words = [w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in STOP_WORDS and len(w) >= 2]
+        seen_entities: set[tuple[str, str]] = set()
+
+        day_ids: set[str] = set()  # memories from matched Day entities
+        referent_ids: set[str] = set()  # memories from LLM-resolved referents
+        # Per-memory referent rank (1 = best pick); smaller is better.
+        referent_rank: dict[str, int] = {}
+        # Hop distance at which each memory first entered the candidate pool via graph:
+        #   0 = query word matched an entity name directly
+        #   1 = one step removed (entity-entity neighbour, or pivot from a hop-0 memory)
+        #   2+ = further expansions
+        # Lower hop → higher relevance floor in scoring.
+        candidate_hop: dict[str, int] = {}
+
+        def _add_memories_for_entity(
+            etype: str,
+            ename: str,
+            *,
+            hop: int = 0,
+            referent_rank_value: int | None = None,
+        ) -> None:
+            """Add memories linked to an entity to the candidates pool.
+
+            ``hop`` tracks graph distance from the query: 0 = entity matched
+            a query word directly, higher = further expansion. Lower hop
+            means a higher relevance floor in the scoring stage.
+
+            ``referent_rank_value`` tracks whether the source entity came
+            from the LLM referent-resolution step and at what rank. Smaller
+            rank = more confident. Used by scoring to keep the resolver's
+            ranking visible in the final top-K order.
+            """
+            if (ename, etype) in seen_entities:
+                return
+            seen_entities.add((ename, etype))
+            try:
+                memory_ids = self.graph.get_memories_about(etype, ename)
+            except Exception as e:
+                log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
+                return
+            for mem_id in memory_ids:
+                graph_ids.add(mem_id)
+                # Keep the closest (lowest) hop seen for this memory.
+                if mem_id not in candidate_hop or hop < candidate_hop[mem_id]:
+                    candidate_hop[mem_id] = hop
+                if etype == "Day":
+                    day_ids.add(mem_id)
+                if referent_rank_value is not None:
+                    referent_ids.add(mem_id)
+                    # Keep the best (lowest) rank seen for this memory.
+                    existing = referent_rank.get(mem_id)
+                    if existing is None or referent_rank_value < existing:
+                        referent_rank[mem_id] = referent_rank_value
                 if mem_id not in candidates:
                     item = self.db.get_item(mem_id)
                     if item:
                         candidates[mem_id] = item
 
-            # Path 6: event-text search → sibling-memory fanout.
-            # An event hit drags in every memory extracted from that event,
-            # tagged hop=1 (one structural step from the matching event).
-            # Verbatim event passages themselves are not memory rows, so they
-            # are not added to `candidates` here — the recall_raw path
-            # surfaces them as a separate event_hits list.
-            # Lower floor than memory search: long event chunks score lower
-            # under cosine than focused summaries. See engine_gather.py.
-            event_floor = min(0.25, self.config.recall.similarity_floor)
-            event_hits = self.vector.search_events(query, top_k=20)
-            for event_id, sim in event_hits:
-                if sim < event_floor:
+        for word in words:
+            if len(word) < 2:
+                continue
+            graph_nodes = self.graph.search_nodes(word)
+            for node in graph_nodes:
+                entity_name = node.get("name")
+                entity_type = node.get("type")
+                if not entity_name or not entity_type:
                     continue
-                for sibling in self.db.get_memories_for_event(event_id):
-                    if sibling.id not in candidates:
-                        candidates[sibling.id] = sibling
-                        candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
+                _add_memories_for_entity(entity_type, entity_name, hop=0)
+                # Follow entity↔entity edges to discover related entities
+                # Skip Day-typed neighbours: they fan out to a whole day's
+                # memories and flood day_ids with unrelated results.
+                try:
+                    related = self.graph.get_related_entities(entity_type, entity_name)
+                    for rel in related:
+                        if rel["type"] == "Day":
+                            continue
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=1)
+                except Exception as e:
+                    log.debug(
+                        "graph traversal failed",
+                        extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
+                    )
 
-            # Apply filters
-            filtered: dict[str, MemoryItem] = {}
-            for mem_id, item in candidates.items():
-                if item.status != "active":
-                    continue
-                if memory_type and item.memory_type != memory_type:
-                    continue
-                if min_importance is not None and item.importance < min_importance:
-                    continue
-                filtered[mem_id] = item
-
-            timer.extra["candidates"] = len(filtered)
-
-            if not filtered:
-                timer.extra["results"] = 0
-                return []
-
-            # ----------------------------------------------------------
-            # Stage 2: Hybrid relevance scoring
-            #
-            # Keyword hits use cosine similarity (embedding distance) as
-            # their relevance signal — the cross-encoder (MS MARCO) is
-            # trained for search-style queries and scores personal/
-            # emotional memories near zero, drowning them out.
-            # Non-keyword hits still go through cross-encoder reranking.
-            # ----------------------------------------------------------
-            from phileas.reranker import rerank
-
-            # Candidates validated by keyword match or graph traversal
-            # bypass cross-encoder — their relevance is structural
-            structurally_matched = keyword_ids | graph_ids
-
-            # Cosine similarity for structurally-matched candidates
-            cosine_hits = self.vector.search(query, top_k=_effective_top_k * 5)
-            cosine_map = {mid: sim for mid, sim in cosine_hits}
-
-            # Cross-encoder for candidates not already validated by
-            # keyword match or graph traversal
-            ce_candidates = [
-                (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
-            ]
-            if ce_candidates:
-                reranked = rerank(query, ce_candidates)
-                raw_ce = {mem_id: score for mem_id, score in reranked}
-                ce_scores = list(raw_ce.values())
-                min_score = min(ce_scores) if ce_scores else 0
-                max_score = max(ce_scores) if ce_scores else 1
-                score_range = max_score - min_score
-                if score_range > 0.01:
-                    norm_ce = {mid: (s - min_score) / score_range for mid, s in raw_ce.items()}
-                else:
-                    norm_ce = {mid: 0.5 for mid in raw_ce}
-            else:
-                norm_ce = {}
-
-            # Build unified relevance map
-            graph_boost = self.config.recall.graph_boost
-            relevance_map: dict[str, float] = {}
-            for mem_id in filtered:
-                cosine = cosine_map.get(mem_id, 0.0)
-                if mem_id in day_ids:
-                    # Day entity match is an exact structural constraint —
-                    # the memory happened on the queried date. High relevance.
-                    relevance_map[mem_id] = max(cosine, 0.85)
-                elif mem_id in referent_ids:
-                    # LLM reasoned about this referent specifically. Floor
-                    # deliberately above the 1.0 ceiling of min-max-normalised
-                    # cross-encoder scores — otherwise unrelated CE hits
-                    # routinely outrank the resolved person's memories on
-                    # normalisation artefacts alone.
-                    relevance_map[mem_id] = max(cosine, 0.95)
-                elif mem_id in keyword_ids:
-                    # Summary directly contains stop-word-filtered query terms.
-                    # This is the highest-confidence structural signal: the
-                    # memory's own text mentions what was asked about.
-                    # Give it a high floor so it beats pure graph expansions
-                    # that carry no query-term signal at all.
-                    relevance_map[mem_id] = max(cosine, 0.85)
-                elif mem_id in graph_ids:
-                    # Graph-expanded but no keyword match.
-                    # hop=0: query word matched an entity name (moderate floor).
-                    # hop>=1: farther expansion — rely on cosine similarity so
-                    # unrelated high-importance memories don't float to the top
-                    # just because the graph connected them three hops away.
-                    hop = candidate_hop.get(mem_id, 2)
-                    if hop == 0:
-                        relevance_map[mem_id] = max(cosine, graph_boost)
-                    else:
-                        relevance_map[mem_id] = cosine
-                else:
-                    relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
-
-            # Post-rerank filter: only apply relevance_floor to
-            # cross-encoder scored items (structural hits already passed
-            # keyword matching or graph traversal, so they earned their place)
-            for mem_id in list(filtered.keys()):
-                if mem_id not in structurally_matched:
-                    if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
-                        del filtered[mem_id]
-
-            if not filtered:
-                timer.extra["results"] = 0
-                return []
-
-            # ----------------------------------------------------------
-            # Stage 3: MMR diversity selection + final scoring
-            # ----------------------------------------------------------
-
-            # Build similarity matrix from embeddings for MMR.
-            #
-            # Vectorized with numpy: pure-Python pairwise cosine over
-            # 500+ candidates × 384 dims is the dominant recall cost
-            # (~10s on CPU). Numpy does the same in ~10ms.
-            candidate_ids = list(filtered.keys())
-            embeddings = self.vector.get_embeddings(candidate_ids)
-
-            sim_matrix: dict[str, dict[str, float]] = {cid: {} for cid in candidate_ids}
-            valid_ids = [cid for cid in candidate_ids if cid in embeddings]
-            if valid_ids:
-                import numpy as np
-
-                emb_matrix = np.asarray([embeddings[cid] for cid in valid_ids], dtype=np.float64)
-                norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
-                norms[norms == 0.0] = 1.0
-                normalized = emb_matrix / norms
-                sim_full = normalized @ normalized.T
-
-                for i, id_a in enumerate(valid_ids):
-                    row = sim_matrix[id_a]
-                    sim_row = sim_full[i]
-                    for j, id_b in enumerate(valid_ids):
-                        row[id_b] = float(sim_row[j])
-                    row[id_a] = 1.0  # exact self-similarity
-
-            # Candidates without embeddings: zero similarity to everyone,
-            # diagonal stays 1.0 so MMR still treats them as "self".
-            for cid in candidate_ids:
-                if cid not in embeddings:
-                    sim_matrix[cid][cid] = 1.0
-                    for other in candidate_ids:
-                        if other != cid and other not in sim_matrix[cid]:
-                            sim_matrix[cid][other] = 0.0
-
-            # Build MMR candidates with relevance scores
-            mmr_candidates = [{"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)} for mem_id in candidate_ids]
-
-            # When top_k is None (graph-first / no cap mode), skip MMR and return
-            # all filtered candidates. MMR is a diversity-selection tool designed
-            # for a fixed-size result set — without a cap it would just return
-            # everything anyway, so skip the O(n²) matrix work.
-            if top_k is None:
-                selected = mmr_candidates
-            else:
-                selected = mmr_select(
-                    mmr_candidates,
-                    sim_matrix,
-                    top_k=top_k,
-                    lambda_param=self.config.recall.mmr_lambda,
-                )
-
-            # ----------------------------------------------------------
-            # Final scoring with importance/recency as tiebreakers
-            results = []
-            for sel in selected:
-                item = filtered[sel["id"]]
-                relevance = sel["relevance"]
-                days = _days_since(item.last_accessed, fallback=item.created_at)
-                score = compute_score(
-                    relevance,
-                    item.importance,
-                    days,
-                    item.access_count,
-                    item.reinforcement_count,
-                    relevance_weight=self.config.scoring.relevance_weight,
-                    importance_weight=self.config.scoring.importance_weight,
-                    recency_weight=self.config.scoring.recency_weight,
-                    access_weight=self.config.scoring.access_weight,
-                    reinforcement_weight=self.config.scoring.reinforcement_weight,
-                    base_decay=self.config.reinforcement.base_decay,
-                    decay_halving=self.config.reinforcement.decay_halving,
-                    halving_interval=self.config.reinforcement.halving_interval,
-                    min_decay=self.config.reinforcement.min_decay,
-                )
-                results.append(_item_to_dict(item, score))
-
-            # Referent-resolved memories rank first regardless of the
-            # compute_score blend. Otherwise importance/reinforcement on
-            # unrelated semantic hits routinely outweighs the referent
-            # floor, burying the exact memory the LLM just identified.
-            # Within the referent block, the resolver's rank leads (rank 1
-            # = most-confident pick), then compute_score breaks ties.
-            def _sort_key(r: dict) -> tuple:
-                mem_id = r["id"]
-                rank = referent_rank.get(mem_id)
-                # (group: 0 = referent / 1 = other, referent_rank or inf, -score)
-                # All default-ascending; Python's stable sort preserves MMR
-                # ordering within ties.
-                return (
-                    0 if mem_id in referent_ids else 1,
-                    rank if rank is not None else float("inf"),
-                    -r["score"],
-                )
-
-            results.sort(key=_sort_key)
-
-            # Bump access counts
-            for r in results:
-                self.db.bump_access(r["id"])
-
-            timer.extra["results"] = len(results)
-            if results:
-                timer.extra["top_score"] = round(results[0]["score"], 3)
-
-            _elapsed_ms = (perf_counter() - _t0) * 1000
+        # Path 3b: Memory pivot — graph-first expansion.
+        # For each memory found via entity lookup, discover ALL its entities,
+        # then pull ALL memories of those entities. This is the key graph-first
+        # mechanism: "badminton" → Activity:badminton → memories about badminton
+        # → those memories' entities (Ownego, Giang Vo, ...) → all their memories.
+        # Catches non-obvious connections that query embeddings miss.
+        graph_pivot_snapshot = set(graph_ids)
+        for mem_id in list(graph_pivot_snapshot):
             try:
-                top1 = results[0]["score"] if results else None
-                mean = sum(r.get("score", 0.0) for r in results) / len(results) if results else None
-                self._metrics.record_recall(
-                    query_len=len(query),
-                    top_k=_effective_top_k,
-                    returned=len(results),
-                    top1_score=top1,
-                    mean_score=mean,
-                    empty=not results,
-                    hot_hit=False,
-                    latency_ms=_elapsed_ms,
+                pivot_entities = self.graph.get_entities_for_memory(mem_id)
+            except Exception as e:
+                log.debug(
+                    "graph pivot entity lookup failed",
+                    extra={"op": "recall", "data": {"mem_id": mem_id, "error": str(e)}},
                 )
-            except Exception:
-                pass
+                continue
+            for entity in pivot_entities:
+                ename = entity["name"]
+                etype = entity["type"]
+                if etype == "Day":
+                    continue  # Day entities fan out too broadly
+                _add_memories_for_entity(etype, ename, hop=1)
+                try:
+                    related = self.graph.get_related_entities(etype, ename)
+                    for rel in related:
+                        if rel["type"] == "Day":
+                            continue
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=2)
+                except Exception as e:
+                    log.debug(
+                        "graph pivot traversal failed",
+                        extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
+                    )
 
-            _trace_recall(
-                self._metrics,
-                source="engine.recall",
-                query=query,
-                latency_ms=_elapsed_ms,
-                result=results,
-                extra={
-                    "top_k": _effective_top_k,
-                    "memory_type": memory_type,
-                    "min_importance": min_importance,
-                    "top_score": round(results[0]["score"], 3) if results else None,
-                },
+        # Path 3c: LLM-proposed referents (pronoun / kinship resolution)
+        # Fires only when stage 0 flagged the query as ambiguous.
+        # Only the directly resolved entity gets the referent boost —
+        # neighbours traversed via REL edges ride the regular graph_boost,
+        # so e.g. resolving "chị" → phuongtq doesn't pull every coworker's
+        # unrelated memory to the top. Rank (1-indexed) comes from the
+        # LLM output order so the most-confident pick wins ties.
+        for idx, (etype, ename) in enumerate(referent_names, start=1):
+            _add_memories_for_entity(etype, ename, hop=0, referent_rank_value=idx)
+            try:
+                related = self.graph.get_related_entities(etype, ename)
+                for rel in related:
+                    _add_memories_for_entity(rel["type"], rel["name"], hop=1)
+            except Exception as e:
+                log.debug(
+                    "referent traversal failed",
+                    extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
+                )
+
+        # Path 4: semantic-to-graph bridge
+        # Use semantic hits to discover entities, then follow graph
+        # edges (including entity↔entity) to find connected memories.
+        # Skip Day entities: almost every memory is linked to one, and
+        # pulling in a whole day's memories via an incidental date link
+        # on a keyword candidate floods day_ids with unrelated results.
+        bridge_source_ids = list(candidates.keys())
+        for mem_id in bridge_source_ids:
+            entities = self.graph.get_entities_for_memory(mem_id)
+            for entity in entities:
+                ename = entity["name"]
+                etype = entity["type"]
+                if etype == "Day":
+                    continue
+                _add_memories_for_entity(etype, ename, hop=1)
+                # Follow entity↔entity edges from bridge entities
+                try:
+                    related = self.graph.get_related_entities(etype, ename)
+                    for rel in related:
+                        if rel["type"] == "Day":
+                            continue
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=2)
+                except Exception as e:
+                    log.debug(
+                        "graph bridge traversal failed",
+                        extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
+                    )
+
+        # Path 5: raw text search (verbatim conversation snippets)
+        # Searches the raw_memories ChromaDB collection — catches details
+        # lost during summarization (names, places, specific phrases).
+        raw_hits = self.vector.search_raw(query, top_k=_effective_top_k * 3)
+        for mem_id, sim in raw_hits:
+            if sim < self.config.recall.similarity_floor:
+                continue
+            if mem_id not in candidates:
+                item = self.db.get_item(mem_id)
+                if item:
+                    candidates[mem_id] = item
+
+        # Path 6: event-text search → sibling-memory fanout.
+        # An event hit drags in every memory extracted from that event,
+        # tagged hop=1 (one structural step from the matching event).
+        # Verbatim event passages themselves are not memory rows, so they
+        # are not added to `candidates` here — the recall_raw path
+        # surfaces them as a separate event_hits list.
+        # Lower floor than memory search: long event chunks score lower
+        # under cosine than focused summaries. See engine_gather.py.
+        event_floor = min(0.25, self.config.recall.similarity_floor)
+        event_hits = self.vector.search_events(query, top_k=20)
+        for event_id, sim in event_hits:
+            if sim < event_floor:
+                continue
+            for sibling in self.db.get_memories_for_event(event_id):
+                if sibling.id not in candidates:
+                    candidates[sibling.id] = sibling
+                    candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
+
+        # Apply filters
+        filtered: dict[str, MemoryItem] = {}
+        for mem_id, item in candidates.items():
+            if item.status != "active":
+                continue
+            if memory_type and item.memory_type != memory_type:
+                continue
+            if min_importance is not None and item.importance < min_importance:
+                continue
+            filtered[mem_id] = item
+
+        op_extra(candidates=len(filtered))
+
+        if not filtered:
+            op_extra(results=0)
+            return []
+
+        # ----------------------------------------------------------
+        # Stage 2: Hybrid relevance scoring
+        #
+        # Keyword hits use cosine similarity (embedding distance) as
+        # their relevance signal — the cross-encoder (MS MARCO) is
+        # trained for search-style queries and scores personal/
+        # emotional memories near zero, drowning them out.
+        # Non-keyword hits still go through cross-encoder reranking.
+        # ----------------------------------------------------------
+        from phileas.reranker import rerank
+
+        # Candidates validated by keyword match or graph traversal
+        # bypass cross-encoder — their relevance is structural
+        structurally_matched = keyword_ids | graph_ids
+
+        # Cosine similarity for structurally-matched candidates
+        cosine_hits = self.vector.search(query, top_k=_effective_top_k * 5)
+        cosine_map = {mid: sim for mid, sim in cosine_hits}
+
+        # Cross-encoder for candidates not already validated by
+        # keyword match or graph traversal
+        ce_candidates = [
+            (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
+        ]
+        if ce_candidates:
+            reranked = rerank(query, ce_candidates)
+            raw_ce = {mem_id: score for mem_id, score in reranked}
+            ce_scores = list(raw_ce.values())
+            min_score = min(ce_scores) if ce_scores else 0
+            max_score = max(ce_scores) if ce_scores else 1
+            score_range = max_score - min_score
+            if score_range > 0.01:
+                norm_ce = {mid: (s - min_score) / score_range for mid, s in raw_ce.items()}
+            else:
+                norm_ce = {mid: 0.5 for mid in raw_ce}
+        else:
+            norm_ce = {}
+
+        # Build unified relevance map
+        graph_boost = self.config.recall.graph_boost
+        relevance_map: dict[str, float] = {}
+        for mem_id in filtered:
+            cosine = cosine_map.get(mem_id, 0.0)
+            if mem_id in day_ids:
+                # Day entity match is an exact structural constraint —
+                # the memory happened on the queried date. High relevance.
+                relevance_map[mem_id] = max(cosine, 0.85)
+            elif mem_id in referent_ids:
+                # LLM reasoned about this referent specifically. Floor
+                # deliberately above the 1.0 ceiling of min-max-normalised
+                # cross-encoder scores — otherwise unrelated CE hits
+                # routinely outrank the resolved person's memories on
+                # normalisation artefacts alone.
+                relevance_map[mem_id] = max(cosine, 0.95)
+            elif mem_id in keyword_ids:
+                # Summary directly contains stop-word-filtered query terms.
+                # This is the highest-confidence structural signal: the
+                # memory's own text mentions what was asked about.
+                # Give it a high floor so it beats pure graph expansions
+                # that carry no query-term signal at all.
+                relevance_map[mem_id] = max(cosine, 0.85)
+            elif mem_id in graph_ids:
+                # Graph-expanded but no keyword match.
+                # hop=0: query word matched an entity name (moderate floor).
+                # hop>=1: farther expansion — rely on cosine similarity so
+                # unrelated high-importance memories don't float to the top
+                # just because the graph connected them three hops away.
+                hop = candidate_hop.get(mem_id, 2)
+                if hop == 0:
+                    relevance_map[mem_id] = max(cosine, graph_boost)
+                else:
+                    relevance_map[mem_id] = cosine
+            else:
+                relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
+
+        # Post-rerank filter: only apply relevance_floor to
+        # cross-encoder scored items (structural hits already passed
+        # keyword matching or graph traversal, so they earned their place)
+        for mem_id in list(filtered.keys()):
+            if mem_id not in structurally_matched:
+                if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
+                    del filtered[mem_id]
+
+        if not filtered:
+            op_extra(results=0)
+            return []
+
+        # ----------------------------------------------------------
+        # Stage 3: MMR diversity selection + final scoring
+        # ----------------------------------------------------------
+
+        # Build similarity matrix from embeddings for MMR.
+        #
+        # Vectorized with numpy: pure-Python pairwise cosine over
+        # 500+ candidates × 384 dims is the dominant recall cost
+        # (~10s on CPU). Numpy does the same in ~10ms.
+        candidate_ids = list(filtered.keys())
+        embeddings = self.vector.get_embeddings(candidate_ids)
+
+        sim_matrix: dict[str, dict[str, float]] = {cid: {} for cid in candidate_ids}
+        valid_ids = [cid for cid in candidate_ids if cid in embeddings]
+        if valid_ids:
+            import numpy as np
+
+            emb_matrix = np.asarray([embeddings[cid] for cid in valid_ids], dtype=np.float64)
+            norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+            norms[norms == 0.0] = 1.0
+            normalized = emb_matrix / norms
+            sim_full = normalized @ normalized.T
+
+            for i, id_a in enumerate(valid_ids):
+                row = sim_matrix[id_a]
+                sim_row = sim_full[i]
+                for j, id_b in enumerate(valid_ids):
+                    row[id_b] = float(sim_row[j])
+                row[id_a] = 1.0  # exact self-similarity
+
+        # Candidates without embeddings: zero similarity to everyone,
+        # diagonal stays 1.0 so MMR still treats them as "self".
+        for cid in candidate_ids:
+            if cid not in embeddings:
+                sim_matrix[cid][cid] = 1.0
+                for other in candidate_ids:
+                    if other != cid and other not in sim_matrix[cid]:
+                        sim_matrix[cid][other] = 0.0
+
+        # Build MMR candidates with relevance scores
+        mmr_candidates = [{"id": mem_id, "relevance": relevance_map.get(mem_id, 0.0)} for mem_id in candidate_ids]
+
+        # When top_k is None (graph-first / no cap mode), skip MMR and return
+        # all filtered candidates. MMR is a diversity-selection tool designed
+        # for a fixed-size result set — without a cap it would just return
+        # everything anyway, so skip the O(n²) matrix work.
+        if top_k is None:
+            selected = mmr_candidates
+        else:
+            selected = mmr_select(
+                mmr_candidates,
+                sim_matrix,
+                top_k=top_k,
+                lambda_param=self.config.recall.mmr_lambda,
             )
 
-            return results
+        # ----------------------------------------------------------
+        # Final scoring with importance/recency as tiebreakers
+        results = []
+        for sel in selected:
+            item = filtered[sel["id"]]
+            relevance = sel["relevance"]
+            days = _days_since(item.last_accessed, fallback=item.created_at)
+            score = compute_score(
+                relevance,
+                item.importance,
+                days,
+                item.access_count,
+                item.reinforcement_count,
+                relevance_weight=self.config.scoring.relevance_weight,
+                importance_weight=self.config.scoring.importance_weight,
+                recency_weight=self.config.scoring.recency_weight,
+                access_weight=self.config.scoring.access_weight,
+                reinforcement_weight=self.config.scoring.reinforcement_weight,
+                base_decay=self.config.reinforcement.base_decay,
+                decay_halving=self.config.reinforcement.decay_halving,
+                halving_interval=self.config.reinforcement.halving_interval,
+                min_decay=self.config.reinforcement.min_decay,
+            )
+            results.append(_item_to_dict(item, score))
+
+        # Referent-resolved memories rank first regardless of the
+        # compute_score blend. Otherwise importance/reinforcement on
+        # unrelated semantic hits routinely outweighs the referent
+        # floor, burying the exact memory the LLM just identified.
+        # Within the referent block, the resolver's rank leads (rank 1
+        # = most-confident pick), then compute_score breaks ties.
+        def _sort_key(r: dict) -> tuple:
+            mem_id = r["id"]
+            rank = referent_rank.get(mem_id)
+            # (group: 0 = referent / 1 = other, referent_rank or inf, -score)
+            # All default-ascending; Python's stable sort preserves MMR
+            # ordering within ties.
+            return (
+                0 if mem_id in referent_ids else 1,
+                rank if rank is not None else float("inf"),
+                -r["score"],
+            )
+
+        results.sort(key=_sort_key)
+
+        # Bump access counts
+        for r in results:
+            self.db.bump_access(r["id"])
+
+        op_extra(results=len(results))
+        if results:
+            op_extra(top_score=round(results[0]["score"], 3))
+
+        _elapsed_ms = (perf_counter() - _t0) * 1000
+        try:
+            top1 = results[0]["score"] if results else None
+            mean = sum(r.get("score", 0.0) for r in results) / len(results) if results else None
+            self._metrics.record_recall(
+                query_len=len(query),
+                top_k=_effective_top_k,
+                returned=len(results),
+                top1_score=top1,
+                mean_score=mean,
+                empty=not results,
+                hot_hit=False,
+                latency_ms=_elapsed_ms,
+            )
+        except Exception:
+            pass
+
+        _trace_recall(
+            self._metrics,
+            source="engine.recall",
+            query=query,
+            latency_ms=_elapsed_ms,
+            result=results,
+            extra={
+                "top_k": _effective_top_k,
+                "memory_type": memory_type,
+                "min_importance": min_importance,
+                "top_score": round(results[0]["score"], 3) if results else None,
+            },
+        )
+
+        return results
 
     # ------------------------------------------------------------------
     # update
     # ------------------------------------------------------------------
 
+    @timed_op("update")
     def update(
         self,
         memory_id: str,
@@ -948,110 +942,109 @@ class MemoryEngine:
         If entities/relationships are provided, links them in the graph.
         Preserves created_at and daily_ref.
         """
-        with OpTimer(
-            log,
-            "update",
+        op_extra(
             memory_id=memory_id,
             entity_count=len(entities or []),
             relationship_count=len(relationships or []),
-        ) as timer:
-            item = self.db.get_item(memory_id)
-            if not item:
-                return {"error": f"Memory {memory_id} not found."}
-            if item.status != "active":
-                return {"error": f"Memory {memory_id} is not active (status={item.status})."}
+        )
 
-            snapshot_id = None
-            if summary and summary != item.summary:
-                # 1. Snapshot old version as archived copy
-                snapshot_id = self.db.snapshot_item(item)
+        item = self.db.get_item(memory_id)
+        if not item:
+            return {"error": f"Memory {memory_id} not found."}
+        if item.status != "active":
+            return {"error": f"Memory {memory_id} is not active (status={item.status})."}
 
-                # 2. Update active memory in place
-                self.db.update_item(memory_id, summary)
+        snapshot_id = None
+        if summary and summary != item.summary:
+            # 1. Snapshot old version as archived copy
+            snapshot_id = self.db.snapshot_item(item)
 
-                # 3. Re-embed in ChromaDB
-                try:
-                    self.vector.delete(memory_id)
-                except Exception as e:
-                    log.debug(
-                        "vector delete failed during update",
-                        extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
-                    )
-                self.vector.add(memory_id, summary)
+            # 2. Update active memory in place
+            self.db.update_item(memory_id, summary)
 
-                # 4. Link active → snapshot via SUPERSEDES in graph
-                try:
-                    self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
-                except Exception as e:
-                    log.debug(
-                        "graph SUPERSEDES link failed",
-                        extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
-                    )
+            # 3. Re-embed in ChromaDB
+            try:
+                self.vector.delete(memory_id)
+            except Exception as e:
+                log.debug(
+                    "vector delete failed during update",
+                    extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
+                )
+            self.vector.add(memory_id, summary)
 
-            # 5. Link entities and relationships in graph
-            if entities:
-                for entity in entities:
-                    name = entity.get("name")
-                    etype = entity.get("type")
-                    desc = entity.get("description") or ""
-                    if name and etype:
-                        self.graph.link_memory(memory_id, etype, name, description=desc)
+            # 4. Link active → snapshot via SUPERSEDES in graph
+            try:
+                self.graph.link_memory_to_memory(memory_id, "SUPERSEDES", snapshot_id)
+            except Exception as e:
+                log.debug(
+                    "graph SUPERSEDES link failed",
+                    extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
+                )
 
-            if relationships:
-                for rel in relationships:
-                    from_name = rel.get("from_name")
-                    from_type = rel.get("from_type")
-                    edge = rel.get("edge")
-                    to_name = rel.get("to_name")
-                    to_type = rel.get("to_type")
-                    if from_name and from_type and edge and to_name and to_type:
-                        try:
-                            self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
-                        except Exception as e:
-                            log.debug(
-                                "graph edge failed", extra={"op": "update", "data": {"edge": edge, "error": str(e)}}
-                            )
+        # 5. Link entities and relationships in graph
+        if entities:
+            for entity in entities:
+                name = entity.get("name")
+                etype = entity.get("type")
+                desc = entity.get("description") or ""
+                if name and etype:
+                    self.graph.link_memory(memory_id, etype, name, description=desc)
 
-            timer.extra["snapshot_id"] = snapshot_id
+        if relationships:
+            for rel in relationships:
+                from_name = rel.get("from_name")
+                from_type = rel.get("from_type")
+                edge = rel.get("edge")
+                to_name = rel.get("to_name")
+                to_type = rel.get("to_type")
+                if from_name and from_type and edge and to_name and to_type:
+                    try:
+                        self.graph.create_edge(from_type, from_name, edge, to_type, to_name)
+                    except Exception as e:
+                        log.debug("graph edge failed", extra={"op": "update", "data": {"edge": edge, "error": str(e)}})
 
-            # Refresh hot set entry (may add, update, or remove)
-            updated_item = self.db.get_item(memory_id)
-            if updated_item:
-                self._hot.refresh_item(updated_item)
+        op_extra(snapshot_id=snapshot_id)
 
-            return {
-                "id": memory_id,
-                "snapshot_id": snapshot_id,
-                "summary": (summary or item.summary),
-            }
+        # Refresh hot set entry (may add, update, or remove)
+        updated_item = self.db.get_item(memory_id)
+        if updated_item:
+            self._hot.refresh_item(updated_item)
+
+        return {
+            "id": memory_id,
+            "snapshot_id": snapshot_id,
+            "summary": (summary or item.summary),
+        }
 
     # ------------------------------------------------------------------
     # forget
     # ------------------------------------------------------------------
 
+    @timed_op("forget")
     def forget(self, memory_id: str, reason: str | None = None) -> str:
         """Archive a memory in SQLite and delete it from ChromaDB."""
-        with OpTimer(log, "forget", memory_id=memory_id, reason=reason):
-            self.db.archive_item(memory_id, reason)
-            try:
-                self.vector.delete(memory_id)
-            except Exception as e:
-                log.debug(
-                    "vector delete failed during forget",
-                    extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}},
-                )
-            try:
-                self.vector.delete_raw(memory_id)
-            except Exception:
-                pass  # Raw text may not exist for this memory
+        op_extra(memory_id=memory_id, reason=reason)
+        self.db.archive_item(memory_id, reason)
+        try:
+            self.vector.delete(memory_id)
+        except Exception as e:
+            log.debug(
+                "vector delete failed during forget",
+                extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}},
+            )
+        try:
+            self.vector.delete_raw(memory_id)
+        except Exception:
+            pass  # Raw text may not exist for this memory
 
-            self._hot.remove(memory_id)
+        self._hot.remove(memory_id)
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------
     # relate
     # ------------------------------------------------------------------
 
+    @timed_op("relate")
     def relate(
         self,
         from_name: str,
@@ -1062,20 +1055,17 @@ class MemoryEngine:
         memory_id: str | None = None,
     ) -> str:
         """Create an edge in the graph, optionally linking a memory."""
-        with OpTimer(
-            log,
-            "relate",
-            edge=f"{from_name}({from_type})-[{edge_type}]->{to_name}({to_type})",
-        ):
-            self.graph.create_edge(from_type, from_name, edge_type, to_type, to_name)
-            if memory_id:
-                self.graph.link_memory(memory_id, from_type, from_name)
+        op_extra(edge=f"{from_name}({from_type})-[{edge_type}]->{to_name}({to_type})")
+        self.graph.create_edge(from_type, from_name, edge_type, to_type, to_name)
+        if memory_id:
+            self.graph.link_memory(memory_id, from_type, from_name)
         return f"Edge {from_name} -[{edge_type}]-> {to_name} created."
 
     # ------------------------------------------------------------------
     # about
     # ------------------------------------------------------------------
 
+    @timed_op("about")
     def about(
         self,
         name: str,
@@ -1100,65 +1090,67 @@ class MemoryEngine:
         if memory_type is not None:
             type_filter = {memory_type} if isinstance(memory_type, str) else set(memory_type)
 
-        with OpTimer(log, "about", entity=name, entity_type=entity_type) as timer:
-            timer.extra["expand"] = expand
-            timer.extra["memory_type_filter"] = sorted(type_filter) if type_filter else None
-            # Search graph for the entity
-            node_hits = self.graph.search_nodes(name)
-            if entity_type:
-                node_hits = [n for n in node_hits if n.get("type") == entity_type]
+        op_extra(
+            entity=name,
+            entity_type=entity_type,
+            expand=expand,
+            memory_type_filter=sorted(type_filter) if type_filter else None,
+        )
 
-            items: list[MemoryItem] = []
-            seen_ids: set[str] = set()
-            seen_entities: set[tuple[str, str]] = set()
+        # Search graph for the entity
+        node_hits = self.graph.search_nodes(name)
+        if entity_type:
+            node_hits = [n for n in node_hits if n.get("type") == entity_type]
 
-            def _collect_memories(etype: str, ename: str) -> None:
-                if (ename, etype) in seen_entities:
-                    return
-                seen_entities.add((ename, etype))
-                try:
-                    memory_ids = self.graph.get_memories_about(etype, ename)
-                except Exception as e:
-                    log.debug("graph lookup failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}})
-                    return
-                for mem_id in memory_ids:
-                    if mem_id in seen_ids:
-                        continue
-                    seen_ids.add(mem_id)
-                    item = self.db.get_item(mem_id)
-                    if item and item.status == "active":
-                        items.append(item)
+        items: list[MemoryItem] = []
+        seen_ids: set[str] = set()
+        seen_entities: set[tuple[str, str]] = set()
 
-            for node in node_hits:
-                etype = node.get("type")
-                ename = node.get("name")
-                if not etype or not ename:
+        def _collect_memories(etype: str, ename: str) -> None:
+            if (ename, etype) in seen_entities:
+                return
+            seen_entities.add((ename, etype))
+            try:
+                memory_ids = self.graph.get_memories_about(etype, ename)
+            except Exception as e:
+                log.debug("graph lookup failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}})
+                return
+            for mem_id in memory_ids:
+                if mem_id in seen_ids:
                     continue
-                _collect_memories(etype, ename)
-                if not expand:
-                    continue
-                # Follow entity↔entity edges
-                try:
-                    related = self.graph.get_related_entities(etype, ename)
-                    for rel in related:
-                        _collect_memories(rel["type"], rel["name"])
-                except Exception as e:
-                    log.debug(
-                        "graph traversal failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}}
-                    )
+                seen_ids.add(mem_id)
+                item = self.db.get_item(mem_id)
+                if item and item.status == "active":
+                    items.append(item)
 
-            if type_filter is not None:
-                items = [it for it in items if it.memory_type in type_filter]
+        for node in node_hits:
+            etype = node.get("type")
+            ename = node.get("name")
+            if not etype or not ename:
+                continue
+            _collect_memories(etype, ename)
+            if not expand:
+                continue
+            # Follow entity↔entity edges
+            try:
+                related = self.graph.get_related_entities(etype, ename)
+                for rel in related:
+                    _collect_memories(rel["type"], rel["name"])
+            except Exception as e:
+                log.debug("graph traversal failed", extra={"op": "about", "data": {"entity": ename, "error": str(e)}})
 
-            items.sort(
-                key=lambda it: (
-                    -it.importance,
-                    -(it.updated_at.timestamp() if it.updated_at else 0),
-                )
+        if type_filter is not None:
+            items = [it for it in items if it.memory_type in type_filter]
+
+        items.sort(
+            key=lambda it: (
+                -it.importance,
+                -(it.updated_at.timestamp() if it.updated_at else 0),
             )
-            results = [_item_to_dict(it) for it in items]
-            timer.extra["results"] = len(results)
-            return results
+        )
+        results = [_item_to_dict(it) for it in items]
+        op_extra(results=len(results))
+        return results
 
     # ------------------------------------------------------------------
     # timeline
@@ -1247,6 +1239,7 @@ class MemoryEngine:
     # reflect
     # ------------------------------------------------------------------
 
+    @timed_op("reflect")
     def reflect(self, target_date: str | None = None) -> list[dict]:
         """Deprecated: daemon-side LLM reflection was removed.
 
@@ -1257,14 +1250,14 @@ class MemoryEngine:
         it returns [] immediately.
         """
         target_date = target_date or date.today().isoformat()
-        with OpTimer(log, "reflect", date=target_date) as timer:
-            timer.extra["skipped"] = "agent_driven"
-            return []
+        op_extra(date=target_date, skipped="agent_driven")
+        return []
 
     # ------------------------------------------------------------------
     # infer_graph
     # ------------------------------------------------------------------
 
+    @timed_op("infer_graph")
     def infer_graph(self) -> dict:
         """Run two-pass inference on recent memories.
 
@@ -1282,9 +1275,8 @@ class MemoryEngine:
         # memories and writes derived facts / entity updates via memorize()
         # and relate(). This stub keeps the systemd timer callable without
         # a crash.
-        with OpTimer(log, "infer_graph") as timer:
-            timer.extra["skipped"] = "agent_driven"
-            return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
+        op_extra(skipped="agent_driven")
+        return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
 
     # ------------------------------------------------------------------
     # status
