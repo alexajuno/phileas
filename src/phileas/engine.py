@@ -12,21 +12,22 @@ from __future__ import annotations
 
 import threading
 from datetime import date, datetime, timezone
+from typing import cast, get_args
 
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.hot import HotMemorySet
 from phileas.logging import get_logger, op_extra, timed_op
-from phileas.models import MemoryItem
+from phileas.models import MemoryItem, MemoryType
 from phileas.scoring import compute_score, mmr_select
 from phileas.stopwords import STOP_WORDS, strip_stopwords
 from phileas.vector import VectorStore
 
 log = get_logger()
 
-# Memory types for bucketed retrieval
-_MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
+# Memory types for bucketed retrieval — single-sourced from the Literal alias
+_MEMORY_TYPES: list[str] = list(get_args(MemoryType))
 
 
 def _day_aliases(iso_date: str) -> list[str]:
@@ -249,9 +250,11 @@ class MemoryEngine:
             importance = 5
 
         # 3. Create and persist MemoryItem (summary only — raw lives in events)
+        # `memory_type` is `str` at the public boundary (MCP/CLI/daemon callers
+        # pass arbitrary strings); narrow to `MemoryType` for the dataclass.
         item = MemoryItem(
             summary=summary,
-            memory_type=memory_type,
+            memory_type=cast(MemoryType, memory_type),
             importance=importance,
             daily_ref=daily_ref,
             source_event_id=source_event_id,
