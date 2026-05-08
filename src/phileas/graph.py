@@ -198,7 +198,41 @@ class GraphStore:
         self._candidate_cache.clear()
 
     def _ensure_connected(self) -> bool:
-        """Lazily open KuzuDB. Returns True if connected, False if unavailable."""
+        """Open or reopen the Kuzu DB connection on demand. Return ``True`` if usable.
+
+        Kuzu is embedded but not always-on. Three failure modes need
+        absorbing on the way to every public method, which is why every
+        ``@_locked`` entry-point starts with
+        ``if not self._ensure_connected(): return <empty>``:
+
+        1. **Lazy first-open.** ``__init__`` deliberately does not touch
+           disk — a daemon that never reaches the graph never pays the
+           buffer-pool / WAL cost. The very first call here mints
+           ``kuzu.Database`` + ``kuzu.Connection`` and runs schema init.
+
+        2. **File-lock contention.** Kuzu holds an exclusive single-writer
+           lock on the DB directory. If another process (a CLI script,
+           ``scripts/migrate_entity_to_uuid.py``, a second daemon) holds
+           it, the ``kuzu.Database(...)`` constructor raises
+           ``RuntimeError``. We log once (``_warned_locked``) and return
+           False so callers degrade to ``[] / None`` instead of crashing
+           mid-request.
+
+        3. **Stale / recycled connection.** ``recycle()`` deliberately
+           nulls ``_conn`` and ``_db`` to release the buffer pool back
+           to the OS (workaround for kuzu issue #4797 — buffer pool
+           grows per query and is never freed without a full reopen).
+           A ``RETURN 1`` probe at the top also catches connections that
+           died silently (e.g. underlying file vanished) and triggers a
+           reconnect on the same call.
+
+        Returns
+        -------
+        bool
+            ``True`` if ``self._conn`` is live and queryable on return.
+            ``False`` if the lock is held by another process — in this
+            case ``self._conn`` and ``self._db`` are both ``None``.
+        """
         if self._conn is not None:
             try:
                 self._conn.execute("RETURN 1")
@@ -207,6 +241,7 @@ class GraphStore:
                 log.warning("KuzuDB connection stale — reconnecting")
                 self._conn = None
                 self._db = None
+        db: kuzu.Database | None = None
         try:
             db = kuzu.Database(
                 str(self._path),
@@ -218,10 +253,11 @@ class GraphStore:
             self._init_schema()
             return True
         except RuntimeError:
-            try:
+            # Force-drop a partially-initialized Database so its file-lock
+            # fd is released now, not at the next GC tick. None when the
+            # Database constructor itself raised before binding.
+            if db is not None:
                 del db
-            except UnboundLocalError:
-                pass
             self._db = None
             self._conn = None
             if not self._warned_locked:
