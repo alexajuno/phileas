@@ -251,11 +251,11 @@ def pass3_near_duplicates(graph: GraphStore, all_entities: list[dict]) -> dict:
 
 
 def pass4_recall_probe(engine: MemoryEngine, queries: list[str]) -> list[dict]:
-    """For each probe query, run recall_raw and check duplicate entity attribution."""
+    """For each probe query, run recall_candidates and check duplicate entity attribution."""
     out: list[dict] = []
     for q in queries:
         try:
-            candidates = engine.recall_raw(query=q)
+            candidates = engine.recall_candidates(query=q)
         except Exception as e:
             out.append({"query": q, "error": str(e)})
             continue

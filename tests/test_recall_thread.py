@@ -5,7 +5,7 @@ Verifies:
      summary contains the phrase (Path 6 — event-text search).
   2. An event hit pulls in all sibling memories (memories with matching
      source_event_id) tagged gather_source="event_thread".
-  3. recall_raw exposes source_event_id on every memory item.
+  3. recall_candidates exposes source_event_id on every memory item.
   4. The `thread(event_id)` engine method returns the event + its memories.
 """
 
@@ -42,7 +42,7 @@ def _ingest_event_with_memories(engine, event_text: str, memories: list[dict]) -
 
 
 def test_verbatim_phrase_found_when_no_memory_has_it(tmp_dir):
-    """A distinctive phrase living only in event.text is reachable via recall_raw."""
+    """A distinctive phrase living only in event.text is reachable via recall_candidates."""
     engine = _make_engine(tmp_dir)
     event = _ingest_event_with_memories(
         engine,
@@ -56,7 +56,7 @@ def test_verbatim_phrase_found_when_no_memory_has_it(tmp_dir):
         ],
     )
 
-    pool = engine.recall_raw("tier model deprecation")
+    pool = engine.recall_candidates("tier model deprecation")
 
     # The event passage should be in the candidate pool.
     passages = [p for p in pool if p.get("kind") == "event_passage"]
@@ -81,7 +81,7 @@ def test_event_hit_surfaces_sibling_memories(tmp_dir):
         ],
     )
 
-    pool = engine.recall_raw("unique-token-xyzzy")
+    pool = engine.recall_candidates("unique-token-xyzzy")
     threaded = [
         p for p in pool if p.get("kind") != "event_passage" and "event_thread" in (p.get("gather_source") or [])
     ]
@@ -91,8 +91,8 @@ def test_event_hit_surfaces_sibling_memories(tmp_dir):
         assert item["source_event_id"] == event.id
 
 
-def test_recall_raw_response_carries_source_event_id(tmp_dir):
-    """Every memory item in the recall_raw response surfaces source_event_id."""
+def test_recall_candidates_response_carries_source_event_id(tmp_dir):
+    """Every memory item in the recall_candidates response surfaces source_event_id."""
     engine = _make_engine(tmp_dir)
     _ingest_event_with_memories(
         engine,
@@ -102,7 +102,7 @@ def test_recall_raw_response_carries_source_event_id(tmp_dir):
         ],
     )
 
-    pool = engine.recall_raw("distinct-marker-abc")
+    pool = engine.recall_candidates("distinct-marker-abc")
     memory_items = [p for p in pool if p.get("kind") != "event_passage"]
     assert memory_items, "expected at least one memory in pool"
     for item in memory_items:
@@ -144,6 +144,6 @@ def test_event_passages_respect_similarity_floor(tmp_dir):
         memories=[{"summary": "Made carbonara", "memory_type": "event"}],
     )
 
-    pool = engine.recall_raw("kubernetes deployment yaml")
+    pool = engine.recall_candidates("kubernetes deployment yaml")
     passages = [p for p in pool if p.get("kind") == "event_passage"]
     assert passages == [], f"unrelated query surfaced passages: {passages}"

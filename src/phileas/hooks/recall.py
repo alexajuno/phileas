@@ -14,12 +14,12 @@ Reads the hook payload from stdin, then branches on the user's recall config:
     - "rerank"            -> call daemon `recall`, format
                               the top results inline as a `<phileas-recall>`
                               block. Cheap deterministic CPU-only path.
-    - "agent_summarizer"  -> call daemon `recall_raw`, then emit a passive
+    - "agent_summarizer"  -> call daemon `recall_candidates`, then emit a passive
                               `<phileas-recall-hint>` block telling Claude how
                               many candidates exist and how to dispatch the
                               `phileas-recall` subagent if it judges the prompt
                               memory-relevant. Zero LLM cost on the hot path.
-    - "direct"            -> call daemon `recall_raw` for the candidate count,
+    - "direct"            -> call daemon `recall_candidates` for the candidate count,
                               then emit a `<phileas-recall-hint>` block with a
                               cognitive routing ladder (entity -> about(),
                               date -> list_day_memories(), recency ->
@@ -213,7 +213,7 @@ def format_routing_hint(prompt: str, candidates: int) -> str:
         "  - Multiple shapes -> call several in parallel, merge by id\n"
         "  - Multi-hop reasoning over the full pool needed -> dispatch phileas-recall subagent (fallback)\n"
         "Skip if prompt is purely about current code/task/conversation. Avoid "
-        "`recall_raw` directly — its output is sized for subagent judgement, "
+        "`recall_candidates` directly — its output is sized for subagent judgement, "
         "not for the main session context.\n"
         "</phileas-recall-hint>"
     )
@@ -334,7 +334,7 @@ def run_agent_summarizer(prompt: str) -> int:
     from time import perf_counter
 
     _t0 = perf_counter()
-    ok, payload = call_daemon("recall_raw", {"query": prompt})
+    ok, payload = call_daemon("recall_candidates", {"query": prompt})
     _elapsed_ms = (perf_counter() - _t0) * 1000
     if not ok:
         print(format_error(str(payload)))
@@ -354,7 +354,7 @@ def run_agent_summarizer(prompt: str) -> int:
 def run_direct(prompt: str) -> int:
     """Direct-tool pipeline: count candidates, emit a routing-ladder hint.
 
-    Same daemon call shape as `run_agent_summarizer` (reuses recall_raw to
+    Same daemon call shape as `run_agent_summarizer` (reuses recall_candidates to
     size the pool), but the emitted hint instructs Claude to call phileas
     tools directly rather than dispatching the subagent. Cheaper and
     higher-fidelity for the common case (entity / date / recency queries).
@@ -362,7 +362,7 @@ def run_direct(prompt: str) -> int:
     from time import perf_counter
 
     _t0 = perf_counter()
-    ok, payload = call_daemon("recall_raw", {"query": prompt})
+    ok, payload = call_daemon("recall_candidates", {"query": prompt})
     _elapsed_ms = (perf_counter() - _t0) * 1000
     if not ok:
         print(format_error(str(payload)))

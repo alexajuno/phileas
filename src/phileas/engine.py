@@ -196,7 +196,7 @@ class MemoryEngine:
         """Return an event's full text plus every memory extracted from it.
 
         Powers the "show me the conversation this came from" affordance. Pair
-        with verbatim passages surfaced by Path 6 in recall_raw.
+        with verbatim passages surfaced by Path 6 in recall_candidates.
         """
         event = self.db.get_event(event_id)
         if event is None:
@@ -342,11 +342,11 @@ class MemoryEngine:
         self.graph.link_memory(memory_id, "Day", iso_date)
 
     # ------------------------------------------------------------------
-    # recall_raw — Stage-1 only (PHI-40)
+    # recall_candidates — Stage-1 only
     # ------------------------------------------------------------------
 
-    @timed_op("recall_raw")
-    def recall_raw(
+    @timed_op("recall_candidates")
+    def recall_candidates(
         self,
         query: str,
         memory_type: str | None = None,
@@ -368,11 +368,11 @@ class MemoryEngine:
         """
         from time import perf_counter
 
-        from phileas.engine_gather import gather_candidates_raw
+        from phileas.engine_gather import gather_candidates
 
         op_extra(query=query, memory_type=memory_type, min_importance=min_importance)
         _t0 = perf_counter()
-        result = gather_candidates_raw(
+        result = gather_candidates(
             db=self.db,
             vector=self.vector,
             graph=self.graph,
@@ -384,7 +384,7 @@ class MemoryEngine:
         op_extra(candidates=len(result))
         _trace_recall(
             self._metrics,
-            source="engine.recall_raw",
+            source="engine.recall_candidates",
             query=query,
             latency_ms=(perf_counter() - _t0) * 1000,
             result=result,
@@ -667,7 +667,7 @@ class MemoryEngine:
         # An event hit drags in every memory extracted from that event,
         # tagged hop=1 (one structural step from the matching event).
         # Verbatim event passages themselves are not memory rows, so they
-        # are not added to `candidates` here — the recall_raw path
+        # are not added to `candidates` here — the recall_candidates path
         # surfaces them as a separate event_hits list.
         # Lower floor than memory search: long event chunks score lower
         # under cosine than focused summaries. See engine_gather.py.

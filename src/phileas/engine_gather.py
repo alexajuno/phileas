@@ -1,4 +1,4 @@
-"""Stage-1 candidate gather for recall_raw (PHI-40).
+"""Stage-1 candidate gather for recall_candidates.
 
 Mirrors the gather phase of `MemoryEngine.recall` (Paths 1, 2, 3, 3b, 4, 5)
 but skips Path 3c (LLM-resolved referents — daemon has no LLM) and tracks
@@ -7,7 +7,7 @@ each memory.
 
 Lives in its own module to avoid a 600-line refactor of `engine.py` for
 this PR. The gather logic here and in `engine.py:recall` are intentional
-near-duplicates; future cleanup (PHI-40 follow-up) can dedupe by extracting
+near-duplicates; future cleanup can dedupe by extracting
 a shared `_gather_candidates` helper that returns a richer struct.
 
 Skipped vs `recall`:
@@ -32,7 +32,7 @@ log = get_logger()
 _MEMORY_TYPES = ["profile", "event", "knowledge", "behavior", "reflection"]
 
 
-def gather_candidates_raw(
+def gather_candidates(
     db: Database,
     vector: VectorStore,
     graph: GraphStore,
@@ -41,7 +41,7 @@ def gather_candidates_raw(
     memory_type: str | None = None,
     min_importance: int | None = None,
 ) -> list[dict]:
-    """Run Stage-1 gather and return filtered candidates as PHI-40-shaped dicts.
+    """Run Stage-1 gather and return filtered candidates as dicts.
 
     Returns one dict per memory with: id, summary, type, importance, created_at,
     hop, gather_source (list of contributing paths).
@@ -70,7 +70,7 @@ def gather_candidates_raw(
         except Exception as e:
             log.debug(
                 "graph lookup failed",
-                extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
+                extra={"op": "recall_candidates", "data": {"entity": ename, "error": str(e)}},
             )
             return
         for mem_id in memory_ids:
@@ -133,7 +133,7 @@ def gather_candidates_raw(
             except Exception as e:
                 log.debug(
                     "graph traversal failed",
-                    extra={"op": "recall_raw", "data": {"entity": entity_name, "error": str(e)}},
+                    extra={"op": "recall_candidates", "data": {"entity": entity_name, "error": str(e)}},
                 )
 
     # NOTE 2026-04-29: Paths 3b + 4 (2-hop graph expansion) disabled.
@@ -149,7 +149,7 @@ def gather_candidates_raw(
     #     except Exception as e:
     #         log.debug(
     #             "graph pivot entity lookup failed",
-    #             extra={"op": "recall_raw", "data": {"mem_id": mem_id, "error": str(e)}},
+    #             extra={"op": "recall_candidates", "data": {"mem_id": mem_id, "error": str(e)}},
     #         )
     #         continue
     #     for entity in pivot_entities:
@@ -167,7 +167,7 @@ def gather_candidates_raw(
     #         except Exception as e:
     #             log.debug(
     #                 "graph pivot traversal failed",
-    #                 extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
+    #                 extra={"op": "recall_candidates", "data": {"entity": ename, "error": str(e)}},
     #             )
     #
     # # Path 4: semantic-to-graph bridge
@@ -178,7 +178,7 @@ def gather_candidates_raw(
     #     except Exception as e:
     #         log.debug(
     #             "graph bridge entity lookup failed",
-    #             extra={"op": "recall_raw", "data": {"mem_id": mem_id, "error": str(e)}},
+    #             extra={"op": "recall_candidates", "data": {"mem_id": mem_id, "error": str(e)}},
     #         )
     #         continue
     #     for entity in entities:
@@ -196,7 +196,7 @@ def gather_candidates_raw(
     #         except Exception as e:
     #             log.debug(
     #                 "graph bridge traversal failed",
-    #                 extra={"op": "recall_raw", "data": {"entity": ename, "error": str(e)}},
+    #                 extra={"op": "recall_candidates", "data": {"entity": ename, "error": str(e)}},
     #             )
 
     # Path 5: raw text search (verbatim conversation snippets)

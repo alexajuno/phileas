@@ -215,7 +215,7 @@ def recall(
 
 
 @mcp.tool()
-def recall_raw(
+def recall_candidates(
     query: str,
     memory_type: str | None = None,
     min_importance: int | None = None,
@@ -239,19 +239,19 @@ def recall_raw(
         entity-name match), gather_source (list of contributing paths from
         "keyword", "semantic", "graph", "raw_text").
     """
-    return engine.recall_raw(query, memory_type=memory_type, min_importance=min_importance)
+    return engine.recall_candidates(query, memory_type=memory_type, min_importance=min_importance)
 
 
 @mcp.tool()
 def thread(event_id: str) -> str:
     """Return the verbatim text of an ingested event plus every memory extracted from it.
 
-    Use as a follow-up to recall_raw when an event_passage or a memory's
+    Use as a follow-up to recall_candidates when an event_passage or a memory's
     source_event_id surfaces something interesting and you want the full
     surrounding conversation context.
 
     Args:
-        event_id: The event UUID (from recall_raw event_passage results, or a
+        event_id: The event UUID (from recall_candidates event_passage results, or a
             memory's source_event_id field).
     """
     result = engine.thread(event_id)

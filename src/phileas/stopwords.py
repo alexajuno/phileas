@@ -1,7 +1,7 @@
 """Shared English stop-word list for recall paths.
 
 Used by `engine.recall` (keyword + graph word filter) and
-`engine_gather.gather_candidates_raw`. Common function words match almost
+`engine_gather.gather_candidates`. Common function words match almost
 every summary and every entity name; filtering them keeps both paths
 precise and stops importance/access tiebreakers from being dominated by
 false positives.

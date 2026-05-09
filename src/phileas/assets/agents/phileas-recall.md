@@ -1,8 +1,8 @@
 ---
 name: phileas-recall
-description: Judge relevance of a merged Phileas pool against a query and return a tight ranked brief. Invoke from the phileas skill's agent_summarizer pipeline or from the agent_summarizer hook directive — pass the query, get back a brief and ranked memory IDs. Default budget two calls (recall_raw + recall_recent); allowed to follow up with one targeted about() or list_day_memories() when the query names an explicit entity or date and the merged pool fails to surface it.
+description: Judge relevance of a merged Phileas pool against a query and return a tight ranked brief. Invoke from the phileas skill's agent_summarizer pipeline or from the agent_summarizer hook directive — pass the query, get back a brief and ranked memory IDs. Default budget two calls (recall_candidates + recall_recent); allowed to follow up with one targeted about() or list_day_memories() when the query names an explicit entity or date and the merged pool fails to surface it.
 tools:
-  - mcp__phileas__recall_raw
+  - mcp__phileas__recall_candidates
   - mcp__phileas__recall_recent
   - mcp__phileas__about
   - mcp__phileas__list_day_memories
@@ -19,7 +19,7 @@ Your invocation includes:
 
 You always fetch your own pools at the start. Make exactly two base tool calls, in any order:
 
-1. `mcp__phileas__recall_raw(query=<query>)` — Stage-1 candidates (Path 1 keyword + Path 2 semantic + Path 3 graph + Path 5 raw text). Each item has `id`, `summary`, `type`, `importance`, `created_at`, `hop`, `gather_source`.
+1. `mcp__phileas__recall_candidates(query=<query>)` — Stage-1 candidates (Path 1 keyword + Path 2 semantic + Path 3 graph + Path 5 raw text). Each item has `id`, `summary`, `type`, `importance`, `created_at`, `hop`, `gather_source`.
 2. `mcp__phileas__recall_recent(days=7)` — top memories per day for the last 7 days, regardless of query match. Surfaces what's been top-of-mind lately.
 
 Merge the two pools by `id`. For duplicates, union `gather_source` (e.g. `["keyword", "recent"]`) and tag the item as `from_recent=True`. Do not refetch with reworded queries.
@@ -59,7 +59,7 @@ Cap at 5 for tight queries (entity-only with one obvious answer); 10 for broad q
 
 ### Step 4 — judge from the merged pool (with one targeted follow-up budgeted)
 
-Default budget: two base calls (`recall_raw` + `recall_recent`), each at most once. One follow-up is allowed only under the conditions in the Input section above (named entity or explicit date, and the merged pool whiffed on that anchor) — call exactly one of `mcp__phileas__about` or `mcp__phileas__list_day_memories`. No reworded re-queries. No chained drill-downs. The merged pool plus that single recovery call is your entire information surface — judging it is your whole job. Bounds latency, bounds cost, keeps the output deterministic.
+Default budget: two base calls (`recall_candidates` + `recall_recent`), each at most once. One follow-up is allowed only under the conditions in the Input section above (named entity or explicit date, and the merged pool whiffed on that anchor) — call exactly one of `mcp__phileas__about` or `mcp__phileas__list_day_memories`. No reworded re-queries. No chained drill-downs. The merged pool plus that single recovery call is your entire information surface — judging it is your whole job. Bounds latency, bounds cost, keeps the output deterministic.
 
 ## Output format
 
