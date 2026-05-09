@@ -10,7 +10,6 @@ import click
 
 from phileas import __version__
 from phileas.cli.commands import (
-    backfill_days,
     consolidate,
     contradictions,
     export_cmd,
@@ -60,6 +59,5 @@ app.add_command(migrate_recall_cmd)
 app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)
-app.add_command(backfill_days)
 app.add_command(retry_events)
 app.add_command(stats)

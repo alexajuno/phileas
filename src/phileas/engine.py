@@ -1212,33 +1212,6 @@ class MemoryEngine:
         return [_item_to_dict(item) for item in sorted_items]
 
     # ------------------------------------------------------------------
-    # backfill day entities
-    # ------------------------------------------------------------------
-
-    def backfill_day_entities(self) -> dict:
-        """Create Day entities for all existing memories with daily_ref.
-
-        Idempotent — safe to run multiple times. Returns stats.
-        """
-        items = self.db.get_active_items()
-        days_seen: set[str] = set()
-        linked = 0
-
-        for item in items:
-            if not item.daily_ref:
-                continue
-            iso = item.daily_ref
-            if iso not in days_seen:
-                aliases = _day_aliases(iso)
-                self.graph.upsert_node("Day", iso)
-                self.graph.set_aliases("Day", iso, aliases)
-                days_seen.add(iso)
-            self.graph.link_memory(item.id, "Day", iso)
-            linked += 1
-
-        return {"days_created": len(days_seen), "memories_linked": linked}
-
-    # ------------------------------------------------------------------
     # reflect
     # ------------------------------------------------------------------
 

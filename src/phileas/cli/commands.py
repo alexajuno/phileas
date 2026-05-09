@@ -615,19 +615,6 @@ def retry_events(event_ids: tuple[str, ...]):
     print_success(f"Requeued {result.get('queued', 0)} event(s); queue depth={result.get('queue_depth', 0)}")
 
 
-@click.command("backfill-days")
-def backfill_days():
-    """Create Day entities in the graph for all existing memories."""
-    cfg = load_config()
-    db = Database(path=cfg.db_path)
-    vector = VectorStore(path=cfg.chroma_path)
-    graph = GraphStore(path=cfg.graph_path)
-    engine = MemoryEngine(db=db, vector=vector, graph=graph, config=cfg)
-
-    result = engine.backfill_day_entities()
-    print_success(f"Backfill complete: {result['days_created']} days, {result['memories_linked']} memories linked")
-
-
 @click.command()
 @click.option("--since", default="all", show_default=True, help="Time window: 24h, 7d, 30d, all.")
 @click.pass_context
