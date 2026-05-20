@@ -222,11 +222,10 @@ def recall_candidates(
 ) -> list[dict]:
     """Stage-1 only candidate gather. Returns the unranked candidate pool.
 
-    Use this when you want to do your own relevance judgement (e.g. via the
-    `phileas-recall` judge subagent) instead of the cross-encoder rerank
-    pipeline that `recall` uses. Returns the full filtered candidate pool
-    — typically up to ~1000 items — so the caller can apply LLM-as-judge
-    over a richer set than the rerank top-K.
+    Use this when you want to do your own relevance judgement instead of the
+    cross-encoder rerank pipeline that `recall` uses. Returns the full filtered
+    candidate pool — typically up to ~1000 items — so the caller can apply
+    LLM-as-judge over a richer set than the rerank top-K.
 
     Args:
         query: What to search for (natural language or keywords).

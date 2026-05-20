@@ -317,52 +317,6 @@ def _install_skill(force: bool = False) -> tuple[bool, str]:
     return True, f"installed skill at {dest}"
 
 
-# -- Agent installation ------------------------------------------------
-
-# Source asset ships with the package and never depends on HOME.
-AGENT_SOURCE = Path(__file__).resolve().parent.parent / "assets" / "agents" / "phileas-recall.md"
-
-
-def _agent_dest() -> Path:
-    """Live destination for the phileas-recall judge agent."""
-    return Path.home() / ".claude" / "agents" / "phileas-recall.md"
-
-
-def _install_agent(force: bool = False) -> tuple[bool, str]:
-    """Install the phileas-recall judge agent into ~/.claude/agents/phileas-recall.md.
-
-    Same idempotency contract as `_install_skill`: source missing -> error;
-    dest missing -> write; matching content -> skip; custom content -> skip
-    unless force=True.
-    """
-    if not AGENT_SOURCE.is_file():
-        return False, f"agent source missing at {AGENT_SOURCE}"
-
-    try:
-        source_text = AGENT_SOURCE.read_text(encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not read agent source: {exc}"
-
-    dest = _agent_dest()
-    if dest.exists():
-        try:
-            existing = dest.read_text(encoding="utf-8")
-        except OSError as exc:
-            return False, f"could not read existing agent: {exc}"
-        if existing == source_text:
-            return False, f"agent already installed at {dest}"
-        if not force:
-            return False, f"agent exists with custom content at {dest} (use force=True to overwrite)"
-
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(source_text, encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not write agent: {exc}"
-
-    return True, f"installed agent at {dest}"
-
-
 def _download_embedding_model() -> bool:
     """Download the sentence-transformers embedding model. Returns True on success."""
     try:
@@ -473,10 +427,6 @@ def run_wizard() -> None:
         changed, msg = _install_skill()
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
         console.print(f"  Skill {marker} -- {msg}")
-
-        changed, msg = _install_agent()
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Agent {marker} -- {msg}")
 
         changed, msg = _sync_hook_state(recall_mode)
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"

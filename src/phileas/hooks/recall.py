@@ -11,23 +11,14 @@ Reads the hook payload from stdin, then branches on the user's recall config:
     - "always"  -> emit a hint on every prompt.
 
   recall.pipeline:
-    - "rerank"            -> call daemon `recall`, format
-                              the top results inline as a `<phileas-recall>`
-                              block. Cheap deterministic CPU-only path.
-    - "agent_summarizer"  -> call daemon `recall_candidates`, then emit a passive
-                              `<phileas-recall-hint>` block telling Claude how
-                              many candidates exist and how to dispatch the
-                              `phileas-recall` subagent if it judges the prompt
-                              memory-relevant. Zero LLM cost on the hot path.
-    - "direct"            -> call daemon `recall_candidates` for the candidate count,
-                              then emit a `<phileas-recall-hint>` block with a
-                              cognitive routing ladder (entity -> about(),
-                              date -> list_day_memories(), recency ->
-                              recall_recent(), topic -> recall(), multi-hop
-                              fallback -> phileas-recall subagent). Main Claude
-                              calls tools directly with full conversation
-                              context — no Sonnet judging hop, no 500KB pool
-                              read. Recommended default.
+    - "rerank"  -> call daemon `recall`, format the top results inline as a
+                   `<phileas-recall>` block. Cheap deterministic CPU-only path.
+    - "direct"  -> call daemon `recall_candidates` for the candidate count, then
+                   emit a `<phileas-recall-hint>` block with a cognitive
+                   routing ladder (entity -> about(), date ->
+                   list_day_memories(), recency -> recall_recent(), topic ->
+                   recall()). Main Claude calls tools directly with full
+                   conversation context. Recommended default.
 
 Failure surfaces as an inline `<phileas-recall>` error block -- better to know
 the recall is broken than to silently miss memory context.
@@ -173,47 +164,23 @@ def format_memories(memories: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def format_dispatch_hint(prompt: str, candidates: int) -> str:
-    """Passive hint: tell Claude how many candidate memories exist for this
-    prompt and let it decide whether to dispatch the `phileas-recall` agent.
-
-    Deliberately not an ACTION REQUIRED directive — Claude judges relevance
-    using full conversation context (better than any external gate) and
-    consumes zero extra LLM calls beyond its own normal turn.
-    """
-    return (
-        "<phileas-recall-hint>\n"
-        f"Phileas has {candidates} candidate memories for this prompt.\n"
-        "If this prompt would benefit from long-term memory (past decisions, "
-        "named people/projects, prior incidents, user preferences, recurring "
-        "patterns), dispatch the `phileas-recall` subagent via the Task tool:\n"
-        '  Task(subagent_type="phileas-recall", description="Phileas pool judge",\n'
-        f'       prompt="Query: {prompt}")\n'
-        "If the prompt is purely about the current task/code/conversation, "
-        "ignore this hint and proceed normally.\n"
-        "</phileas-recall-hint>"
-    )
-
-
 def format_routing_hint(prompt: str, candidates: int) -> str:
     """Cognitive routing ladder: tell Claude how to fetch the right slice
-    directly via phileas tools, instead of dispatching a Sonnet subagent to
-    judge a 500KB pool. Mirrors how a human would consult their own memory:
-    name -> "who is X", date -> "what happened on D", recency -> "what was
-    on my mind lately", concept -> "what do I know about Y".
+    directly via phileas tools. Mirrors how a human would consult their own
+    memory: name -> "who is X", date -> "what happened on D", recency ->
+    "what was on my mind lately", concept -> "what do I know about Y".
     """
     return (
         "<phileas-recall-hint>\n"
         f"Phileas has {candidates} candidate memories for this prompt. "
-        "Route by query shape (call tools directly, no subagent):\n"
+        "Route by query shape:\n"
         "  - Named entity (person, project, @handle)  -> mcp__phileas__about(name)\n"
         "  - Explicit date (YYYY-MM-DD, 'Apr 14')      -> mcp__phileas__list_day_memories(date)\n"
         "  - Time-relative (yesterday/recent/last X)   -> mcp__phileas__recall_recent(days=N)\n"
         "  - Topic / concept question                  -> mcp__phileas__recall(query)\n"
         "  - Multiple shapes -> call several in parallel, merge by id\n"
-        "  - Multi-hop reasoning over the full pool needed -> dispatch phileas-recall subagent (fallback)\n"
         "Skip if prompt is purely about current code/task/conversation. Avoid "
-        "`recall_candidates` directly — its output is sized for subagent judgement, "
+        "`recall_candidates` directly — its output is sized for bulk pool judgement, "
         "not for the main session context.\n"
         "</phileas-recall-hint>"
     )
@@ -330,34 +297,12 @@ def _write_hook_trace(
         pass
 
 
-def run_agent_summarizer(prompt: str) -> int:
-    from time import perf_counter
-
-    _t0 = perf_counter()
-    ok, payload = call_daemon("recall_candidates", {"query": prompt})
-    _elapsed_ms = (perf_counter() - _t0) * 1000
-    if not ok:
-        print(format_error(str(payload)))
-        return 0
-    if not isinstance(payload, list):
-        print(format_error(f"unexpected daemon response shape: {type(payload).__name__}"))
-        return 0
-    if not payload:
-        # Empty pool -- nothing to dispatch. Stay silent so we don't emit a
-        # noisy directive that the agent then has to reason about.
-        return 0
-    _write_hook_trace(prompt, payload, _elapsed_ms)
-    print(format_dispatch_hint(prompt, len(payload)))
-    return 0
-
-
 def run_direct(prompt: str) -> int:
     """Direct-tool pipeline: count candidates, emit a routing-ladder hint.
 
-    Same daemon call shape as `run_agent_summarizer` (reuses recall_candidates to
-    size the pool), but the emitted hint instructs Claude to call phileas
-    tools directly rather than dispatching the subagent. Cheaper and
-    higher-fidelity for the common case (entity / date / recency queries).
+    Calls `recall_candidates` only to size the pool; the emitted hint
+    instructs Claude to call phileas tools directly (about / list_day_memories
+    / recall_recent / recall) based on query shape.
     """
     from time import perf_counter
 
@@ -389,9 +334,7 @@ def main() -> int:
     if mode == "auto" and obvious_skip(prompt):
         return 0
 
-    if pipeline == "agent_summarizer":
-        rc = run_agent_summarizer(prompt)
-    elif pipeline == "direct":
+    if pipeline == "direct":
         rc = run_direct(prompt)
     else:
         rc = run_rerank(prompt)

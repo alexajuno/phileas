@@ -411,11 +411,11 @@ class TestProjectConfig:
         (tmp_path / "config.toml").write_text(
             textwrap.dedent("""\
             [recall]
-            pipeline = "agent_summarizer"
+            pipeline = "direct"
         """)
         )
         cfg = load_config(home=tmp_path, project_start=tmp_path)
-        assert cfg.recall.pipeline == "agent_summarizer"
+        assert cfg.recall.pipeline == "direct"
 
 
 def marker_outside_tmp_path(result: Path, tmp_path: Path) -> bool:

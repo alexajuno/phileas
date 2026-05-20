@@ -9,7 +9,6 @@ import pytest
 
 from phileas.cli.wizard import (
     HOOK_COMMANDS,
-    _install_agent,
     _install_skill,
     _sync_hook_state,
 )
@@ -171,45 +170,3 @@ class TestInstallSkill:
         changed, _ = _install_skill(force=True)
         assert changed is True
         assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas\n")
-
-
-# ------------------------------------------------------------------
-# _install_agent
-# ------------------------------------------------------------------
-
-
-class TestInstallAgent:
-    """phileas-recall judge agent is copied from the package asset to ~/.claude/agents/phileas-recall.md."""
-
-    def test_creates_agent_when_missing(self, fake_home):
-        changed, _msg = _install_agent()
-        assert changed is True
-        dest = fake_home / ".claude" / "agents" / "phileas-recall.md"
-        assert dest.is_file()
-        text = dest.read_text(encoding="utf-8")
-        assert text.startswith("---\nname: phileas-recall\n")
-
-    def test_idempotent_when_content_matches(self, fake_home):
-        _install_agent()
-        changed, msg = _install_agent()
-        assert changed is False
-        assert "already" in msg.lower()
-
-    def test_preserves_custom_content_without_force(self, fake_home):
-        dest = fake_home / ".claude" / "agents" / "phileas-recall.md"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("# my custom agent\n", encoding="utf-8")
-
-        changed, msg = _install_agent()
-        assert changed is False
-        assert "custom content" in msg.lower()
-        assert dest.read_text(encoding="utf-8") == "# my custom agent\n"
-
-    def test_overwrites_with_force(self, fake_home):
-        dest = fake_home / ".claude" / "agents" / "phileas-recall.md"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("# my custom agent\n", encoding="utf-8")
-
-        changed, _ = _install_agent(force=True)
-        assert changed is True
-        assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas-recall\n")

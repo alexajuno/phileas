@@ -356,8 +356,7 @@ class MemoryEngine:
 
         Mirrors recall's gather phase (keyword + semantic + graph + raw text)
         but skips the cross-encoder rerank and MMR. Intended for callers that
-        do their own relevance judgement — e.g. the phileas-recall judge
-        subagent invoked from the agent_summarizer skill pipeline.
+        do their own relevance judgement over the raw pool.
 
         Skips Path 3c (LLM-resolved referents) since the daemon has no LLM.
 

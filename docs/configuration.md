@@ -52,7 +52,7 @@ default_top_k = 10                 # Default number of results to return
 # Skill-driven recall delivery (PHI-39).
 mode = "auto"                      # "auto" | "always" | "never"
 format = "pointer"                 # "pointer" (short brief + IDs) | "inline" (full block)
-pipeline = "rerank"                # "rerank" (default, CPU cross-encoder) | "agent_summarizer" (LLM-as-judge subagent)
+pipeline = "rerank"                # "rerank" (default, CPU cross-encoder) | "direct" (hint + direct tool routing)
 
 [scoring]
 relevance_weight = 0.55            # Weight for semantic relevance in final score
@@ -150,7 +150,7 @@ Controls the retrieval pipeline (server-side scoring) and the delivery mechanism
 | `default_top_k` | int | `10` | Default number of results for recall |
 | `mode` | string | `"auto"` | Delivery mode: `auto` (skill-driven, recall when memory-relevant), `always` (legacy hook on every prompt), `never` (skip recall) |
 | `format` | string | `"pointer"` | Output format: `pointer` (short brief + memory IDs) or `inline` (full block, parity with the legacy hook) |
-| `pipeline` | string | `"rerank"` | Scoring pipeline: `rerank` (gather + cross-encoder + MMR) or `agent_summarizer` (gather + LLM-as-judge subagent — uses `mcp__phileas__recall_candidates` + the `phileas-recall` agent, billed per recall) |
+| `pipeline` | string | `"rerank"` | Scoring pipeline: `rerank` (gather + cross-encoder + MMR) or `direct` (size pool via `recall_candidates`, then emit a routing-ladder hint so Claude calls the right phileas tool directly) |
 
 #### `mode` — when does recall fire?
 
@@ -176,9 +176,7 @@ Switch modes by editing the config and running `phileas migrate-recall` — that
 Two options:
 
 - **`rerank`** (default): gather (vector + keyword + graph + raw text) → cross-encoder rerank → MMR selection. All work happens server-side on CPU; cost per recall is roughly free, but the cross-encoder has known weaknesses on personal/emotional memories (MS MARCO scores them near zero).
-- **`agent_summarizer`**: gather → call `mcp__phileas__recall_candidates` to fetch the full Stage-1 candidate pool (~1000 items) → invoke the `phileas-recall` judge subagent (Claude Sonnet 4.6) which scores relevance and returns a brief + ranked memory IDs. This burns one paid LLM call per recall but is generally smarter at semantic-vague queries and emotional themes. The judge is installed by `phileas migrate-recall` to `~/.claude/agents/phileas-recall.md`.
-
-The default is `rerank` until a head-to-head eval (held-out gold-set precision@5, p95 latency, cost per recall — see `experiments/recall-agent-vs-rerank/RESULTS.md` once it lands) demonstrates `agent_summarizer` clears the decision rule. Until then, `agent_summarizer` is opt-in via this config knob.
+- **`direct`**: gather + size the candidate pool via `mcp__phileas__recall_candidates`, then emit a `<phileas-recall-hint>` cognitive routing ladder. The main Claude session picks the right phileas tool by query shape (`about` for entities, `list_day_memories` for dates, `recall_recent` for time-relative queries, `recall` for topic questions) and calls it directly — no extra LLM hop, full conversation context for routing decisions.
 
 ### [scoring]
 
