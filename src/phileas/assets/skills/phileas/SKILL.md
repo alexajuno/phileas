@@ -112,7 +112,7 @@ Before calling `memorize`, do a quick `recall` on the core entity or topic. If a
 
 **Always write `summary` (and any `raw_text` you pass) in English, even when the source turn is in Vietnamese or mixed language.** Translate the user's words; preserve proper nouns (people, places, projects, @mentions, brand names, and Vietnamese terms with no clean English equivalent — keep those in italics or quotes).
 
-*Why:* Phileas embeds with `all-MiniLM-L6-v2`, an English-centric model. Vietnamese-vs-Vietnamese similarity peaks around 0.40–0.49, below the 0.5 recall floor — so non-English memories store cleanly but never surface in recall. See `docs/2026-04-09-vietnamese-to-english-migration.md`. The 2026-04-09 migration translated 104 existing VN memories; this rule keeps the corpus from drifting back.
+*Why:* Phileas embeds with `all-MiniLM-L6-v2`, an English-centric model. Vietnamese-vs-Vietnamese similarity peaks around 0.40–0.49, below the 0.5 recall floor — so non-English memories store cleanly but never surface in recall.
 
 *Examples:*
 - Source: "Sếp bảo phải nộp báo cáo trước thứ 6." → Summary: "Boss said the report must be submitted before Friday."

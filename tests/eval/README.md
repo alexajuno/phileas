@@ -2,8 +2,6 @@
 
 Measures precision / recall / noise rate of `phileas.llm.extraction.extract_memories` against a fixed gold set of real Claude Code transcripts.
 
-Planning doc: [`docs/phileas/ingest-eval/`](../../docs/phileas/ingest-eval/) — README, gold set spec, harness spec, iteration plan.
-
 ## Layout
 
 ```
@@ -54,7 +52,9 @@ uv run python -m tests.eval.compare \
 
 ## Metrics
 
-See [`docs/phileas/ingest-eval/02-eval-harness.md`](../../docs/phileas/ingest-eval/02-eval-harness.md) for definitions and targets. In summary:
+A predicted memory matches an expected one when every `required_substrings[i]` appears (case-insensitive) in the predicted `summary`, the `memory_type` matches, and predicted `importance` is within ±2 of expected. See `match.py` for the full rule, including graph-track matching for entities and relationships.
+
+Targets:
 
 | Metric | Target |
 | -- | -- |

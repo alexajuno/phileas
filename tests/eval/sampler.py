@@ -2,7 +2,16 @@
 
 Walks ~/.claude/projects/**/*.jsonl, reconstructs the last user+assistant
 turn of each session, classifies each into one of eight strata, then samples
-per-stratum to hit the targets specified in docs/phileas/ingest-eval/01-gold-set.md.
+per-stratum to hit these targets (40 total):
+
+    coding-english          8  Pure coding session, all tool output
+    coding-life-mix         5  Coding plus casual conversation
+    vietnamese              6  Language rule validation
+    mixed-vn-en             5  Code-switching, real usage
+    short-prompt            6  <200 chars, most likely zero-memory
+    system-reminder-noise   5  Scaffolding the pipeline must ignore
+    explicit-memory         3  "remember X" — must capture
+    trivial                 2  "ok", "continue" — must produce zero
 
 Writes:
   <out>/transcripts/<id>.txt       -- the reconstructed text

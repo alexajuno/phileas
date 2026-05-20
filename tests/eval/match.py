@@ -1,6 +1,6 @@
 """Pure matching logic for the extraction eval.
 
-Match rules (see docs/phileas/ingest-eval/02-eval-harness.md):
+Match rules:
 
     **Memory-level (summary track):**
     A predicted memory matches an expected memory iff:

@@ -4,8 +4,6 @@ Measures whether `phileas.engine.MemoryEngine.recall()` surfaces the
 right memory / entity in the top-K for a given query against a frozen
 graph snapshot.
 
-Planning doc: [`docs/phileas/ingest-eval/04-recall-graph-eval.md`](../../../docs/phileas/ingest-eval/04-recall-graph-eval.md).
-
 ## Layout
 
 ```
@@ -87,8 +85,7 @@ uv run python -m tests.eval.run_recall --slug alias-only --filter-tag alias-reso
 
 ## Metrics
 
-Computed per run. See `docs/phileas/ingest-eval/04-recall-graph-eval.md`
-for full definitions.
+Computed per run:
 
 | metric | meaning |
 | -- | -- |
@@ -98,5 +95,4 @@ for full definitions.
 | `zero_result_rate` | queries returning an empty list — critical failure |
 | `mean_rank` | mean position of the first expected hit (lower is better) |
 
-No hard gates for baseline. Gates get set in `05-recall-iteration.md`
-once baseline numbers are known.
+No hard gates for baseline. Gates get set once baseline numbers are known.

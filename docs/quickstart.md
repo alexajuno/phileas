@@ -24,49 +24,20 @@ Run the setup wizard:
 phileas init
 ```
 
-The wizard walks you through:
-1. Choosing a data directory (default: `~/.phileas`)
-2. Picking an LLM provider (optional -- you can skip and add one later)
-3. Downloading the embedding model (`all-MiniLM-L6-v2`)
-4. Downloading the reranker model (`cross-encoder/ms-marco-MiniLM-L-6-v2`)
-5. Testing the LLM connection (if configured)
+The wizard asks how you'll use Phileas and configures the rest accordingly:
 
-Expected output:
+1. Usage mode: with Claude Code, standalone CLI, or both
+2. Data directory (default: `~/.phileas`)
+3. LLM provider (standalone only — `anthropic`, `openai`, or `ollama`)
+4. Claude Code wiring: writes the MCP entry to `~/.claude/.mcp.json`, installs the recall skill, and syncs hook state
+5. Downloads the embedding model (`all-MiniLM-L6-v2`) and reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`)
 
-```
-Welcome to Phileas -- persistent memory for AI.
-
-Where should Phileas store data? [~/.phileas]:
-LLM provider (used for extraction, consolidation, contradiction detection):
-  anthropic  -- Claude models via Anthropic API
-  openai     -- GPT models via OpenAI API
-  ollama     -- Local models via Ollama
-  skip       -- Configure later
-
-LLM provider [skip]:
-
-Wrote /home/you/.phileas/config.toml
-
-Downloading models ...
-  Downloading embedding model all-MiniLM-L6-v2 ...
-  Downloading reranker model cross-encoder/ms-marco-MiniLM-L-6-v2 ...
-
-Phileas is ready.
-
-Suggested next steps:
-  phileas remember "I prefer Python over JavaScript"
-  phileas recall "programming languages"
-  phileas status
-```
+API keys are read from environment variables — never written to disk.
 
 ## 3. Store some memories
 
 ```bash
 phileas remember "I'm a backend engineer who loves distributed systems"
-```
-
-```
-Stored [a1b2c3d4] [knowledge] I'm a backend engineer who loves distributed systems
 ```
 
 Try different memory types:
@@ -85,70 +56,28 @@ Memory types: `profile`, `event`, `knowledge`, `behavior`, `reflection`.
 phileas recall "what do I work on"
 ```
 
-```
-Results for 'what do I work on'
-  [a1b2c3d4] [knowledge] I'm a backend engineer who loves distributed systems  (score=0.82)
-  [e5f6g7h8] [event] Started new job at Acme Corp in March 2026  (score=0.71)
-```
-
-Filter by type:
-
-```bash
-phileas recall "who am I" --type profile
-```
+Options: `--top-k N` (max results) and `--type <type>` (filter by memory type).
 
 ## 5. Browse and inspect
 
-List all memories:
-
 ```bash
-phileas list
-```
-
-Show full detail:
-
-```bash
-phileas show a1b2c3d4
-```
-
-Check system health:
-
-```bash
-phileas status
-```
-
-```
-Phileas Status
-  Total memories:     4
-  Active:             4
-  Archived:           0
-  Vector embeddings:  4
-  Graph nodes:        0
-  Graph edges:        0
+phileas list             # list memories
+phileas show <id>        # full detail of one memory
+phileas status           # system health and counts
+phileas stats            # LLM usage, memory, graph, hook stats
 ```
 
 ## 6. Connect to an AI
 
-Start the MCP server:
+If you picked "with Claude Code" in step 2, the wizard already wired everything up — restart Claude Code and Phileas will recall and memorize automatically.
+
+For other MCP clients, start the server and point your client at it:
 
 ```bash
 phileas serve
 ```
 
-Add Phileas to Claude Code by editing `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "phileas": {
-      "command": "phileas",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-Now Claude Code can store and recall memories about you across sessions. See [MCP Integration](mcp-integration.md) for more details and other AI clients.
+See [MCP Integration](mcp-integration.md) for client-specific setup.
 
 ## Next steps
 

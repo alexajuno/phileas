@@ -13,16 +13,30 @@ export PHILEAS_HOME=/path/to/custom/dir
 # Config will be read from /path/to/custom/dir/config.toml
 ```
 
-Priority: explicit path > `PHILEAS_HOME` env var > `~/.phileas` default.
+Priority: explicit `home=` passed to `load_config` > `PHILEAS_HOME` env var > `~/.phileas` default.
+
+## Project-local config (`.phileas.toml`)
+
+Per-project overrides live in a `.phileas.toml` at the repo root (or any ancestor of your working directory — Phileas walks upward to find it). Same TOML schema as `config.toml`; values are deep-merged.
+
+Resolution order, later wins:
+1. Built-in defaults.
+2. User config: `~/.phileas/config.toml` (or `$PHILEAS_HOME/config.toml`).
+3. Project config: nearest `.phileas.toml` walking up from cwd.
+
+```toml
+# /path/to/secret-side-project/.phileas.toml
+[recall]
+mode = "never"
+```
+
+After editing project config, run `phileas migrate-recall` from inside the project to reconcile the skill / hook install state.
 
 ## Complete config example
 
 Every section with every key and its default value:
 
 ```toml
-[storage]
-home = "~/.phileas"
-
 [llm]
 provider = "anthropic"              # "anthropic", "openai", or "ollama"
 model = "claude-haiku-4-5-20251001" # Default model for all LLM operations
@@ -31,55 +45,68 @@ api_key_env = "ANTHROPIC_API_KEY"   # Env var name (key is NEVER stored in confi
 [llm.operations]
 # Per-operation model overrides. Omit a key to use the default model.
 extraction = "claude-haiku-4-5-20251001"
+entity_extraction = "claude-haiku-4-5-20251001"
 importance = "claude-haiku-4-5-20251001"
-consolidation = "claude-haiku-4-5-20251001"
-contradiction = "claude-haiku-4-5-20251001"
 query_rewrite = "claude-haiku-4-5-20251001"
+reflection = "claude-haiku-4-5-20251001"
+fact_derivation = "claude-haiku-4-5-20251001"
 
 [embeddings]
-model = "all-MiniLM-L6-v2"         # sentence-transformers model for vector search
+model = "all-MiniLM-L6-v2"
 
 [reranker]
-model = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder for reranking
+model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 [recall]
-similarity_floor = 0.5             # Minimum cosine similarity for vector candidates
-relevance_floor = 0.15             # Minimum normalized reranker score to keep
-graph_boost = 0.5                  # Boost factor for graph-connected results
-mmr_lambda = 0.7                   # MMR diversity/relevance tradeoff (1.0 = pure relevance)
-default_top_k = 10                 # Default number of results to return
-
-# Skill-driven recall delivery (PHI-39).
-mode = "auto"                      # "auto" | "always" | "never"
-format = "pointer"                 # "pointer" (short brief + IDs) | "inline" (full block)
-pipeline = "rerank"                # "rerank" (default, CPU cross-encoder) | "direct" (hint + direct tool routing)
+similarity_floor = 0.5
+relevance_floor = 0.15
+graph_boost = 0.5
+mmr_lambda = 0.7
+default_top_k = 10
+mode = "auto"                       # "auto" | "always" | "never"
+format = "pointer"                  # "pointer" | "inline"
+pipeline = "rerank"                 # "rerank" | "direct"
 
 [scoring]
-relevance_weight = 0.55            # Weight for semantic relevance in final score
-importance_weight = 0.2            # Weight for memory importance (1-10)
-recency_weight = 0.15              # Weight for how recently a memory was accessed
-access_weight = 0.1                # Weight for access frequency
+relevance_weight = 0.55
+importance_weight = 0.15
+recency_weight = 0.10
+access_weight = 0.05
+reinforcement_weight = 0.15
+
+[reinforcement]
+floor = 0.70                        # Min similarity to reinforce
+ceiling = 0.95                      # Above this is dedup, not reinforcement
+base_decay = 0.01                   # Default decay rate (~50% after ~70 days)
+decay_halving = 0.5                 # Decay multiplier per halving_interval reinforcements
+halving_interval = 3                # Reinforcements needed to halve decay rate
+min_decay = 0.001                   # Floor on decay rate (near-permanent)
+
+[hot_set]
+profile_behavior_floor = 7          # Min importance for profile/behavior types
+identity_floor = 9                  # Min importance for any type
+reinforcement_floor = 3             # Min reinforcement_count (with importance >= 6)
+access_floor = 20                   # Min access_count (with importance >= 6)
+max_size = 100                      # Safety cap on hot set size
 
 [logging]
-level = "INFO"                     # Log level: DEBUG, INFO, WARNING, ERROR
-file_max_bytes = 5242880           # Max log file size in bytes (default: 5 MB)
-file_backup_count = 3              # Number of rotated log files to keep
+level = "INFO"
+file_max_bytes = 5242880            # 5 MB
+file_backup_count = 3
 ```
+
+The data directory itself (where `memory.db`, `chroma/`, `graph/`, `phileas.log` live) is set by `PHILEAS_HOME` or defaults to `~/.phileas` — it is **not** configured inside the TOML file.
 
 ## Section reference
 
-### [storage]
+### Data directory
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `home` | string | `~/.phileas` | Root directory for all Phileas data |
-
-The home directory contains:
-- `config.toml` -- this config file
-- `memory.db` -- SQLite database (memories, metadata)
-- `chroma/` -- ChromaDB vector embeddings
-- `graph/` -- KuzuDB knowledge graph
-- `phileas.log` -- application logs
+`~/.phileas/` (or `$PHILEAS_HOME`) contains:
+- `config.toml` — this file
+- `memory.db` — SQLite database (memories, metadata, events)
+- `chroma/` — ChromaDB vector embeddings
+- `graph/` — KuzuDB knowledge graph
+- `phileas.log` — application logs
 
 ### [llm]
 
@@ -89,27 +116,24 @@ The home directory contains:
 | `model` | string | *none* | Default model name for all operations |
 | `api_key_env` | string | *none* | Name of the environment variable holding the API key |
 
-The LLM is optional. Without it, Phileas still works for storing and recalling memories using vector search and keyword matching. The LLM enables:
-- Automatic importance scoring
-- Memory extraction from text (`phileas ingest`)
-- Contradiction detection (`phileas contradictions`)
-- Query rewriting for better recall
+The LLM is optional. Without it, Phileas still stores and recalls memories using vector and keyword search. The LLM enables: automatic importance scoring, memory extraction from text (via the Stop hook / host-driven ingest), query rewriting, reflection synthesis, and fact derivation.
 
-API keys are **never** stored in the config file. Only the name of the environment variable is stored (e.g., `ANTHROPIC_API_KEY`), and Phileas reads the key from the environment at runtime.
+API keys are **never** stored in the config file. Only the env-var name is stored (e.g., `ANTHROPIC_API_KEY`), and Phileas reads the key from the environment at runtime.
 
 ### [llm.operations]
 
 Override the model for specific operations. If omitted, the default `[llm].model` is used.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `extraction` | string | *uses default model* | Model for extracting memories from text |
-| `importance` | string | *uses default model* | Model for scoring memory importance |
-| `consolidation` | string | *uses default model* | Model for merging similar memories |
-| `contradiction` | string | *uses default model* | Model for detecting conflicting memories |
-| `query_rewrite` | string | *uses default model* | Model for expanding search queries |
+| Key | Used for |
+|-----|----------|
+| `extraction` | Extracting memories from raw text |
+| `entity_extraction` | Extracting entities and relationships |
+| `importance` | Auto-scoring memory importance |
+| `query_rewrite` | Expanding search queries |
+| `reflection` | Daily reflection synthesis (`phileas reflect`) |
+| `fact_derivation` | Deriving facts from memories |
 
-Example: use a larger model for extraction but a smaller one for importance scoring:
+Example: use a larger model for extraction but the default for everything else:
 
 ```toml
 [llm]
@@ -118,7 +142,7 @@ model = "claude-haiku-4-5-20251001"
 api_key_env = "ANTHROPIC_API_KEY"
 
 [llm.operations]
-extraction = "claude-sonnet-4-20250514"
+extraction = "claude-sonnet-4-6"
 ```
 
 ### [embeddings]
@@ -127,15 +151,15 @@ extraction = "claude-sonnet-4-20250514"
 |-----|------|---------|-------------|
 | `model` | string | `all-MiniLM-L6-v2` | sentence-transformers model for embedding memories |
 
-The embedding model runs locally. It is downloaded during `phileas init`.
+Runs locally. Downloaded during `phileas init`.
 
 ### [reranker]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model for reranking search results |
+| `model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model for reranking |
 
-The reranker also runs locally. It provides a second-pass relevance score after initial vector/keyword/graph retrieval.
+Also runs locally. Provides a second-pass relevance score after initial vector / keyword / graph retrieval.
 
 ### [recall]
 
@@ -144,21 +168,21 @@ Controls the retrieval pipeline (server-side scoring) and the delivery mechanism
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `similarity_floor` | float | `0.5` | Minimum cosine similarity to include a vector search result |
-| `relevance_floor` | float | `0.15` | Minimum normalized reranker score to keep after reranking |
+| `relevance_floor` | float | `0.15` | Minimum normalized reranker score to keep |
 | `graph_boost` | float | `0.5` | Score boost for graph-connected memories |
-| `mmr_lambda` | float | `0.7` | Tradeoff between relevance (1.0) and diversity (0.0) in MMR selection |
-| `default_top_k` | int | `10` | Default number of results for recall |
-| `mode` | string | `"auto"` | Delivery mode: `auto` (skill-driven, recall when memory-relevant), `always` (legacy hook on every prompt), `never` (skip recall) |
-| `format` | string | `"pointer"` | Output format: `pointer` (short brief + memory IDs) or `inline` (full block, parity with the legacy hook) |
-| `pipeline` | string | `"rerank"` | Scoring pipeline: `rerank` (gather + cross-encoder + MMR) or `direct` (emit a static routing-ladder hint so Claude calls the right phileas tool directly) |
+| `mmr_lambda` | float | `0.7` | Tradeoff between relevance (1.0) and diversity (0.0) in MMR |
+| `default_top_k` | int | `10` | Default number of results |
+| `mode` | string | `"auto"` | `auto` (skill-driven) / `always` (legacy hook) / `never` |
+| `format` | string | `"pointer"` | `pointer` (brief + IDs) / `inline` (full block) |
+| `pipeline` | string | `"rerank"` | `rerank` (CPU cross-encoder + MMR) / `direct` (routing-ladder hint) |
 
 #### `mode` — when does recall fire?
 
-Phileas v0.2 runs recall through a skill (`~/.claude/skills/phileas/SKILL.md`) instead of a `UserPromptSubmit` hook. The agent invokes the skill when the prompt looks memory-relevant — references to past work, decisions, named projects, people, dates, or phrases like "remember when", "last time", "what did we".
+Phileas runs recall through a skill (`~/.claude/skills/phileas/SKILL.md`) instead of a `UserPromptSubmit` hook. The agent invokes the skill when the prompt looks memory-relevant — references to past work, decisions, named projects, people, dates, or phrases like "remember when", "last time", "what did we".
 
 | Mode | Behavior |
 |------|----------|
-| `"auto"` (default) | Skill fires when the prompt matches its description. Memory-irrelevant prompts (`ls`, `run the tests`) skip recall entirely. |
+| `"auto"` (default) | Skill fires when the prompt matches its description. Memory-irrelevant prompts skip recall entirely. |
 | `"always"` | Re-installs the legacy `phileas-hook recall` `UserPromptSubmit` hook so recall runs unconditionally on every turn. Power-user opt-in. |
 | `"never"` | Skill is a no-op even when the prompt matches. Use when you want recall fully suppressed for a project. |
 
@@ -173,10 +197,8 @@ Switch modes by editing the config and running `phileas migrate-recall` — that
 
 #### `pipeline` — how is the candidate pool scored?
 
-Two options:
-
-- **`rerank`** (default): gather (vector + keyword + graph + raw text) → cross-encoder rerank → MMR selection. All work happens server-side on CPU; cost per recall is roughly free, but the cross-encoder has known weaknesses on personal/emotional memories (MS MARCO scores them near zero).
-- **`direct`**: emit a static `<phileas-recall-hint>` cognitive routing ladder. The main Claude session picks the right phileas tool by query shape (`about` for entities, `list_day_memories` for dates, `recall_recent` for time-relative queries, `recall` for topic questions) and calls it directly — no extra LLM hop, no daemon call from the hook, full conversation context for routing decisions.
+- **`rerank`** (default): gather (vector + keyword + graph + raw text) → cross-encoder rerank → MMR selection. All work happens locally on CPU.
+- **`direct`**: emit a static `<phileas-recall-hint>` cognitive routing ladder. The main session picks the right phileas tool by query shape (`about` for entities, `list_day_memories` for dates, `recall_recent` for time-relative queries, `recall` for topic questions) and calls it directly — no extra LLM hop, full conversation context for routing.
 
 ### [scoring]
 
@@ -185,9 +207,35 @@ Weights for the final composite score. Must sum to 1.0.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `relevance_weight` | float | `0.55` | Semantic relevance from cross-encoder reranking |
-| `importance_weight` | float | `0.2` | Memory importance (1-10 scale, normalized) |
-| `recency_weight` | float | `0.15` | How recently the memory was last accessed |
-| `access_weight` | float | `0.1` | How frequently the memory has been accessed |
+| `importance_weight` | float | `0.15` | Memory importance (1-10 scale, normalized) |
+| `recency_weight` | float | `0.10` | How recently the memory was last accessed |
+| `access_weight` | float | `0.05` | How frequently the memory has been accessed |
+| `reinforcement_weight` | float | `0.15` | How often the memory has been reinforced |
+
+### [reinforcement]
+
+Controls when a re-mention of an existing memory reinforces (instead of creating a duplicate) and how reinforcement slows decay.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `floor` | float | `0.70` | Min cosine similarity for re-mention to count as reinforcement |
+| `ceiling` | float | `0.95` | Above this similarity, treat as dedup (no new memory, no extra reinforcement) |
+| `base_decay` | float | `0.01` | Default decay rate (~50% after ~70 days) |
+| `decay_halving` | float | `0.5` | Decay rate multiplier per `halving_interval` reinforcements |
+| `halving_interval` | int | `3` | Reinforcements needed to halve decay rate |
+| `min_decay` | float | `0.001` | Floor on decay rate (near-permanent) |
+
+### [hot_set]
+
+The "hot set" is the small bag of memories surfaced automatically by `mcp__phileas__context` — things important enough that any session should know them. Thresholds:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `profile_behavior_floor` | int | `7` | Min importance to auto-include a `profile`/`behavior` memory |
+| `identity_floor` | int | `9` | Min importance to auto-include any memory regardless of type |
+| `reinforcement_floor` | int | `3` | Min reinforcement count (with importance ≥ 6) |
+| `access_floor` | int | `20` | Min access count (with importance ≥ 6) |
+| `max_size` | int | `100` | Safety cap on hot set size |
 
 ### [logging]
 
@@ -201,30 +249,10 @@ Logs are written to `~/.phileas/phileas.log`.
 
 ## Minimal config
 
-The simplest config -- no LLM, all defaults:
+The simplest config — no LLM, all defaults:
 
 ```toml
-[storage]
-home = "~/.phileas"
+# empty file is valid; everything falls back to code defaults
 ```
 
 This gives you full store/recall functionality with vector search and keyword matching. Add an `[llm]` section later for smart features.
-
-## Project-local config (`.phileas.toml`)
-
-Per-project overrides live in a `.phileas.toml` at the repo root (or any ancestor of your working directory — Phileas walks upward to find it). Same TOML schema as `~/.phileas/config.toml`; values are deep-merged.
-
-Resolution order, later wins:
-1. Built-in defaults.
-2. User config: `~/.phileas/config.toml` (or `$PHILEAS_HOME/config.toml`).
-3. Project config: nearest `.phileas.toml` walking up from cwd.
-
-Example: silence recall in one project while keeping global behavior intact.
-
-```toml
-# /path/to/secret-side-project/.phileas.toml
-[recall]
-mode = "never"
-```
-
-After editing project config, run `phileas migrate-recall` from inside the project to reconcile the skill / hook install state.

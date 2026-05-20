@@ -1,6 +1,6 @@
 # LLM Setup
 
-Phileas uses an LLM for smart features: importance scoring, memory extraction, consolidation, contradiction detection, and query rewriting. The LLM is optional -- Phileas works without it for basic store and recall.
+Phileas uses an LLM for smart features: importance scoring, memory extraction from sessions, query rewriting, daily reflection, entity extraction, and fact derivation. The LLM is optional — Phileas still stores and recalls memories without it.
 
 Phileas uses [litellm](https://docs.litellm.ai/) under the hood, so any provider litellm supports will work. This guide covers the three primary options.
 
@@ -24,8 +24,8 @@ Phileas uses [litellm](https://docs.litellm.ai/) under the hood, so any provider
    ```
 
 **Recommended models:**
-- `claude-haiku-4-5-20251001` -- Fast and cheap, good for all Phileas operations
-- `claude-sonnet-4-20250514` -- Higher quality extraction if you want more accuracy
+- `claude-haiku-4-5-20251001` — Fast and cheap, good default for all Phileas operations
+- `claude-sonnet-4-6` — Higher quality extraction if you want more accuracy
 
 ## OpenAI (GPT)
 
@@ -47,8 +47,8 @@ Phileas uses [litellm](https://docs.litellm.ai/) under the hood, so any provider
    ```
 
 **Recommended models:**
-- `gpt-4o-mini` -- Fast and cheap, good default
-- `gpt-4o` -- Higher quality for extraction
+- `gpt-4o-mini` — Fast and cheap, good default
+- `gpt-4o` — Higher quality for extraction
 
 ## Ollama (local, no API key)
 
@@ -79,12 +79,12 @@ Run models entirely on your machine with no API key needed.
    No `api_key_env` is needed for Ollama.
 
 **Recommended models:**
-- `llama3` -- Good general-purpose model
-- `mistral` -- Lighter alternative
+- `llama3` — Good general-purpose model
+- `mistral` — Lighter alternative
 
 ## Per-operation model overrides
 
-You can use different models for different operations. This lets you use a cheaper/faster model for routine tasks and a more capable model for extraction:
+Use different models for different operations — e.g., a cheaper/faster default with a more capable model for extraction:
 
 ```toml
 [llm]
@@ -93,24 +93,21 @@ model = "claude-haiku-4-5-20251001"
 api_key_env = "ANTHROPIC_API_KEY"
 
 [llm.operations]
-extraction = "claude-sonnet-4-20250514"
-importance = "claude-haiku-4-5-20251001"
-consolidation = "claude-sonnet-4-20250514"
-contradiction = "claude-haiku-4-5-20251001"
-query_rewrite = "claude-haiku-4-5-20251001"
+extraction = "claude-sonnet-4-6"
 ```
 
 Any operation without an explicit override uses the default `model` from the `[llm]` section.
 
 **Operations:**
 
-| Operation | Used by | Description |
-|-----------|---------|-------------|
-| `extraction` | `phileas ingest`, MCP `ingest_session` | Extracting structured memories from text |
-| `importance` | `phileas remember` (auto-scoring) | Scoring memory importance 1-10 |
-| `consolidation` | `phileas consolidate` | Merging similar memories into summaries |
-| `contradiction` | `phileas contradictions`, auto-detection on store | Detecting conflicting memories |
-| `query_rewrite` | `phileas recall` | Expanding search queries for better retrieval |
+| Operation | Used for |
+|-----------|----------|
+| `extraction` | Extracting structured memories from raw text (Stop-hook ingest, MCP `ingest_session`) |
+| `entity_extraction` | Extracting entities and relationships |
+| `importance` | Auto-scoring memory importance when `phileas remember` is called without `--importance` |
+| `query_rewrite` | Expanding search queries for better retrieval |
+| `reflection` | Daily reflection synthesis (`phileas reflect`) |
+| `fact_derivation` | Deriving facts from memories |
 
 ## Using the init wizard
 
@@ -120,7 +117,7 @@ The easiest way to set up an LLM is via the interactive wizard:
 phileas init
 ```
 
-It will prompt you for provider, model, and API key environment variable, then test the connection.
+It will prompt for provider, model, and API key environment variable, then write `config.toml`.
 
 ## API key security
 
@@ -134,14 +131,14 @@ echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.zshrc
 
 ## Verifying the setup
 
-After configuring, test that the LLM is reachable:
+After configuring, exercise an LLM-backed feature to confirm the wiring:
 
 ```bash
-# Re-run init to test the connection
-phileas init
+# Stores a memory and asks the LLM to score importance.
+phileas remember "test memory for LLM verification"
 
-# Or try an LLM-dependent command
-phileas ingest "Test memory extraction"
+# Synthesizes reflection memories from today's activity (no-op if today is empty).
+phileas reflect
 ```
 
-If the LLM is not configured or unreachable, commands that require it (`ingest`, `consolidate`, `contradictions`) will print an error. Commands that use it optionally (`remember`, `recall`) will fall back to non-LLM behavior.
+If the LLM is not configured or unreachable, commands fall back to non-LLM behavior where possible (`remember` without `--importance` uses a default score; `recall` skips query rewriting; `reflect` errors out).
