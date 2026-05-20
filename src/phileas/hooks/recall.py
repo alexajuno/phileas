@@ -13,12 +13,12 @@ Reads the hook payload from stdin, then branches on the user's recall config:
   recall.pipeline:
     - "rerank"  -> call daemon `recall`, format the top results inline as a
                    `<phileas-recall>` block. Cheap deterministic CPU-only path.
-    - "direct"  -> call daemon `recall_candidates` for the candidate count, then
-                   emit a `<phileas-recall-hint>` block with a cognitive
+    - "direct"  -> emit a static `<phileas-recall-hint>` block with a cognitive
                    routing ladder (entity -> about(), date ->
                    list_day_memories(), recency -> recall_recent(), topic ->
-                   recall()). Main Claude calls tools directly with full
-                   conversation context. Recommended default.
+                   recall()). No daemon call; the main Claude session decides
+                   whether and what to fetch using full conversation context.
+                   Recommended default.
 
 Failure surfaces as an inline `<phileas-recall>` error block -- better to know
 the recall is broken than to silently miss memory context.
@@ -35,7 +35,6 @@ from phileas.hooks._client import call_daemon
 
 TOP_K = 10
 CONFIG_PATH = Path.home() / ".phileas" / "config.toml"
-METRICS_DB_PATH = Path.home() / ".phileas" / "metrics.db"
 
 # Cheap clear-skip patterns. The goal is "obviously not memory relevant" —
 # we do NOT try to detect *positive* relevance here. Positive relevance is
@@ -164,7 +163,7 @@ def format_memories(memories: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def format_routing_hint(prompt: str, candidates: int) -> str:
+def format_routing_hint() -> str:
     """Cognitive routing ladder: tell Claude how to fetch the right slice
     directly via phileas tools. Mirrors how a human would consult their own
     memory: name -> "who is X", date -> "what happened on D", recency ->
@@ -172,16 +171,13 @@ def format_routing_hint(prompt: str, candidates: int) -> str:
     """
     return (
         "<phileas-recall-hint>\n"
-        f"Phileas has {candidates} candidate memories for this prompt. "
-        "Route by query shape:\n"
+        "Phileas long-term memory is available. Route by query shape:\n"
         "  - Named entity (person, project, @handle)  -> mcp__phileas__about(name)\n"
         "  - Explicit date (YYYY-MM-DD, 'Apr 14')      -> mcp__phileas__list_day_memories(date)\n"
         "  - Time-relative (yesterday/recent/last X)   -> mcp__phileas__recall_recent(days=N)\n"
         "  - Topic / concept question                  -> mcp__phileas__recall(query)\n"
         "  - Multiple shapes -> call several in parallel, merge by id\n"
-        "Skip if prompt is purely about current code/task/conversation. Avoid "
-        "`recall_candidates` directly — its output is sized for bulk pool judgement, "
-        "not for the main session context.\n"
+        "Skip if prompt is purely about current code/task/conversation.\n"
         "</phileas-recall-hint>"
     )
 
@@ -212,113 +208,14 @@ def run_rerank(prompt: str) -> int:
     return 0
 
 
-def _gather_source_histogram(items: list[dict]) -> dict:
-    """Same shape as engine._gather_source_histogram; duplicated to keep the
-    hook free of phileas.engine import overhead (heavy chroma/kuzu deps)."""
-    hist: dict[str, int] = {}
-    for it in items or ():
-        srcs = it.get("gather_source") or ()
-        if isinstance(srcs, str):
-            srcs = (srcs,)
-        for s in srcs:
-            hist[s] = hist.get(s, 0) + 1
-    return hist
-
-
-def _hop_histogram(items: list[dict]) -> dict:
-    hist: dict[str, int] = {}
-    for it in items or ():
-        h = it.get("hop")
-        if h is None:
-            continue
-        hist[str(h)] = hist.get(str(h), 0) + 1
-    return hist
-
-
-def _write_hook_trace(
-    query: str,
-    payload: list[dict],
-    latency_ms: float,
-) -> None:
-    """Append a hook_dispatch row to ~/.phileas/metrics.db.
-
-    Best-effort — silent on any failure (file missing, schema not yet created,
-    locked, anything). The hook process is short-lived so we open and close
-    the connection inline; engine writers reuse a long-lived MetricsWriter.
-    """
-    import sqlite3
-    from datetime import datetime, timezone
-
-    try:
-        if not METRICS_DB_PATH.parent.exists():
-            METRICS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(METRICS_DB_PATH), isolation_level=None, timeout=1.0)
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            # Ensure the table exists even if the engine hasn't started yet.
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS recall_traces (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    query TEXT,
-                    latency_ms REAL,
-                    candidate_count INTEGER,
-                    returned_ids TEXT,
-                    pool_chars INTEGER,
-                    extra TEXT
-                )"""
-            )
-            ids = [m.get("id") for m in payload if m.get("id")]
-            pool_chars = len(json.dumps(payload, default=str))
-            extra = {
-                "gather_sources": _gather_source_histogram(payload),
-                "hop_distribution": _hop_histogram(payload),
-            }
-            conn.execute(
-                """INSERT INTO recall_traces
-                   (created_at, source, query, latency_ms, candidate_count,
-                    returned_ids, pool_chars, extra)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (
-                    datetime.now(timezone.utc).isoformat(),
-                    "hook_dispatch",
-                    query[:4096],
-                    round(latency_ms, 2),
-                    len(payload),
-                    json.dumps(ids),
-                    pool_chars,
-                    json.dumps(extra),
-                ),
-            )
-        finally:
-            conn.close()
-    except Exception:
-        pass
-
-
 def run_direct(prompt: str) -> int:
-    """Direct-tool pipeline: count candidates, emit a routing-ladder hint.
+    """Direct-tool pipeline: emit a static routing-ladder hint.
 
-    Calls `recall_candidates` only to size the pool; the emitted hint
-    instructs Claude to call phileas tools directly (about / list_day_memories
-    / recall_recent / recall) based on query shape.
+    No daemon call. The hint instructs Claude to call phileas tools directly
+    (about / list_day_memories / recall_recent / recall) based on query shape,
+    using full conversation context to decide whether memory is relevant at all.
     """
-    from time import perf_counter
-
-    _t0 = perf_counter()
-    ok, payload = call_daemon("recall_candidates", {"query": prompt})
-    _elapsed_ms = (perf_counter() - _t0) * 1000
-    if not ok:
-        print(format_error(str(payload)))
-        return 0
-    if not isinstance(payload, list):
-        print(format_error(f"unexpected daemon response shape: {type(payload).__name__}"))
-        return 0
-    if not payload:
-        return 0
-    _write_hook_trace(prompt, payload, _elapsed_ms)
-    print(format_routing_hint(prompt, len(payload)))
+    print(format_routing_hint())
     return 0
 
 

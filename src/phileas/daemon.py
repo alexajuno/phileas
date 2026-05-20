@@ -383,8 +383,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return engine.memorize(**params)
     elif method == "recall":
         return engine.recall(**params)
-    elif method == "recall_candidates":
-        return engine.recall_candidates(**params)
     elif method == "forget":
         return engine.forget(**params)
     elif method == "update":

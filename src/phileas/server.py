@@ -215,43 +215,14 @@ def recall(
 
 
 @mcp.tool()
-def recall_candidates(
-    query: str,
-    memory_type: str | None = None,
-    min_importance: int | None = None,
-) -> list[dict]:
-    """Stage-1 only candidate gather. Returns the unranked candidate pool.
-
-    Use this when you want to do your own relevance judgement instead of the
-    cross-encoder rerank pipeline that `recall` uses. Returns the full filtered
-    candidate pool — typically up to ~1000 items — so the caller can apply
-    LLM-as-judge over a richer set than the rerank top-K.
-
-    Args:
-        query: What to search for (natural language or keywords).
-        memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
-        min_importance: Only return memories with importance >= this value.
-
-    Returns:
-        List of dicts, one per candidate memory, with keys: id, summary, type,
-        importance, created_at, hop (graph distance from query, 0 = direct
-        entity-name match), gather_source (list of contributing paths from
-        "keyword", "semantic", "graph", "raw_text").
-    """
-    return engine.recall_candidates(query, memory_type=memory_type, min_importance=min_importance)
-
-
-@mcp.tool()
 def thread(event_id: str) -> str:
     """Return the verbatim text of an ingested event plus every memory extracted from it.
 
-    Use as a follow-up to recall_candidates when an event_passage or a memory's
-    source_event_id surfaces something interesting and you want the full
-    surrounding conversation context.
+    Use as a follow-up when a memory's source_event_id surfaces something
+    interesting and you want the full surrounding conversation context.
 
     Args:
-        event_id: The event UUID (from recall_candidates event_passage results, or a
-            memory's source_event_id field).
+        event_id: The event UUID (from a memory's source_event_id field).
     """
     result = engine.thread(event_id)
     if result is None:

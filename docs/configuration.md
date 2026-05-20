@@ -150,7 +150,7 @@ Controls the retrieval pipeline (server-side scoring) and the delivery mechanism
 | `default_top_k` | int | `10` | Default number of results for recall |
 | `mode` | string | `"auto"` | Delivery mode: `auto` (skill-driven, recall when memory-relevant), `always` (legacy hook on every prompt), `never` (skip recall) |
 | `format` | string | `"pointer"` | Output format: `pointer` (short brief + memory IDs) or `inline` (full block, parity with the legacy hook) |
-| `pipeline` | string | `"rerank"` | Scoring pipeline: `rerank` (gather + cross-encoder + MMR) or `direct` (size pool via `recall_candidates`, then emit a routing-ladder hint so Claude calls the right phileas tool directly) |
+| `pipeline` | string | `"rerank"` | Scoring pipeline: `rerank` (gather + cross-encoder + MMR) or `direct` (emit a static routing-ladder hint so Claude calls the right phileas tool directly) |
 
 #### `mode` — when does recall fire?
 
@@ -176,7 +176,7 @@ Switch modes by editing the config and running `phileas migrate-recall` — that
 Two options:
 
 - **`rerank`** (default): gather (vector + keyword + graph + raw text) → cross-encoder rerank → MMR selection. All work happens server-side on CPU; cost per recall is roughly free, but the cross-encoder has known weaknesses on personal/emotional memories (MS MARCO scores them near zero).
-- **`direct`**: gather + size the candidate pool via `mcp__phileas__recall_candidates`, then emit a `<phileas-recall-hint>` cognitive routing ladder. The main Claude session picks the right phileas tool by query shape (`about` for entities, `list_day_memories` for dates, `recall_recent` for time-relative queries, `recall` for topic questions) and calls it directly — no extra LLM hop, full conversation context for routing decisions.
+- **`direct`**: emit a static `<phileas-recall-hint>` cognitive routing ladder. The main Claude session picks the right phileas tool by query shape (`about` for entities, `list_day_memories` for dates, `recall_recent` for time-relative queries, `recall` for topic questions) and calls it directly — no extra LLM hop, no daemon call from the hook, full conversation context for routing decisions.
 
 ### [scoring]
 

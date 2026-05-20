@@ -14,7 +14,7 @@ For each user message: **recall first → respond → memorize**. Don't reverse 
 When `recall.mode` is `"auto"` or `"always"` (set in `~/.phileas/config.toml`), a `phileas-hook recall` UserPromptSubmit hook fires before you ever read the prompt. The hook is the deterministic firing mechanism — it runs every time, no skill-matcher heuristics involved. What it does depends on `recall.pipeline`:
 
 - `pipeline = "rerank"` (default) → the hook calls the daemon's `recall` (gather + cross-encoder rerank + MMR), formats the top results, and injects a `<phileas-recall>` block at the top of the prompt. Just use it as context.
-- `pipeline = "direct"` → the hook calls `recall_candidates` only to size the candidate pool, then injects a `<phileas-recall-hint>` block with a cognitive routing ladder. **When you see that hint, pick the right phileas tool by query shape and call it directly.** See Step 3 below for the ladder. Skip the call entirely if the prompt is purely about the current code/task/conversation.
+- `pipeline = "direct"` → the hook injects a static `<phileas-recall-hint>` block with a cognitive routing ladder. **When you see that hint, pick the right phileas tool by query shape and call it directly.** See Step 3 below for the ladder. Skip the call entirely if the prompt is purely about the current code/task/conversation.
 
 In `mode = "auto"` the hook applies a content heuristic and only fires on memory-relevant prompts (past-tense queries, decision phrases, named dates, "remember when"-style cues). In `mode = "always"` it fires on every prompt. In `mode = "never"` the hook is removed.
 
@@ -51,7 +51,6 @@ In `mode = "auto"` and `mode = "always"`, a `phileas-hook recall` UserPromptSubm
   - **Time-relative** ("yesterday", "recently", "last week", "last session") → `mcp__phileas__recall_recent(days=N)`. Top memories per day, newest first.
   - **Topic / concept** with no entity or date anchor → `mcp__phileas__recall(query=...)`. Full gather + cross-encoder rerank, ~30 best.
   - **Date range** spanning multiple days → `mcp__phileas__timeline(start=..., end=...)`.
-  Avoid `mcp__phileas__recall_candidates` from the main session — its output (~1000 unranked items, often >500KB) is sized for bulk pool judgement, not direct use. Prefer `recall(query=...)` for topic questions.
 
 ### Step 4: Format output
 
