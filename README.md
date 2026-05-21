@@ -34,7 +34,6 @@ See [MCP Integration](docs/mcp-integration.md) for client-specific setup.
 
 - [Quick Start](docs/quickstart.md) — guided tutorial
 - [Configuration](docs/configuration.md) — config.toml reference
-- [LLM Setup](docs/llm-setup.md) — provider guides
 - [MCP Integration](docs/mcp-integration.md) — connecting to AI clients
 
 For the command reference, run `phileas --help` or `phileas COMMAND --help`.

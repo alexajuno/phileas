@@ -118,6 +118,8 @@ The data directory itself (where `memory.db`, `chroma/`, `graph/`, `phileas.log`
 
 The LLM is optional. Without it, Phileas still stores and recalls memories using vector and keyword search. The LLM enables: automatic importance scoring, memory extraction from text (via the Stop hook / host-driven ingest), query rewriting, reflection synthesis, and fact derivation.
 
+When the LLM is missing or unreachable, commands degrade rather than fail: `phileas remember` without `--importance` falls back to a default score, `phileas recall` skips query rewriting, and `phileas reflect` errors out (it has no useful no-LLM behavior).
+
 API keys are **never** stored in the config file. Only the env-var name is stored (e.g., `ANTHROPIC_API_KEY`), and Phileas reads the key from the environment at runtime.
 
 ### [llm.operations]
