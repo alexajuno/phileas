@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Start a dogfooding experiment: worktree + isolated PHILEAS_HOME + swap MCP config.
-# See docs/DEVELOPMENT.md for the full workflow.
 
 set -euo pipefail
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Stop a dogfooding experiment. Verdict decides what happens to code and data.
-# See docs/DEVELOPMENT.md for the full workflow.
 
 set -euo pipefail
 
