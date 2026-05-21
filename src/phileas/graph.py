@@ -20,7 +20,7 @@ Public API surface (``upsert_node``, ``link_memory``, ``find_nodes``,
 ``(node_type, name)`` signatures so engine.py and graph_proxy.py callers
 don't need to change. The old ``id = "Type:Name"`` schema is detected and
 migrated 1:1 (each old row → one uuid row); cluster merging is done
-out-of-band by ``scripts/migrate_entity_to_uuid.py``.
+out-of-band.
 """
 
 import functools
@@ -211,12 +211,11 @@ class GraphStore:
            ``kuzu.Database`` + ``kuzu.Connection`` and runs schema init.
 
         2. **File-lock contention.** Kuzu holds an exclusive single-writer
-           lock on the DB directory. If another process (a CLI script,
-           ``scripts/migrate_entity_to_uuid.py``, a second daemon) holds
-           it, the ``kuzu.Database(...)`` constructor raises
-           ``RuntimeError``. We log once (``_warned_locked``) and return
-           False so callers degrade to ``[] / None`` instead of crashing
-           mid-request.
+           lock on the DB directory. If another process (a CLI tool or a
+           second daemon) holds it, the ``kuzu.Database(...)`` constructor
+           raises ``RuntimeError``. We log once (``_warned_locked``) and
+           return False so callers degrade to ``[] / None`` instead of
+           crashing mid-request.
 
         3. **Stale / recycled connection.** ``recycle()`` deliberately
            nulls ``_conn`` and ``_db`` to release the buffer pool back
@@ -392,9 +391,9 @@ class GraphStore:
 
         Strictly 1-to-1: each old row becomes one uuid row with
         ``primary_name = name``, ``types = [type]``, aliases preserved.
-        Cluster merging across types is left to
-        ``scripts/migrate_entity_to_uuid.py`` so it can be reviewed in
-        dry-run mode against real data before commit.
+        Cluster merging across types is left to an out-of-band tool so
+        it can be reviewed in dry-run mode against real data before
+        commit.
         """
         log.info("Migrating Entity table from 'Type:Name' id to uuid schema...")
 

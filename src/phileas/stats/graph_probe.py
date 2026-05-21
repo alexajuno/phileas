@@ -1,8 +1,7 @@
 """Read-only Kuzu probes for graph health.
 
 The daemon holds an exclusive lock on ~/.phileas/graph. We snapshot-copy the
-graph files to a tempdir and open a read-only kuzu connection — same trick
-used by scripts/export_phileas.py.
+graph files to a tempdir and open a read-only kuzu connection.
 """
 
 from __future__ import annotations
