@@ -21,18 +21,12 @@ For other MCP clients, start the server and point your client at it:
 phileas serve
 ```
 
-See [MCP Integration](docs/mcp-integration.md) for client-specific setup.
-
 ## Principles
 
 - **Local-first** — memories stay on your machine
 - **Model-agnostic** — works with any LLM via MCP
 - **Natural forgetting** — irrelevant detail decays; recall favors what stays useful
 - **Open** — run it yourself, read the code
-
-## Learn more
-
-- [MCP Integration](docs/mcp-integration.md) — connecting to AI clients
 
 For the command reference, run `phileas --help` or `phileas COMMAND --help`.
 
