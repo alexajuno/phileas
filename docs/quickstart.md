@@ -82,5 +82,6 @@ See [MCP Integration](mcp-integration.md) for client-specific setup.
 ## Next steps
 
 - [Configuration](configuration.md) -- Customize scoring weights, retrieval thresholds, and LLM settings
-- [CLI Reference](cli-reference.md) -- All commands with full options
 - [LLM Setup](llm-setup.md) -- Configure Anthropic, OpenAI, or Ollama for smart features
+
+For the command reference, run `phileas --help` or `phileas COMMAND --help`.
