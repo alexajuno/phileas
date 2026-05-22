@@ -5,7 +5,6 @@ from pathlib import Path
 
 from phileas.config import (
     LLMConfig,
-    LLMOperations,
     _find_project_config,
     load_config,
 )
@@ -26,14 +25,6 @@ class TestDefaults:
         cfg = load_config(home=tmp_path)
         assert cfg.llm.provider is None
         assert cfg.llm.model is None
-
-    def test_default_llm_operations(self, tmp_path):
-        cfg = load_config(home=tmp_path)
-        assert cfg.llm.operations.extraction is None
-        assert cfg.llm.operations.importance is None
-        assert cfg.llm.operations.consolidation is None
-        assert cfg.llm.operations.contradiction is None
-        assert cfg.llm.operations.query_rewrite is None
 
     def test_default_embeddings(self):
         cfg = load_config()
@@ -112,19 +103,11 @@ class TestTomlOverrides:
             [llm]
             provider = "anthropic"
             model = "claude-sonnet-4-20250514"
-
-            [llm.operations]
-            extraction = "claude-haiku-4-20250514"
-            importance = "claude-haiku-4-20250514"
         """)
         )
         cfg = load_config(home=tmp_path)
         assert cfg.llm.provider == "anthropic"
         assert cfg.llm.model == "claude-sonnet-4-20250514"
-        assert cfg.llm.operations.extraction == "claude-haiku-4-20250514"
-        assert cfg.llm.operations.importance == "claude-haiku-4-20250514"
-        # Not overridden
-        assert cfg.llm.operations.consolidation is None
 
     def test_scoring_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
@@ -236,60 +219,6 @@ class TestEnvOverride:
         monkeypatch.setenv("PHILEAS_HOME", str(env_home))
         cfg = load_config(home=explicit_home)
         assert cfg.home == explicit_home
-
-
-# ------------------------------------------------------------------
-# Per-operation LLM model overrides
-# ------------------------------------------------------------------
-
-
-class TestLLMModelOverrides:
-    """LLMConfig.model_for() returns per-operation model or falls back to default."""
-
-    def test_model_for_with_override(self):
-        ops = LLMOperations(extraction="claude-haiku-4-20250514")
-        llm = LLMConfig(
-            provider="anthropic",
-            model="claude-sonnet-4-20250514",
-            operations=ops,
-        )
-        assert llm.model_for("extraction") == "claude-haiku-4-20250514"
-
-    def test_model_for_falls_back_to_default(self):
-        ops = LLMOperations()
-        llm = LLMConfig(
-            provider="anthropic",
-            model="claude-sonnet-4-20250514",
-            operations=ops,
-        )
-        assert llm.model_for("extraction") == "claude-sonnet-4-20250514"
-        assert llm.model_for("importance") == "claude-sonnet-4-20250514"
-
-    def test_model_for_unknown_operation(self):
-        llm = LLMConfig(
-            provider="anthropic",
-            model="claude-sonnet-4-20250514",
-        )
-        assert llm.model_for("unknown_op") == "claude-sonnet-4-20250514"
-
-    def test_model_for_no_default(self):
-        llm = LLMConfig()
-        assert llm.model_for("extraction") is None
-
-    def test_model_for_all_operations(self):
-        ops = LLMOperations(
-            extraction="model-a",
-            importance="model-b",
-            consolidation="model-c",
-            contradiction="model-d",
-            query_rewrite="model-e",
-        )
-        llm = LLMConfig(provider="test", model="default", operations=ops)
-        assert llm.model_for("extraction") == "model-a"
-        assert llm.model_for("importance") == "model-b"
-        assert llm.model_for("consolidation") == "model-c"
-        assert llm.model_for("contradiction") == "model-d"
-        assert llm.model_for("query_rewrite") == "model-e"
 
 
 # ------------------------------------------------------------------

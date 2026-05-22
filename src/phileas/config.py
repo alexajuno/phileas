@@ -7,7 +7,6 @@ Usage:
     cfg = load_config()
     cfg.db_path          # Path to SQLite database
     cfg.llm.available    # True when LLM provider and model are configured
-    cfg.llm.model_for("extraction")  # Per-operation model or fallback
 """
 
 from __future__ import annotations
@@ -28,39 +27,17 @@ except ModuleNotFoundError:  # pragma: no cover — Python < 3.11
 
 
 @dataclass
-class LLMOperations:
-    """Per-operation model overrides. None means use the default LLM model."""
-
-    extraction: str | None = None
-    entity_extraction: str | None = None
-    importance: str | None = None
-    consolidation: str | None = None
-    contradiction: str | None = None
-    query_rewrite: str | None = None
-    reflection: str | None = None
-    fact_derivation: str | None = None
-
-
-@dataclass
 class LLMConfig:
     """LLM provider configuration. Resolved via litellm at call time."""
 
     provider: str | None = None
     model: str | None = None
     api_key_env: str | None = None
-    operations: LLMOperations = field(default_factory=LLMOperations)
 
     @property
     def available(self) -> bool:
         """True when both provider and model are configured."""
         return self.provider is not None and self.model is not None
-
-    def model_for(self, operation: str) -> str | None:
-        """Return the model for a specific operation, falling back to the default model."""
-        op_model = getattr(self.operations, operation, None)
-        if op_model is not None:
-            return op_model
-        return self.model
 
 
 @dataclass
@@ -182,11 +159,7 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place."""
     if "llm" in data:
-        llm_data = dict(data["llm"])
-        ops_data = llm_data.pop("operations", None)
-        _apply_toml_section(cfg.llm, llm_data)
-        if ops_data:
-            _apply_toml_section(cfg.llm.operations, ops_data)
+        _apply_toml_section(cfg.llm, data["llm"])
 
     section_map = {
         "embeddings": cfg.embeddings,
