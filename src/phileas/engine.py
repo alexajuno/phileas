@@ -30,27 +30,6 @@ log = get_logger()
 _MEMORY_TYPES: list[str] = list(get_args(MemoryType))
 
 
-def _day_aliases(iso_date: str) -> list[str]:
-    """Generate natural language aliases for a Day entity.
-
-    Given "2026-04-09", returns:
-    ["April 9", "Apr 9", "April 9 2026", "Apr 9 2026", "Thursday"]
-    """
-    d = date.fromisoformat(iso_date)
-    full_month = d.strftime("%B")  # "April"
-    short_month = d.strftime("%b")  # "Apr"
-    day = str(d.day)  # "9" (no zero-padding)
-    year = str(d.year)  # "2026"
-    weekday = d.strftime("%A")  # "Thursday"
-    return [
-        f"{full_month} {day}",  # "April 9"
-        f"{short_month} {day}",  # "Apr 9"
-        f"{full_month} {day} {year}",  # "April 9 2026"
-        f"{short_month} {day} {year}",  # "Apr 9 2026"
-        weekday,  # "Thursday"
-    ]
-
-
 def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     """Days since a given datetime, with optional fallback (e.g. created_at)."""
     target = dt or fallback
@@ -335,10 +314,14 @@ class MemoryEngine:
         threading.Thread(target=_notify, daemon=True).start()
 
     def _link_day_entity(self, memory_id: str, iso_date: str) -> None:
-        """Create a Day entity for the given date and link the memory to it."""
-        aliases = _day_aliases(iso_date)
+        """Create a Day entity for the given date and link the memory to it.
+
+        Day nodes intentionally have no natural-language aliases: bare forms
+        ("Thursday", "April 9") collide across years and flood recall via
+        substring CONTAINS in search_nodes (see issue #37). Date-based
+        retrieval should go through list_day_memories / timeline.
+        """
         self.graph.upsert_node("Day", iso_date)
-        self.graph.set_aliases("Day", iso_date, aliases)
         self.graph.link_memory(memory_id, "Day", iso_date)
 
     # ------------------------------------------------------------------
