@@ -24,7 +24,7 @@ from phileas.db import Database
 from phileas.graph import GraphStore
 from phileas.logging import get_logger
 from phileas.models import MemoryItem
-from phileas.stopwords import STOP_WORDS, strip_stopwords
+from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
 
 log = get_logger()
@@ -82,9 +82,9 @@ def gather_candidates(
                 if item:
                     candidates[mem_id] = item
 
-    # Path 1: keyword search (SQLite)
-    filtered_q = strip_stopwords(query)
-    keyword_hits = db.search_by_keyword(filtered_q, top_k=None)  # no cap; ~1500-row scan is cheap
+    # Path 1: keyword search (SQLite, AND-match across all tokens).
+    # No stopword stripping — caller passes focused term queries.
+    keyword_hits = db.search_by_keyword(query, top_k=None)  # no cap; ~1500-row scan is cheap
     for item in keyword_hits:
         candidates[item.id] = item
         keyword_ids.add(item.id)

@@ -33,7 +33,14 @@ mcp = FastMCP(
     "phileas",
     instructions=(
         "Phileas is a long-term memory companion. Choose tools by query type:\n"
-        "- recall(query): semantic search — for topic/entity questions ('what did I say about X')\n"
+        "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
+        "  Pass FOCUSED TERM QUERIES (one concept, 1–4 words: 'badminton', 'phuongtq preferences',\n"
+        "  'memory layer design'). Avoid full sentences — every token must AND-match the memory\n"
+        "  summary for keyword path, and long natural-language queries score poorly on semantic\n"
+        "  too. For compound questions call recall() MULTIPLE TIMES IN PARALLEL with different\n"
+        "  term queries and merge results by id. Example: instead of\n"
+        "  recall('what did the user say about phuongtq and badminton'), call\n"
+        "  recall('phuongtq') and recall('badminton') in parallel.\n"
         "- recall_recent(days): recent memories by date — use FIRST for time-relative questions "
         "('recently', 'yesterday', 'last chat', 'last night', 'last session', 'last time we talked')\n"
         "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
@@ -188,13 +195,22 @@ def recall(
     min_importance: int | None = None,
     top_k: int = 30,
 ) -> str:
-    """Retrieve memories relevant to a query.
+    """Retrieve memories relevant to a focused term query.
 
-    Graph-first retrieval: entity lookup → memory pivot (memories → entities → memories)
-    → semantic supplement. Returns top_k most relevant memories.
+    Hybrid retrieval: keyword (AND-match across tokens) + semantic + graph
+    entity lookup + raw-text + event-thread fanout. Returns top_k most
+    relevant memories.
+
+    Query shape (important):
+        Pass focused noun-phrase queries — one concept, 1–4 words.
+        Examples: "badminton", "phuongtq preferences", "memory layer design".
+        Sentence queries usually return nothing on the keyword path: every
+        whitespace-separated token must appear in some memory's summary.
+        For compound questions, call recall() multiple times in parallel
+        with different term queries and merge by id on your side.
 
     Args:
-        query: What to search for (natural language or keywords).
+        query: Focused term query (1–4 words, one concept).
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
         min_importance: Only return memories with importance >= this value.
         top_k: Max memories to return (default 30). Increase for broader recall.

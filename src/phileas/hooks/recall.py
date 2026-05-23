@@ -176,7 +176,12 @@ def format_routing_hint() -> str:
         "  - Explicit date (YYYY-MM-DD, 'Apr 14')      -> mcp__phileas__list_day_memories(date)\n"
         "  - Time-relative (yesterday/recent/last X)   -> mcp__phileas__recall_recent(days=N)\n"
         "  - Topic / concept question                  -> mcp__phileas__recall(query)\n"
-        "  - Multiple shapes -> call several in parallel, merge by id\n"
+        "Extract concepts from the user's prompt FIRST. Pass each as its own\n"
+        "FOCUSED TERM QUERY (one concept, 1-4 words: 'phuongtq', 'poker game',\n"
+        "'memory layer design'). Do NOT pass the verbatim user sentence — every\n"
+        "token must AND-match for the keyword path, so sentence queries return\n"
+        "little. Fan out: call the relevant tools IN PARALLEL with different\n"
+        "term queries, then merge results by id.\n"
         "Skip if prompt is purely about current code/task/conversation.\n"
         "</phileas-recall-hint>"
     )

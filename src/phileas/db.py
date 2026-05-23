@@ -152,26 +152,25 @@ class Database:
 
     @_locked
     def search_by_keyword(self, query: str, top_k: int | None = None) -> list[MemoryItem]:
-        """Keyword search using SQLite LIKE. Splits query into words, scores by match count."""
+        """Keyword search using SQLite LIKE — AND-match across whitespace tokens.
+
+        The agent is expected to pass a focused term query (one concept, 1–4
+        words). All tokens must appear in the summary; an empty/whitespace-only
+        query returns nothing. No stopword stripping — that's the agent's
+        concern. Use multiple recall() calls for compound questions.
+        """
         words = query.lower().split()
         if not words:
-            active = self.get_active_items()
-            return active if top_k is None else active[:top_k]
+            return []
 
-        conditions = " OR ".join(["LOWER(summary) LIKE ?" for _ in words])
-        score_expr = " + ".join(["(CASE WHEN LOWER(summary) LIKE ? THEN 1 ELSE 0 END)" for _ in words])
+        conditions = " AND ".join(["LOWER(summary) LIKE ?" for _ in words])
         params = [f"%{w}%" for w in words]
 
-        sql = (
-            f"SELECT *, ({score_expr}) as match_count "
-            f"FROM memory_items "
-            f"WHERE status = 'active' AND ({conditions}) "
-            f"ORDER BY match_count DESC, created_at DESC"
-        )
-        sql_params = params + params
+        sql = f"SELECT * FROM memory_items WHERE status = 'active' AND ({conditions}) ORDER BY created_at DESC"
+        sql_params: list = list(params)
         if top_k is not None:
             sql += " LIMIT ?"
-            sql_params = sql_params + [top_k]
+            sql_params.append(top_k)
 
         rows = self.conn.execute(sql, sql_params).fetchall()
         return [self._row_to_item(row) for row in rows]

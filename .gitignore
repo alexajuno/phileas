@@ -6,3 +6,4 @@ __pycache__/
 # local data + transient artifacts
 simulation_results.json
 research/
+tests/e2e_runs/

@@ -44,12 +44,14 @@ In `mode = "auto"` and `mode = "always"`, a `phileas-hook recall` UserPromptSubm
 
 ### Step 3: Branch on `pipeline`
 
-- **`pipeline = "rerank"`** (default) → call `mcp__phileas__recall(query=<user_prompt>, top_k=<top_k>)`. This runs the existing gather → cross-encoder rerank → MMR pipeline server-side and returns ~`top_k` memories.
+**Query shape contract (applies to both pipelines).** Phileas treats `recall(query=...)` as a *focused term phrase* — one concept, 1–4 words. The keyword path AND-matches every token against memory summaries, so verbatim user sentences ("what did the user say about phuongtq and poker") AND-match almost nothing on keyword and rely entirely on graph + semantic. The right shape: **extract the named entities and concepts from the prompt first**, then issue one tool call per concept and merge the results by `id`. For a prompt like *"today somehow phuongtq is the dealer for the poker game in olympic"*: call `about(phuongtq)`, `recall("poker game")`, `recall("olympic")` in parallel — not `recall("today somehow phuongtq is the dealer for the poker game in olympic")`.
+
+- **`pipeline = "rerank"`** (default) → the hook has already fired with the verbatim prompt and surfaced its result. Use that result as background. If the prompt has clear concepts the hook didn't cover, supplement with focused-term `recall()` / `about()` / `recall_recent()` calls per the contract above.
 - **`pipeline = "direct"`** → main agent calls phileas tools directly using a cognitive routing ladder. Pick the tool by query shape; call several in parallel when shapes overlap, then merge results by `id`:
   - **Named entity** in prompt (person, project, @handle) → `mcp__phileas__about(name=...)`. Returns all memories linked to that entity in the graph. Cheapest, most precise lookup for "who is X / what about Y".
   - **Explicit date** ("2026-04-14", "Apr 14") → `mcp__phileas__list_day_memories(date="YYYY-MM-DD")`. Every active memory anchored to that day.
   - **Time-relative** ("yesterday", "recently", "last week", "last session") → `mcp__phileas__recall_recent(days=N)`. Top memories per day, newest first.
-  - **Topic / concept** with no entity or date anchor → `mcp__phileas__recall(query=...)`. Full gather + cross-encoder rerank, ~30 best.
+  - **Topic / concept** with no entity or date anchor → `mcp__phileas__recall(query=<focused term, 1–4 words>)`. Full gather + cross-encoder rerank, ~30 best.
   - **Date range** spanning multiple days → `mcp__phileas__timeline(start=..., end=...)`.
 
 ### Step 4: Format output

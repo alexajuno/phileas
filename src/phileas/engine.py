@@ -21,7 +21,7 @@ from phileas.hot import HotMemorySet
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
 from phileas.scoring import compute_score, mmr_select
-from phileas.stopwords import STOP_WORDS, strip_stopwords
+from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
 
 log = get_logger()
@@ -418,15 +418,21 @@ class MemoryEngine:
 
         candidates: dict[str, MemoryItem] = {}  # id -> item
         keyword_ids: set[str] = set()  # track keyword-matched candidates
+        semantic_ids: set[str] = set()  # track semantic-matched candidates
         graph_ids: set[str] = set()  # track graph-matched candidates
+        raw_text_ids: set[str] = set()  # track raw-text matched candidates
+        event_thread_ids: set[str] = set()  # track event-text sibling fanout
 
         # ----------------------------------------------------------
         # Stage 1: Gather candidates from multiple paths
         # ----------------------------------------------------------
 
-        # Path 1: keyword search (SQLite)
-        filtered_q = strip_stopwords(query)
-        keyword_hits = self.db.search_by_keyword(filtered_q, top_k=_effective_top_k * 3)
+        # Path 1: keyword search (SQLite, AND-match).
+        # No stopword stripping — the agent passes focused term queries.
+        # Sentence-shaped queries return nothing (every token would need to
+        # appear in some summary); the recall MCP description teaches the
+        # multi-call pattern for compound questions.
+        keyword_hits = self.db.search_by_keyword(query, top_k=_effective_top_k * 3)
         for item in keyword_hits:
             candidates[item.id] = item
             keyword_ids.add(item.id)
@@ -449,9 +455,10 @@ class MemoryEngine:
             for mem_id, sim in semantic_hits:
                 if sim < self.config.recall.similarity_floor:
                     continue
-                if mem_id in candidates:
-                    continue
                 if mem_id not in all_type_ids:
+                    continue
+                semantic_ids.add(mem_id)
+                if mem_id in candidates:
                     continue
                 # Find the item from the type cache (no extra DB query)
                 for mtype in search_types:
@@ -640,6 +647,7 @@ class MemoryEngine:
         for mem_id, sim in raw_hits:
             if sim < self.config.recall.similarity_floor:
                 continue
+            raw_text_ids.add(mem_id)
             if mem_id not in candidates:
                 item = self.db.get_item(mem_id)
                 if item:
@@ -659,6 +667,7 @@ class MemoryEngine:
             if sim < event_floor:
                 continue
             for sibling in self.db.get_memories_for_event(event_id):
+                event_thread_ids.add(sibling.id)
                 if sibling.id not in candidates:
                     candidates[sibling.id] = sibling
                     candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
@@ -893,6 +902,33 @@ class MemoryEngine:
         except Exception:
             pass
 
+        # Per-result gather_source: which paths contributed to each top-K result.
+        # Aggregated into a histogram so we can answer "is path X earning its keep"
+        # without rebuilding the per-id mapping later.
+        def _sources_for(mid: str) -> list[str]:
+            s: list[str] = []
+            if mid in keyword_ids:
+                s.append("keyword")
+            if mid in semantic_ids:
+                s.append("semantic")
+            if mid in graph_ids:
+                s.append("graph")
+            if mid in raw_text_ids:
+                s.append("raw_text")
+            if mid in event_thread_ids:
+                s.append("event_thread")
+            return s
+
+        result_sources: dict[str, list[str]] = {r["id"]: _sources_for(r["id"]) for r in results}
+        gather_histogram: dict[str, int] = {}
+        unique_path_counts: dict[str, int] = {}  # results matched by exactly one path
+        for srcs in result_sources.values():
+            for s in srcs:
+                gather_histogram[s] = gather_histogram.get(s, 0) + 1
+            if len(srcs) == 1:
+                only = srcs[0]
+                unique_path_counts[only] = unique_path_counts.get(only, 0) + 1
+
         _trace_recall(
             self._metrics,
             source="engine.recall",
@@ -904,6 +940,9 @@ class MemoryEngine:
                 "memory_type": memory_type,
                 "min_importance": min_importance,
                 "top_score": round(results[0]["score"], 3) if results else None,
+                "result_gather_histogram": gather_histogram,
+                "result_unique_path_counts": unique_path_counts,
+                "result_sources": result_sources,
             },
         )
 
