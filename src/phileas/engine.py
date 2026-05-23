@@ -10,6 +10,7 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 
 from __future__ import annotations
 
+import os
 import threading
 from datetime import date, datetime, timezone
 from typing import cast, get_args
@@ -466,17 +467,28 @@ class MemoryEngine:
                         candidates[mem_id] = type_item_cache[mtype][mem_id]
                         break
 
-        # Path 3: graph search (KuzuDB) — word-based entity lookup
-        # Also follows entity↔entity edges to discover related entities.
+        # Path 3: graph entity lookup.
+        # Two modes, switched by PHILEAS_PATH3 env var:
+        #   - "legacy" (default): per-token CONTAINS match via search_nodes.
+        #     Floods on short/common tokens; gated by a hardcoded English
+        #     stopword list. See engine_gather.py for the original logic.
+        #   - "index": per-token (and whole-query) EXACT normalized match via
+        #     lookup_nodes. No stopword filter — the entity index is itself
+        #     the gate: tokens that aren't entity names produce no hits.
         # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
-        # plain query.split() leaves trailing "?" on the last token and
-        # breaks CONTAINS match against entity names/aliases.
-        # Stop words are filtered: short function words match too many entity
-        # names ("the" → "The School of Life", "us" → "USD removal") and
-        # flood the graph_ids pool with unrelated hop-0 false positives.
+        # plain query.split() leaves trailing "?" on the last token.
         import re
 
-        words = [w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w.lower() not in STOP_WORDS and len(w) >= 2]
+        path3_mode = os.environ.get("PHILEAS_PATH3", "index")
+        raw_words = [w for w in re.findall(r"\w+", query, flags=re.UNICODE) if w]
+        if path3_mode == "index":
+            # Index mode: no stopword/len gate — the index lookup is the gate.
+            words = raw_words
+        else:
+            words = [w for w in raw_words if w.lower() not in STOP_WORDS and len(w) >= 2]
+        path3_tokens_input = list(raw_words)
+        path3_tokens_matched: list[str] = []
+        path3_hop0_entities: list[dict[str, str]] = []
         seen_entities: set[tuple[str, str]] = set()
 
         day_ids: set[str] = set()  # memories from matched Day entities
@@ -534,17 +546,30 @@ class MemoryEngine:
                     if item:
                         candidates[mem_id] = item
 
-        for word in words:
-            if len(word) < 2:
-                continue
-            graph_nodes = self.graph.search_nodes(word)
+        def _resolve_token(token: str, source_token: str) -> None:
+            """Run the chosen entity-resolution method for ``token`` and
+            add hop-0 entity matches + their 1-hop neighbours to candidates.
+
+            ``source_token`` is what we record in path3_tokens_matched —
+            useful when the resolved token is the whole query phrase but
+            we want to attribute the hit to a specific input token.
+            """
+            if path3_mode == "index":
+                graph_nodes = self.graph.lookup_nodes(token)
+            else:
+                graph_nodes = self.graph.search_nodes(token)
+            if not graph_nodes:
+                return
+            if source_token not in path3_tokens_matched:
+                path3_tokens_matched.append(source_token)
             for node in graph_nodes:
                 entity_name = node.get("name")
                 entity_type = node.get("type")
                 if not entity_name or not entity_type:
                     continue
+                path3_hop0_entities.append({"token": source_token, "name": entity_name, "type": entity_type})
                 _add_memories_for_entity(entity_type, entity_name, hop=0)
-                # Follow entity↔entity edges to discover related entities
+                # Follow entity↔entity edges to discover related entities.
                 # Skip Day-typed neighbours: they fan out to a whole day's
                 # memories and flood day_ids with unrelated results.
                 try:
@@ -558,6 +583,47 @@ class MemoryEngine:
                         "graph traversal failed",
                         extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
                     )
+
+        if path3_mode == "index" and len(words) > 1:
+            # Try the whole-query phrase first — if the model bundled tokens
+            # because they name one entity (e.g. "Poker Night"), match it
+            # whole and skip the per-token expansion entirely.
+            phrase = query.strip()
+            phrase_nodes = self.graph.lookup_nodes(phrase)
+            if phrase_nodes:
+                if phrase not in path3_tokens_matched:
+                    path3_tokens_matched.append(phrase)
+                for node in phrase_nodes:
+                    entity_name = node.get("name")
+                    entity_type = node.get("type")
+                    if not entity_name or not entity_type:
+                        continue
+                    path3_hop0_entities.append({"token": phrase, "name": entity_name, "type": entity_type})
+                    _add_memories_for_entity(entity_type, entity_name, hop=0)
+                    try:
+                        related = self.graph.get_related_entities(entity_type, entity_name)
+                        for rel in related:
+                            if rel["type"] == "Day":
+                                continue
+                            _add_memories_for_entity(rel["type"], rel["name"], hop=1)
+                    except Exception as e:
+                        log.debug(
+                            "graph traversal failed",
+                            extra={"op": "recall", "data": {"entity": entity_name, "error": str(e)}},
+                        )
+            else:
+                for word in words:
+                    if len(word) < 2:
+                        continue
+                    _resolve_token(word, word)
+        else:
+            for word in words:
+                if len(word) < 2:
+                    continue
+                _resolve_token(word, word)
+
+        # Snapshot Path 3 contribution before 3b/3c expand it — trace input.
+        path3_candidate_count = len(graph_ids)
 
         # Path 3b: Memory pivot — graph-first expansion.
         # For each memory found via entity lookup, discover ALL its entities,
@@ -943,6 +1009,11 @@ class MemoryEngine:
                 "result_gather_histogram": gather_histogram,
                 "result_unique_path_counts": unique_path_counts,
                 "result_sources": result_sources,
+                "path3_mode": path3_mode,
+                "path3_tokens_input": path3_tokens_input,
+                "path3_tokens_matched": path3_tokens_matched,
+                "path3_hop0_entities": path3_hop0_entities,
+                "path3_candidate_count": path3_candidate_count,
             },
         )
 

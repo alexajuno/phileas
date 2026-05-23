@@ -96,6 +96,9 @@ class GraphProxy:
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
         return self._read("search_nodes", {"query": name_query}, default=[])
 
+    def lookup_nodes(self, name_query: str) -> list[dict[str, Any]]:
+        return self._read("lookup_nodes", {"query": name_query}, default=[])
+
     # -- Memory <-> Entity edges (ABOUT) --
 
     def link_memory(

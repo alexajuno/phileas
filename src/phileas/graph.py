@@ -1044,6 +1044,26 @@ class GraphStore:
             result.close()
 
     @_locked
+    def lookup_nodes(self, name_query: str) -> list[dict[str, Any]]:
+        """Exact normalized-name lookup against the entity index.
+
+        Returns only entities whose primary_name_norm EQUALS the (normalized)
+        query, or where one of aliases_norm equals it. Contrast with
+        ``search_nodes`` which CONTAINS-matches and can flood the result set
+        on short tokens (e.g. "us" → "USD removal"). Used by Path 3 of
+        recall() to gate entity-name expansion on real entity references.
+        """
+        if not self._ensure_connected():
+            return []
+        rows = self._candidate_rows(name_query)
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            types = row.get("types") or []
+            primary_type = types[0] if types else ""
+            results.append({"name": row["primary_name"], "type": primary_type, "types": types})
+        return results
+
+    @_locked
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         """Set aliases for an entity (resolved by type+name)."""
         if not self._ensure_connected():
