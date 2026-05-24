@@ -34,18 +34,21 @@ mcp = FastMCP(
     instructions=(
         "Phileas is a long-term memory companion. Choose tools by query type:\n"
         "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
-        "  Pass FOCUSED TERM QUERIES (one concept, 1–4 words: 'badminton', 'phuongtq preferences',\n"
+        "  Pass FOCUSED TERM QUERIES (one concept, 1–4 words: 'tennis', '<person> preferences',\n"
         "  'memory layer design'). Avoid full sentences — every token must AND-match the memory\n"
         "  summary for keyword path, and long natural-language queries score poorly on semantic\n"
         "  too. For compound questions call recall() MULTIPLE TIMES IN PARALLEL with different\n"
         "  term queries and merge results by id. Example: instead of\n"
-        "  recall('what did the user say about phuongtq and badminton'), call\n"
-        "  recall('phuongtq') and recall('badminton') in parallel.\n"
+        "  recall('what did the user say about <person> and tennis'), call\n"
+        "  recall('<person>') and recall('tennis') in parallel.\n"
         "- recall_recent(days): recent memories by date — use FIRST for time-relative questions "
         "('recently', 'yesterday', 'last chat', 'last night', 'last session', 'last time we talked')\n"
         "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
         "- timeline(start, end): memories across a date range\n"
         "- about(name): all memories linked to a person/entity — for 'who is X' questions\n"
+        "- thread(event_id): FOLLOW-UP drill-down, not an entry point — when a recalled "
+        "memory's source_event_id looks worth expanding, fetch the verbatim originating "
+        "turn plus every sibling memory extracted from it\n"
         "- memorize(): store new memories; prefer memorize_batch() for multiple at once"
     ),
 )
@@ -203,7 +206,7 @@ def recall(
 
     Query shape (important):
         Pass focused noun-phrase queries — one concept, 1–4 words.
-        Examples: "badminton", "phuongtq preferences", "memory layer design".
+        Examples: "tennis", "<person> preferences", "memory layer design".
         Sentence queries usually return nothing on the keyword path: every
         whitespace-separated token must appear in some memory's summary.
         For compound questions, call recall() multiple times in parallel
@@ -317,7 +320,7 @@ def relate(
     """Create a relationship edge between two entities in the knowledge graph.
 
     Args:
-        from_name: Name of the source entity (e.g., "Giao").
+        from_name: Name of the source entity (e.g., "<person>").
         from_type: Type of the source entity (e.g., "Person").
         edge_type: Relationship type (e.g., "WORKS_AT", "KNOWS", "LIKES").
         to_name: Name of the target entity (e.g., "Anthropic").
@@ -344,7 +347,7 @@ def about(
     """Get memories connected to an entity in the knowledge graph.
 
     Args:
-        name: Name of the entity to look up (e.g., "Giao", "React").
+        name: Name of the entity to look up (e.g., "<person>", "React").
         entity_type: Optional type filter (e.g., "Person", "Technology").
         expand: If True, also include memories about neighboring entities
             reached via REL edges (WORKS_AT, KNOWS, BUILDS, …). Default
@@ -584,7 +587,7 @@ def merge_entities(canonical_id: str, duplicate_ids: list[str]) -> str:
 
     Cleanup primitive for entity-aliasing drift (AA-55). Use when the same
     person/place/topic was minted under multiple ids because the linker did
-    not recognize a name variant — e.g. "Ngân", "Ngan", and "nganvt" sitting
+    not recognize a name variant — e.g. "Hélène", "Helene", and "helene_k" sitting
     as three separate Person nodes for the same person.
 
     Picks the canonical id by highest memory mass. Snapshots each duplicate
