@@ -44,7 +44,7 @@ def test_writer_records_daemon(tmp_path: Path):
 def test_writer_records_recall_trace(tmp_path: Path):
     w = MetricsWriter(tmp_path / "metrics.db")
     w.record_recall_trace(
-        source="engine.recall_candidates",
+        source="engine.recall",
         query="who is anhdm",
         latency_ms=42.0,
         candidate_count=3,
@@ -57,7 +57,7 @@ def test_writer_records_recall_trace(tmp_path: Path):
     row = conn.execute(
         "SELECT source, query, latency_ms, candidate_count, returned_ids, pool_chars, extra FROM recall_traces"
     ).fetchone()
-    assert row[0] == "engine.recall_candidates"
+    assert row[0] == "engine.recall"
     assert row[1] == "who is anhdm"
     assert row[2] == 42.0
     assert row[3] == 3

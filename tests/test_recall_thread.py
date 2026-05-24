@@ -1,12 +1,9 @@
-"""Tests for the thread/provenance recall feature (AA-50).
+"""Tests for the thread/provenance feature (AA-50).
 
-Verifies:
-  1. Verbatim phrases in event.text are retrievable even when no memory's
-     summary contains the phrase (Path 6 — event-text search).
-  2. An event hit pulls in all sibling memories (memories with matching
-     source_event_id) tagged gather_source="event_thread".
-  3. recall_candidates exposes source_event_id on every memory item.
-  4. The `thread(event_id)` engine method returns the event + its memories.
+Verifies the `thread(event_id)` engine method returns the originating event
+text plus every memory extracted from it. (The recall_candidates gather path
+that also exercised event-text retrieval was removed; recall() still runs the
+same Path 6 sibling fanout internally, but only thread() exposes it directly.)
 """
 
 from __future__ import annotations
@@ -41,74 +38,6 @@ def _ingest_event_with_memories(engine, event_text: str, memories: list[dict]) -
     return event
 
 
-def test_verbatim_phrase_found_when_no_memory_has_it(tmp_dir):
-    """A distinctive phrase living only in event.text is reachable via recall_candidates."""
-    engine = _make_engine(tmp_dir)
-    event = _ingest_event_with_memories(
-        engine,
-        event_text=(
-            "We discussed the tier model deprecation today and decided the "
-            "hierarchy was confusing. Going to remove tiers 2 and 3."
-        ),
-        memories=[
-            # Paraphrase only — no verbatim "tier model deprecation" wording.
-            {"summary": "Decided to remove the memory hierarchy levels", "memory_type": "knowledge"},
-        ],
-    )
-
-    pool = engine.recall_candidates("tier model deprecation")
-
-    # The event passage should be in the candidate pool.
-    passages = [p for p in pool if p.get("kind") == "event_passage"]
-    assert any(p["id"] == event.id for p in passages), (
-        f"event_passage for {event.id} missing from pool. Passages: {[p.get('id') for p in passages]}"
-    )
-    # And the verbatim phrase should be in the surfaced text.
-    matched = next(p for p in passages if p["id"] == event.id)
-    assert "tier model deprecation" in matched["text"]
-
-
-def test_event_hit_surfaces_sibling_memories(tmp_dir):
-    """Hitting an event drags in every memory extracted from it."""
-    engine = _make_engine(tmp_dir)
-    event = _ingest_event_with_memories(
-        engine,
-        event_text="A unique-token-xyzzy conversation with three distinct points",
-        memories=[
-            {"summary": "Sibling memory one alpha", "memory_type": "knowledge"},
-            {"summary": "Sibling memory two beta", "memory_type": "knowledge"},
-            {"summary": "Sibling memory three gamma", "memory_type": "knowledge"},
-        ],
-    )
-
-    pool = engine.recall_candidates("unique-token-xyzzy")
-    threaded = [
-        p for p in pool if p.get("kind") != "event_passage" and "event_thread" in (p.get("gather_source") or [])
-    ]
-
-    assert len(threaded) == 3, f"expected 3 sibling memories, got {len(threaded)}: {threaded}"
-    for item in threaded:
-        assert item["source_event_id"] == event.id
-
-
-def test_recall_candidates_response_carries_source_event_id(tmp_dir):
-    """Every memory item in the recall_candidates response surfaces source_event_id."""
-    engine = _make_engine(tmp_dir)
-    _ingest_event_with_memories(
-        engine,
-        event_text="The marker phrase distinct-marker-abc lives here",
-        memories=[
-            {"summary": "Memory referencing distinct-marker-abc", "memory_type": "knowledge"},
-        ],
-    )
-
-    pool = engine.recall_candidates("distinct-marker-abc")
-    memory_items = [p for p in pool if p.get("kind") != "event_passage"]
-    assert memory_items, "expected at least one memory in pool"
-    for item in memory_items:
-        assert "source_event_id" in item
-
-
 def test_thread_returns_event_and_memories(tmp_dir):
     """engine.thread(event_id) returns the event text + its memory family."""
     engine = _make_engine(tmp_dir)
@@ -133,17 +62,3 @@ def test_thread_returns_event_and_memories(tmp_dir):
 def test_thread_missing_event_returns_none(tmp_dir):
     engine = _make_engine(tmp_dir)
     assert engine.thread("nonexistent-id") is None
-
-
-def test_event_passages_respect_similarity_floor(tmp_dir):
-    """A query unrelated to any event should not surface event_passages."""
-    engine = _make_engine(tmp_dir)
-    _ingest_event_with_memories(
-        engine,
-        event_text="A conversation entirely about cooking pasta carbonara",
-        memories=[{"summary": "Made carbonara", "memory_type": "event"}],
-    )
-
-    pool = engine.recall_candidates("kubernetes deployment yaml")
-    passages = [p for p in pool if p.get("kind") == "event_passage"]
-    assert passages == [], f"unrelated query surfaced passages: {passages}"

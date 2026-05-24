@@ -151,7 +151,7 @@ class MetricsWriter:
     ) -> None:
         """Append one recall trace row. Best-effort — never raises.
 
-        source is one of: 'hook_dispatch', 'engine.recall', 'engine.recall_candidates',
+        source is one of: 'hook_dispatch', 'engine.recall',
         'engine.recall_recent'. The web /monitoring page groups rows by
         timestamp + query for temporal correlation across a single user prompt.
         """

@@ -42,33 +42,6 @@ def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     return max(0.0, (now - target).total_seconds() / 86400.0)
 
 
-def _gather_source_histogram(items: list[dict]) -> dict[str, int]:
-    """Count occurrences of each gather_source path across the candidate pool.
-
-    `gather_source` is a list (e.g. ["keyword", "semantic"]); a memory matched
-    by two paths increments both counts.
-    """
-    hist: dict[str, int] = {}
-    for it in items or ():
-        srcs = it.get("gather_source") or ()
-        if isinstance(srcs, str):
-            srcs = (srcs,)
-        for s in srcs:
-            hist[s] = hist.get(s, 0) + 1
-    return hist
-
-
-def _hop_histogram(items: list[dict]) -> dict[str, int]:
-    hist: dict[str, int] = {}
-    for it in items or ():
-        h = it.get("hop")
-        if h is None:
-            continue
-        key = str(h)
-        hist[key] = hist.get(key, 0) + 1
-    return hist
-
-
 def _trace_recall(
     metrics,
     *,
@@ -175,8 +148,7 @@ class MemoryEngine:
     def thread(self, event_id: str) -> dict | None:
         """Return an event's full text plus every memory extracted from it.
 
-        Powers the "show me the conversation this came from" affordance. Pair
-        with verbatim passages surfaced by Path 6 in recall_candidates.
+        Powers the "show me the conversation this came from" affordance.
         """
         event = self.db.get_event(event_id)
         if event is None:
@@ -326,61 +298,6 @@ class MemoryEngine:
         self.graph.link_memory(memory_id, "Day", iso_date)
 
     # ------------------------------------------------------------------
-    # recall_candidates — Stage-1 only
-    # ------------------------------------------------------------------
-
-    @timed_op("recall_candidates")
-    def recall_candidates(
-        self,
-        query: str,
-        memory_type: str | None = None,
-        min_importance: int | None = None,
-    ) -> list[dict]:
-        """Stage-1 only candidate gather. Returns the unranked candidate pool.
-
-        Mirrors recall's gather phase (keyword + semantic + graph + raw text)
-        but skips the cross-encoder rerank and MMR. Intended for callers that
-        do their own relevance judgement over the raw pool.
-
-        Skips Path 3c (LLM-resolved referents) since the daemon has no LLM.
-
-        Returns: list of dicts with id, summary, type, importance, created_at,
-        hop (graph distance, 0 = entity-name match), gather_source (list of
-        paths that contributed: any of "keyword", "semantic", "graph",
-        "raw_text").
-        """
-        from time import perf_counter
-
-        from phileas.engine_gather import gather_candidates
-
-        op_extra(query=query, memory_type=memory_type, min_importance=min_importance)
-        _t0 = perf_counter()
-        result = gather_candidates(
-            db=self.db,
-            vector=self.vector,
-            graph=self.graph,
-            config=self.config,
-            query=query,
-            memory_type=memory_type,
-            min_importance=min_importance,
-        )
-        op_extra(candidates=len(result))
-        _trace_recall(
-            self._metrics,
-            source="engine.recall_candidates",
-            query=query,
-            latency_ms=(perf_counter() - _t0) * 1000,
-            result=result,
-            extra={
-                "memory_type": memory_type,
-                "min_importance": min_importance,
-                "gather_sources": _gather_source_histogram(result),
-                "hop_distribution": _hop_histogram(result),
-            },
-        )
-        return result
-
-    # ------------------------------------------------------------------
     # recall
     # ------------------------------------------------------------------
 
@@ -469,12 +386,11 @@ class MemoryEngine:
 
         # Path 3: graph entity lookup.
         # Two modes, switched by PHILEAS_PATH3 env var:
-        #   - "legacy" (default): per-token CONTAINS match via search_nodes.
-        #     Floods on short/common tokens; gated by a hardcoded English
-        #     stopword list. See engine_gather.py for the original logic.
-        #   - "index": per-token (and whole-query) EXACT normalized match via
-        #     lookup_nodes. No stopword filter — the entity index is itself
-        #     the gate: tokens that aren't entity names produce no hits.
+        #   - "index" (default): per-token (and whole-query) EXACT normalized
+        #     match via lookup_nodes. No stopword filter — the entity index is
+        #     itself the gate: tokens that aren't entity names produce no hits.
+        #   - "legacy": per-token CONTAINS match via search_nodes. Floods on
+        #     short/common tokens; gated by a hardcoded English stopword list.
         # \w+ keeps unicode letters (e.g. "chị") but drops punctuation;
         # plain query.split() leaves trailing "?" on the last token.
         import re
@@ -723,10 +639,9 @@ class MemoryEngine:
         # An event hit drags in every memory extracted from that event,
         # tagged hop=1 (one structural step from the matching event).
         # Verbatim event passages themselves are not memory rows, so they
-        # are not added to `candidates` here — the recall_candidates path
-        # surfaces them as a separate event_hits list.
+        # are not added to `candidates` here — only the sibling memories are.
         # Lower floor than memory search: long event chunks score lower
-        # under cosine than focused summaries. See engine_gather.py.
+        # under cosine than focused summaries.
         event_floor = min(0.25, self.config.recall.similarity_floor)
         event_hits = self.vector.search_events(query, top_k=20)
         for event_id, sim in event_hits:
