@@ -551,39 +551,6 @@ def init_cmd():
     run_wizard()
 
 
-@click.command("migrate-recall")
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Overwrite existing customized SKILL.md (otherwise leaves user edits alone).",
-)
-def migrate_recall_cmd(force: bool):
-    """Install Phileas recall skill and reconcile the hook against config.
-
-    Default flow (recall.mode != "always"):
-      - Installs SKILL.md at ~/.claude/skills/phileas/SKILL.md.
-      - Removes the legacy phileas-hook entry from ~/.claude/settings.json.
-
-    With recall.mode = "always":
-      - Installs SKILL.md.
-      - Installs the phileas-hook entry as a power-user opt-in.
-    """
-    from phileas.cli.wizard import _install_skill, _sync_hook_state
-    from phileas.config import load_config
-
-    cfg = load_config()
-    mode = cfg.recall.mode
-
-    skill_changed, skill_msg = _install_skill(force=force)
-    hook_changed, hook_msg = _sync_hook_state(mode)
-
-    skill_marker = "[green]OK[/green]" if skill_changed else "[dim]skip[/dim]"
-    hook_marker = "[green]OK[/green]" if hook_changed else "[dim]skip[/dim]"
-    console.print(f"  Skill {skill_marker} -- {skill_msg}")
-    console.print(f"  Hooks {hook_marker} -- {hook_msg} (recall.mode = {mode!r})")
-    console.print("  [dim]Restart Claude Code to pick up changes.[/dim]")
-
-
 # ------------------------------------------------------------------
 # start / stop (daemon)
 # ------------------------------------------------------------------
