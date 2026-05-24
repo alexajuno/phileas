@@ -203,7 +203,9 @@ def format_hint(event_id: str | None) -> str:
     )
 
 
-def main() -> int:
+def main(client_name: str = "claude") -> int:
+    from phileas.hooks.adapters import get_adapter
+
     payload = read_payload()
 
     # Global Phileas opt-out: no capture, no hint.
@@ -215,11 +217,12 @@ def main() -> int:
     if payload.get("stop_hook_active"):
         return 0
 
-    transcript_path = payload.get("transcript_path") or ""
+    transcript_path = payload.get("transcriptPath") or payload.get("transcript_path") or ""
     if not transcript_path:
         return 0
 
-    memorized, user_text, assistant_text = turn_state(transcript_path)
+    adapter = get_adapter(client_name)
+    memorized, user_text, assistant_text = adapter.parse_transcript(transcript_path)
 
     # Capture the raw turn (best-effort). event_id may be None if the
     # daemon is unreachable; the hint still emits, just without linkage.
@@ -233,14 +236,9 @@ def main() -> int:
     if memorized or len(assistant_text.strip()) < TRIVIAL_TURN_CHARS:
         return 0
 
-    print(
-        json.dumps(
-            {
-                "decision": "block",
-                "reason": format_hint(event_id),
-            }
-        )
-    )
+    hint = format_hint(event_id)
+    output = adapter.format_memorize_output("block", hint)
+    print(json.dumps(output))
     return 0
 
 

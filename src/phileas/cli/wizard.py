@@ -123,6 +123,57 @@ def _wire_claude_code(home: Path) -> bool:
         return False
 
 
+def _wire_antigravity(home: Path) -> bool:
+    """Add Phileas MCP server to Antigravity's mcp_config.json files. Returns True on success."""
+    paths = [
+        Path.home() / ".gemini" / "config" / "mcp_config.json",
+        Path.home() / ".gemini" / "antigravity-cli" / "mcp_config.json",
+    ]
+    phileas_exe = _find_phileas_command()
+    success = False
+
+    for mcp_json_path in paths:
+        mcp_config: dict
+        if mcp_json_path.exists() and mcp_json_path.stat().st_size > 0:
+            try:
+                mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError, OSError:
+                mcp_config = {}
+        else:
+            mcp_config = {}
+
+        mcp_config.setdefault("mcpServers", {})
+
+        if phileas_exe:
+            mcp_config["mcpServers"]["phileas"] = {
+                "type": "stdio",
+                "command": phileas_exe,
+                "args": ["serve"],
+            }
+        else:
+            mcp_config["mcpServers"]["phileas"] = {
+                "type": "stdio",
+                "command": "uv",
+                "args": [
+                    "run",
+                    "--project",
+                    str(Path(__file__).resolve().parents[2].parent),
+                    "python",
+                    "-c",
+                    "from phileas.server import mcp; mcp.run()",
+                ],
+            }
+
+        try:
+            mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
+            mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n", encoding="utf-8")
+            success = True
+        except OSError:
+            pass
+
+    return success
+
+
 def _find_phileas_command() -> str | None:
     """Find the phileas executable on PATH."""
     import shutil
@@ -270,6 +321,72 @@ def _sync_hook_state(mode: str) -> tuple[bool, str]:
     return True, f"{verb} hook entries in {settings_path}"
 
 
+def _sync_hook_state_antigravity(mode: str) -> tuple[bool, str]:
+    """Reconcile ~/.gemini/config/hooks.json entries against recall mode."""
+    hooks_path = Path.home() / ".gemini" / "config" / "hooks.json"
+
+    hooks_config = {}
+    if hooks_path.exists() and hooks_path.stat().st_size > 0:
+        try:
+            hooks_config = json.loads(hooks_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    changed = False
+
+    if mode == "never":
+        if "phileas-recall" in hooks_config:
+            del hooks_config["phileas-recall"]
+            changed = True
+        if "phileas-memorize" in hooks_config:
+            del hooks_config["phileas-memorize"]
+            changed = True
+        verb = "removed"
+    else:
+        recall_entry = {
+            "PreInvocation": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "phileas-hook recall --client antigravity",
+                        }
+                    ]
+                }
+            ]
+        }
+        memorize_entry = {
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "phileas-hook memorize --client antigravity",
+                        }
+                    ]
+                }
+            ]
+        }
+
+        if hooks_config.get("phileas-recall") != recall_entry:
+            hooks_config["phileas-recall"] = recall_entry
+            changed = True
+        if hooks_config.get("phileas-memorize") != memorize_entry:
+            hooks_config["phileas-memorize"] = memorize_entry
+            changed = True
+        verb = "installed"
+
+    if changed:
+        try:
+            hooks_path.parent.mkdir(parents=True, exist_ok=True)
+            hooks_path.write_text(json.dumps(hooks_config, indent=2) + "\n", encoding="utf-8")
+            return True, f"{verb} hooks in {hooks_path}"
+        except OSError as exc:
+            return False, f"failed to write hooks.json: {exc}"
+    else:
+        return False, f"hooks already in desired state ({mode})"
+
+
 # -- Skill installation ------------------------------------------------
 
 # Source asset ships with the package and never depends on HOME.
@@ -299,6 +416,41 @@ def _install_skill(force: bool = False) -> tuple[bool, str]:
         return False, f"could not read skill source: {exc}"
 
     dest = _skill_dest()
+    if dest.exists():
+        try:
+            existing = dest.read_text(encoding="utf-8")
+        except OSError as exc:
+            return False, f"could not read existing skill: {exc}"
+        if existing == source_text:
+            return False, f"skill already installed at {dest}"
+        if not force:
+            return False, f"skill exists with custom content at {dest} (use force=True to overwrite)"
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(source_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write skill: {exc}"
+
+    return True, f"installed skill at {dest}"
+
+
+def _skill_dest_antigravity() -> Path:
+    """Live destination for the user-invoked skill in Antigravity."""
+    return Path.home() / ".gemini" / "config" / "skills" / "phileas" / "SKILL.md"
+
+
+def _install_skill_antigravity(force: bool = False) -> tuple[bool, str]:
+    """Install the Phileas skill into ~/.gemini/config/skills/phileas/SKILL.md."""
+    if not SKILL_SOURCE.is_file():
+        return False, f"skill source missing at {SKILL_SOURCE}"
+
+    try:
+        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not read skill source: {exc}"
+
+    dest = _skill_dest_antigravity()
     if dest.exists():
         try:
             existing = dest.read_text(encoding="utf-8")
@@ -359,13 +511,15 @@ def run_wizard() -> None:
     console.print(
         "  [cyan]1[/cyan]  With Claude Code [dim](recommended)[/dim] -- Claude is the brain, Phileas stores memories"
     )
-    console.print("  [cyan]2[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
-    console.print("  [cyan]3[/cyan]  Both -- Claude Code + standalone CLI access")
+    console.print("  [cyan]2[/cyan]  With Antigravity -- Antigravity is the brain, Phileas stores memories")
+    console.print("  [cyan]3[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
+    console.print("  [cyan]4[/cyan]  All -- Claude Code + Antigravity + standalone CLI access")
     console.print()
 
-    mode = click.prompt("Choice", type=click.Choice(["1", "2", "3"]), default="1")
-    use_claude_code = mode in ("1", "3")
-    use_standalone = mode in ("2", "3")
+    mode = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4"]), default="1")
+    use_claude_code = mode in ("1", "4")
+    use_antigravity = mode in ("2", "4")
+    use_standalone = mode in ("3", "4")
 
     # 2. Data directory
     console.print()
@@ -407,7 +561,7 @@ def run_wizard() -> None:
     config_path = _write_config(home, provider, model, api_key_env)
     console.print(f"[green]Wrote[/green] {config_path}")
 
-    # 5. Wire Claude Code
+    # 5. Wire integrations
     if use_claude_code:
         console.print()
         console.print("[bold]Configuring Claude Code integration...[/bold]")
@@ -434,6 +588,29 @@ def run_wizard() -> None:
         console.print(f"  Hooks {marker} -- {msg}")
         console.print("  [dim]Restart Claude Code to pick up MCP + skill + hook changes.[/dim]")
 
+    if use_antigravity:
+        console.print()
+        console.print("[bold]Configuring Antigravity integration...[/bold]")
+        if _wire_antigravity(home):
+            console.print("  MCP   [green]OK[/green] -- updated mcp_config.json")
+        else:
+            console.print("  MCP   [yellow]could not write MCP config automatically[/yellow]")
+            console.print("        Add this to ~/.gemini/config/mcp_config.json manually:")
+            console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
+
+        from phileas.config import load_config
+
+        recall_mode = load_config(home=home).recall.mode
+
+        changed, msg = _install_skill_antigravity()
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Skill {marker} -- {msg}")
+
+        changed, msg = _sync_hook_state_antigravity(recall_mode)
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Hooks {marker} -- {msg}")
+        console.print("  [dim]Restart Antigravity/agy to pick up hook + skill changes.[/dim]")
+
     # 6. Download models
     console.print()
     console.print("[bold]Downloading models...[/bold]")
@@ -445,19 +622,24 @@ def run_wizard() -> None:
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()
 
-    if use_claude_code and not use_standalone:
+    if use_claude_code and not use_standalone and not use_antigravity:
         console.print("Next steps:")
         console.print("  [cyan]1.[/cyan] Restart Claude Code")
         console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
         console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
-    elif use_standalone and not use_claude_code:
+    elif use_antigravity and not use_standalone and not use_claude_code:
+        console.print("Next steps:")
+        console.print("  [cyan]1.[/cyan] Restart Antigravity/agy")
+        console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
+        console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
+    elif use_standalone and not use_claude_code and not use_antigravity:
         console.print("Try:")
         console.print('  [cyan]phileas remember "something about yourself"[/cyan]')
         console.print('  [cyan]phileas recall "what do you know about me"[/cyan]')
         console.print("  [cyan]phileas status[/cyan]")
     else:
         console.print("Next steps:")
-        console.print("  [cyan]1.[/cyan] Restart Claude Code for MCP integration")
+        console.print("  [cyan]1.[/cyan] Restart Claude Code and/or Antigravity for MCP integration")
         console.print('  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember "I like Python"[/cyan]')
         console.print("  [cyan]3.[/cyan] Check usage: [cyan]phileas usage[/cyan]")
 

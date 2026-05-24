@@ -18,23 +18,35 @@ import click
 
 @click.group()
 def app() -> None:
-    """Claude Code hooks for Phileas."""
+    """Claude Code / Antigravity hooks for Phileas."""
 
 
 @app.command()
-def recall() -> None:
-    """UserPromptSubmit hook: pre-recall memories for the current prompt."""
+@click.option(
+    "--client",
+    default="claude",
+    type=click.Choice(["claude", "antigravity"]),
+    help="Target client: 'claude' or 'antigravity'",
+)
+def recall(client: str) -> None:
+    """UserPromptSubmit/PreInvocation hook: pre-recall memories for the current prompt."""
     from phileas.hooks.recall import main
 
-    sys.exit(main())
+    sys.exit(main(client_name=client))
 
 
 @app.command()
-def memorize() -> None:
-    """Stop hook: nudge Claude to evaluate the just-finished turn for memorize."""
+@click.option(
+    "--client",
+    default="claude",
+    type=click.Choice(["claude", "antigravity"]),
+    help="Target client: 'claude' or 'antigravity'",
+)
+def memorize(client: str) -> None:
+    """Stop hook: evaluate whether the turn produced anything to memorize."""
     from phileas.hooks.memorize import main
 
-    sys.exit(main())
+    sys.exit(main(client_name=client))
 
 
 if __name__ == "__main__":

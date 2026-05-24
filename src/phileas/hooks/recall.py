@@ -197,35 +197,20 @@ def format_error(msg: str) -> str:
     )
 
 
-def run_rerank(prompt: str) -> int:
-    ok, payload = call_daemon(
-        "recall",
-        {"query": prompt, "top_k": TOP_K},
-    )
-    if not ok:
-        print(format_error(str(payload)))
-        return 0
-    if not isinstance(payload, list):
-        print(format_error(f"unexpected daemon response shape: {type(payload).__name__}"))
-        return 0
-    if payload:
-        print(format_memories(payload))
-    return 0
+def main(client_name: str = "claude") -> int:
+    from phileas.hooks.adapters import get_adapter
 
+    # Read payload from stdin
+    raw = sys.stdin.read()
+    payload = {}
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = {"prompt": raw.strip()}
 
-def run_direct(prompt: str) -> int:
-    """Direct-tool pipeline: emit a static routing-ladder hint.
-
-    No daemon call. The hint instructs Claude to call phileas tools directly
-    (about / list_day_memories / recall_recent / recall) based on query shape,
-    using full conversation context to decide whether memory is relevant at all.
-    """
-    print(format_routing_hint())
-    return 0
-
-
-def main() -> int:
-    prompt = read_prompt()
+    adapter = get_adapter(client_name)
+    prompt = adapter.read_prompt(payload)
     if not prompt:
         return 0
 
@@ -236,12 +221,29 @@ def main() -> int:
     if mode == "auto" and obvious_skip(prompt):
         return 0
 
+    content = ""
     if pipeline == "direct":
-        rc = run_direct(prompt)
+        content = format_routing_hint()
     else:
-        rc = run_rerank(prompt)
+        ok, res = call_daemon(
+            "recall",
+            {"query": prompt, "top_k": TOP_K},
+        )
+        if not ok:
+            content = format_error(str(res))
+        elif not isinstance(res, list):
+            content = format_error(f"unexpected daemon response shape: {type(res).__name__}")
+        elif res:
+            content = format_memories(res)
 
-    return rc
+    if content:
+        output = adapter.format_recall_output(content)
+        if isinstance(output, str):
+            print(output)
+        else:
+            print(json.dumps(output))
+
+    return 0
 
 
 if __name__ == "__main__":
