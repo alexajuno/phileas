@@ -81,6 +81,19 @@ def test_writer_recall_trace_query_truncated(tmp_path: Path):
     assert len(q) == 4096
 
 
+def test_writer_records_tool_call(tmp_path: Path):
+    w = MetricsWriter(tmp_path / "metrics.db")
+    w.record_tool_call(tool="context", latency_ms=3.4, ok=True)
+    w.record_tool_call(tool="about", latency_ms=12.0, ok=False, error="ValueError")
+    w.close()
+    conn = sqlite3.connect(tmp_path / "metrics.db")
+    rows = conn.execute("SELECT tool, latency_ms, ok, error FROM tool_calls ORDER BY id").fetchall()
+    assert rows == [
+        ("context", 3.4, 1, None),
+        ("about", 12.0, 0, "ValueError"),
+    ]
+
+
 def test_writer_swallows_bad_conn(tmp_path: Path):
     w = MetricsWriter(tmp_path / "metrics.db")
     w._conn = None  # noqa: SLF001
@@ -97,3 +110,4 @@ def test_writer_swallows_bad_conn(tmp_path: Path):
     )
     w.record_ingest(memory_type=None, importance=None, entity_count=0, deduped=False, source="x")
     w.record_daemon("start")
+    w.record_tool_call(tool="context", latency_ms=1.0, ok=True)

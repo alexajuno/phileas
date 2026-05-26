@@ -18,8 +18,10 @@ Tools:
   - status: system health/stats
 """
 
+import functools
 import json
 from pathlib import Path
+from time import perf_counter
 
 from mcp.server.fastmcp import FastMCP
 
@@ -63,7 +65,48 @@ graph = GraphProxy()
 engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 
 
-@mcp.tool()
+def _instrumented_tool(*tool_args, **tool_kwargs):
+    """Wrap ``@_instrumented_tool()`` with MCP-call telemetry.
+
+    Records (tool name, latency, ok, error class) into ``metrics.db.tool_calls``
+    for every MCP-level invocation. Args are intentionally not captured —
+    queries and summaries can carry PII, and recall already has its own
+    richer trace in ``recall_traces``. Failures in the metrics path are
+    swallowed so they can't break the tool call itself.
+    """
+    mcp_decorator = mcp.tool(*tool_args, **tool_kwargs)
+
+    def decorator(fn):
+        tool_name = fn.__name__
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            t0 = perf_counter()
+            ok = True
+            err: str | None = None
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                ok = False
+                err = type(e).__name__
+                raise
+            finally:
+                try:
+                    engine._metrics.record_tool_call(
+                        tool=tool_name,
+                        latency_ms=(perf_counter() - t0) * 1000,
+                        ok=ok,
+                        error=err,
+                    )
+                except Exception:
+                    pass
+
+        return mcp_decorator(wrapper)
+
+    return decorator
+
+
+@_instrumented_tool()
 def memorize(
     summary: str,
     memory_type: str = "knowledge",
@@ -116,7 +159,7 @@ def memorize(
     return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
 
 
-@mcp.tool()
+@_instrumented_tool()
 def memorize_batch(memories: list | str) -> str:
     """Store multiple memories in one call.
 
@@ -169,7 +212,7 @@ def memorize_batch(memories: list | str) -> str:
     return f"Batch complete ({len(results)} items):\n" + "\n".join(f"  {r}" for r in results)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def context(top_k: int = 10, memory_type: str | None = None) -> str:
     """Get the user's core context — identity, preferences, key facts.
 
@@ -191,7 +234,7 @@ def context(top_k: int = 10, memory_type: str | None = None) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def recall(
     query: str,
     memory_type: str | None = None,
@@ -233,7 +276,7 @@ def recall(
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def thread(event_id: str) -> str:
     """Return the verbatim text of an ingested event plus every memory extracted from it.
 
@@ -259,7 +302,7 @@ def thread(event_id: str) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def update(
     memory_id: str,
     summary: str | None = None,
@@ -297,7 +340,7 @@ def update(
     return "\n".join(parts)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def forget(memory_id: str, reason: str | None = None) -> str:
     """Archive a memory so it is no longer retrieved.
 
@@ -308,7 +351,7 @@ def forget(memory_id: str, reason: str | None = None) -> str:
     return engine.forget(memory_id, reason=reason)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def relate(
     from_name: str,
     from_type: str,
@@ -337,7 +380,7 @@ def relate(
     )
 
 
-@mcp.tool()
+@_instrumented_tool()
 def about(
     name: str,
     entity_type: str | None = None,
@@ -369,7 +412,7 @@ def about(
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> str:
     """Get memories anchored to a date or date range.
 
@@ -392,7 +435,7 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5) -> str:
     """Return top memories per day for the last N days, grouped newest-day first.
 
@@ -475,7 +518,7 @@ def _trace_recent(items: list[dict], days: int, top_per_day: int, min_importance
         pass
 
 
-@mcp.tool()
+@_instrumented_tool()
 def reflect(date: str | None = None) -> str:
     """Run daily reflection to synthesize insights from a day's memories.
 
@@ -491,7 +534,7 @@ def reflect(date: str | None = None) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def list_day_memories(date: str | None = None) -> str:
     """List the day's active memories — the input for agent-driven reflection.
 
@@ -516,7 +559,7 @@ def list_day_memories(date: str | None = None) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def ingest_session(session_path: str) -> str:
     """Parse a Claude Code JSONL session file and return its conversation text.
 
@@ -561,7 +604,7 @@ def ingest_session(session_path: str) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@_instrumented_tool()
 def mark_session_done(session_path: str) -> str:
     """Mark a session as processed so it won't be ingested again.
 
@@ -581,7 +624,7 @@ def mark_session_done(session_path: str) -> str:
     return f"Session {session_id} marked as processed. Total processed sessions: {total}."
 
 
-@mcp.tool()
+@_instrumented_tool()
 def merge_entities(canonical_id: str, duplicate_ids: list[str]) -> str:
     """Fold duplicate entity rows into a canonical one.
 
@@ -609,7 +652,7 @@ def merge_entities(canonical_id: str, duplicate_ids: list[str]) -> str:
     )
 
 
-@mcp.tool()
+@_instrumented_tool()
 def status() -> str:
     """Get system health and memory statistics."""
     stats = engine.status()

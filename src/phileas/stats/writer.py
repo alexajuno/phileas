@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS recall_traces (
 );
 CREATE INDEX IF NOT EXISTS idx_recall_traces_created ON recall_traces(created_at);
 CREATE INDEX IF NOT EXISTS idx_recall_traces_source ON recall_traces(source);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    latency_ms REAL,
+    ok INTEGER NOT NULL,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_created ON tool_calls(created_at);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool);
 """
 
 
@@ -177,6 +188,31 @@ class MetricsWriter:
             )
         except Exception as e:
             log.debug("record_recall_trace failed", extra={"err": str(e)})
+
+    def record_tool_call(
+        self,
+        tool: str,
+        latency_ms: float | None,
+        ok: bool,
+        error: str | None = None,
+    ) -> None:
+        """Append one MCP-tool-call row. Best-effort — never raises.
+
+        Captures the MCP boundary: tool name, latency, success flag, and
+        exception class name on failure. Deliberately does NOT capture
+        arguments — queries and summaries can contain PII, and recall
+        already has a richer per-call trace in `recall_traces`.
+        """
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(
+                """INSERT INTO tool_calls (created_at, tool, latency_ms, ok, error)
+                   VALUES (?,?,?,?,?)""",
+                (self._now(), tool, latency_ms, int(ok), error),
+            )
+        except Exception as e:
+            log.debug("record_tool_call failed", extra={"err": str(e)})
 
     def record_daemon(self, kind: str, payload: dict | None = None) -> None:
         if self._conn is None:
