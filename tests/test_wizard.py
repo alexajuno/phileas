@@ -8,9 +8,13 @@ from pathlib import Path
 import pytest
 
 from phileas.cli.wizard import (
+    CODEX_HOOK_COMMANDS,
     HOOK_COMMANDS,
     _install_skill,
+    _install_skill_codex,
     _sync_hook_state,
+    _sync_hook_state_codex,
+    _wire_codex,
 )
 
 
@@ -29,6 +33,14 @@ def _write_settings(home: Path, data: dict) -> None:
     path = _settings_file(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _codex_hooks_file(home: Path) -> Path:
+    return home / ".codex" / "hooks.json"
+
+
+def _codex_config_file(home: Path) -> Path:
+    return home / ".codex" / "config.toml"
 
 
 # ------------------------------------------------------------------
@@ -169,4 +181,90 @@ class TestInstallSkill:
 
         changed, _ = _install_skill(force=True)
         assert changed is True
+        assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas\n")
+
+
+# ------------------------------------------------------------------
+# Codex integration helpers
+# ------------------------------------------------------------------
+
+
+class TestWireCodex:
+    """Codex MCP config is written to ~/.codex/config.toml."""
+
+    def test_writes_mcp_server_when_missing(self, fake_home):
+        changed = _wire_codex(fake_home / ".phileas")
+        assert changed is True
+        text = _codex_config_file(fake_home).read_text(encoding="utf-8")
+        assert "[mcp_servers.phileas]" in text
+        assert 'args = ["serve"]' in text
+
+    def test_replaces_existing_phileas_server_preserving_other_config(self, fake_home):
+        path = _codex_config_file(fake_home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    '[projects."/tmp/project"]',
+                    'trust_level = "trusted"',
+                    "",
+                    "[mcp_servers.phileas]",
+                    'command = "old"',
+                    'args = ["old"]',
+                    "",
+                    "[mcp_servers.other]",
+                    'command = "other"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        changed = _wire_codex(fake_home / ".phileas")
+        assert changed is True
+        text = path.read_text(encoding="utf-8")
+        assert 'trust_level = "trusted"' in text
+        assert 'command = "old"' not in text
+        assert "[mcp_servers.other]" in text
+        assert text.count("[mcp_servers.phileas]") == 1
+
+
+class TestSyncHookStateCodex:
+    """Codex hooks are installed into ~/.codex/hooks.json."""
+
+    @pytest.mark.parametrize("mode", ["always", "auto"])
+    def test_installs_when_hooks_missing(self, fake_home, mode):
+        changed, _msg = _sync_hook_state_codex(mode)
+        assert changed is True
+        data = json.loads(_codex_hooks_file(fake_home).read_text(encoding="utf-8"))
+        entries = data["hooks"]["UserPromptSubmit"]
+        cmds = [h["command"] for entry in entries for h in entry["hooks"]]
+        assert CODEX_HOOK_COMMANDS["UserPromptSubmit"] in cmds
+
+    @pytest.mark.parametrize("mode", ["always", "auto"])
+    def test_idempotent_when_already_present(self, fake_home, mode):
+        _sync_hook_state_codex(mode)
+        changed, msg = _sync_hook_state_codex(mode)
+        assert changed is False
+        assert "already" in msg.lower()
+
+    def test_removes_when_present(self, fake_home):
+        _sync_hook_state_codex("always")
+        changed, _ = _sync_hook_state_codex("never")
+        assert changed is True
+        data = json.loads(_codex_hooks_file(fake_home).read_text(encoding="utf-8"))
+        if "UserPromptSubmit" in data.get("hooks", {}):
+            for entry in data["hooks"]["UserPromptSubmit"]:
+                for h in entry["hooks"]:
+                    assert h["command"] != CODEX_HOOK_COMMANDS["UserPromptSubmit"]
+
+
+class TestInstallSkillCodex:
+    """Skill is copied from the package asset to ~/.codex/skills/phileas/SKILL.md."""
+
+    def test_creates_skill_when_missing(self, fake_home):
+        changed, _msg = _install_skill_codex()
+        assert changed is True
+        dest = fake_home / ".codex" / "skills" / "phileas" / "SKILL.md"
+        assert dest.is_file()
         assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas\n")

@@ -1,7 +1,7 @@
 """Interactive setup wizard for `phileas init`.
 
 Walks the user through first-time configuration:
- 1. Choose usage mode (Claude Code / Standalone / Both)
+ 1. Choose usage mode (Claude Code / Antigravity / Codex / Standalone / All)
  2. Choose data directory
  3. Pick LLM provider + model + API key env var (standalone/both)
  4. Write config.toml
@@ -172,6 +172,94 @@ def _wire_antigravity(home: Path) -> bool:
             pass
 
     return success
+
+
+def _codex_home() -> Path:
+    env = os.environ.get("CODEX_HOME")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".codex"
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def _toml_string_array(values: list[str]) -> str:
+    return "[" + ", ".join(_toml_string(value) for value in values) + "]"
+
+
+def _replace_toml_table(text: str, table: str, block: str) -> str:
+    lines = text.splitlines()
+    out: list[str] = []
+    skipping = False
+    inserted = False
+
+    for line in lines:
+        stripped = line.strip()
+        is_table = stripped.startswith("[") and stripped.endswith("]")
+        table_name = stripped.strip("[]").strip() if is_table else ""
+
+        if is_table and (table_name == table or table_name.startswith(f"{table}.")):
+            if not inserted:
+                if out and out[-1].strip():
+                    out.append("")
+                out.extend(block.splitlines())
+                inserted = True
+            skipping = True
+            continue
+
+        if skipping and is_table:
+            skipping = False
+
+        if not skipping:
+            out.append(line)
+
+    if not inserted:
+        if out and out[-1].strip():
+            out.append("")
+        out.extend(block.splitlines())
+
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _wire_codex(home: Path) -> bool:
+    """Add Phileas MCP server to Codex's config.toml. Returns True on success."""
+    config_path = _codex_home() / "config.toml"
+    phileas_exe = _find_phileas_command()
+
+    if phileas_exe:
+        command = phileas_exe
+        args = ["serve"]
+    else:
+        command = "uv"
+        args = [
+            "run",
+            "--project",
+            str(Path(__file__).resolve().parents[2].parent),
+            "python",
+            "-c",
+            "from phileas.server import mcp; mcp.run()",
+        ]
+
+    block = "\n".join(
+        [
+            "[mcp_servers.phileas]",
+            f"command = {_toml_string(command)}",
+            f"args = {_toml_string_array(args)}",
+        ]
+    )
+
+    try:
+        if config_path.exists():
+            text = config_path.read_text(encoding="utf-8")
+        else:
+            text = ""
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(_replace_toml_table(text, "mcp_servers.phileas", block), encoding="utf-8")
+        return True
+    except OSError:
+        return False
 
 
 def _find_phileas_command() -> str | None:
@@ -387,6 +475,94 @@ def _sync_hook_state_antigravity(mode: str) -> tuple[bool, str]:
         return False, f"hooks already in desired state ({mode})"
 
 
+CODEX_HOOK_COMMANDS = {
+    "UserPromptSubmit": "phileas-hook recall --client codex",
+    "Stop": "phileas-hook memorize --client codex",
+}
+
+
+def _codex_hooks_path() -> Path:
+    return _codex_home() / "hooks.json"
+
+
+def _read_codex_hooks(path: Path) -> tuple[dict | None, str | None]:
+    if not path.exists():
+        return {"hooks": {}}, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"could not read {path}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"{path} is not a JSON object -- refusing to overwrite"
+    data.setdefault("hooks", {})
+    if not isinstance(data["hooks"], dict):
+        return None, f"{path} `hooks` field is not an object -- refusing to overwrite"
+    return data, None
+
+
+def _sync_hook_state_codex(mode: str) -> tuple[bool, str]:
+    hooks_path = _codex_hooks_path()
+    data, err = _read_codex_hooks(hooks_path)
+    if err is not None:
+        return False, err
+    assert data is not None
+
+    hooks = data["hooks"]
+    changed = False
+
+    if mode == "never":
+        for event, command in CODEX_HOOK_COMMANDS.items():
+            entries = hooks.get(event)
+            if not isinstance(entries, list):
+                continue
+            kept: list = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    kept.append(entry)
+                    continue
+                inner = entry.get("hooks", []) or []
+                filtered = [h for h in inner if not (isinstance(h, dict) and h.get("command", "").strip() == command)]
+                if not filtered:
+                    changed = True
+                    continue
+                if filtered != inner:
+                    entry = {**entry, "hooks": filtered}
+                    changed = True
+                kept.append(entry)
+            if kept:
+                hooks[event] = kept
+            else:
+                hooks.pop(event, None)
+                changed = True
+        verb = "removed"
+    else:
+        for event, command in CODEX_HOOK_COMMANDS.items():
+            entries = hooks.setdefault(event, [])
+            if not isinstance(entries, list):
+                return False, f"{hooks_path} `hooks.{event}` field is not a list"
+            if _hook_already_present(entries, command):
+                continue
+            entry = {"hooks": [{"type": "command", "command": command, "timeout": 30}]}
+            if event == "UserPromptSubmit":
+                entry["hooks"][0]["statusMessage"] = "Recalling Phileas memories"
+            else:
+                entry["hooks"][0]["statusMessage"] = "Checking Phileas memory"
+            entries.append(entry)
+            changed = True
+        verb = "installed"
+
+    if not changed:
+        return False, f"hooks already in desired state ({mode})"
+
+    try:
+        hooks_path.parent.mkdir(parents=True, exist_ok=True)
+        hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        return False, f"failed to write hooks.json: {exc}"
+
+    return True, f"{verb} hooks in {hooks_path}"
+
+
 # -- Skill installation ------------------------------------------------
 
 # Source asset ships with the package and never depends on HOME.
@@ -470,6 +646,41 @@ def _install_skill_antigravity(force: bool = False) -> tuple[bool, str]:
     return True, f"installed skill at {dest}"
 
 
+def _skill_dest_codex() -> Path:
+    """Live destination for the user-invoked skill in Codex."""
+    return _codex_home() / "skills" / "phileas" / "SKILL.md"
+
+
+def _install_skill_codex(force: bool = False) -> tuple[bool, str]:
+    """Install the Phileas skill into ~/.codex/skills/phileas/SKILL.md."""
+    if not SKILL_SOURCE.is_file():
+        return False, f"skill source missing at {SKILL_SOURCE}"
+
+    try:
+        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not read skill source: {exc}"
+
+    dest = _skill_dest_codex()
+    if dest.exists():
+        try:
+            existing = dest.read_text(encoding="utf-8")
+        except OSError as exc:
+            return False, f"could not read existing skill: {exc}"
+        if existing == source_text:
+            return False, f"skill already installed at {dest}"
+        if not force:
+            return False, f"skill exists with custom content at {dest} (use force=True to overwrite)"
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(source_text, encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write skill: {exc}"
+
+    return True, f"installed skill at {dest}"
+
+
 def _download_embedding_model() -> bool:
     """Download the sentence-transformers embedding model. Returns True on success."""
     try:
@@ -512,14 +723,16 @@ def run_wizard() -> None:
         "  [cyan]1[/cyan]  With Claude Code [dim](recommended)[/dim] -- Claude is the brain, Phileas stores memories"
     )
     console.print("  [cyan]2[/cyan]  With Antigravity -- Antigravity is the brain, Phileas stores memories")
-    console.print("  [cyan]3[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
-    console.print("  [cyan]4[/cyan]  All -- Claude Code + Antigravity + standalone CLI access")
+    console.print("  [cyan]3[/cyan]  With Codex CLI -- Codex is the brain, Phileas stores memories")
+    console.print("  [cyan]4[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
+    console.print("  [cyan]5[/cyan]  All -- Claude Code + Antigravity + Codex + standalone CLI access")
     console.print()
 
-    mode = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4"]), default="1")
-    use_claude_code = mode in ("1", "4")
-    use_antigravity = mode in ("2", "4")
-    use_standalone = mode in ("3", "4")
+    mode = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5"]), default="1")
+    use_claude_code = mode in ("1", "5")
+    use_antigravity = mode in ("2", "5")
+    use_codex = mode in ("3", "5")
+    use_standalone = mode in ("4", "5")
 
     # 2. Data directory
     console.print()
@@ -611,6 +824,32 @@ def run_wizard() -> None:
         console.print(f"  Hooks {marker} -- {msg}")
         console.print("  [dim]Restart Antigravity/agy to pick up hook + skill changes.[/dim]")
 
+    if use_codex:
+        console.print()
+        console.print("[bold]Configuring Codex CLI integration...[/bold]")
+        if _wire_codex(home):
+            config_path = _codex_home() / "config.toml"
+            console.print(f"  MCP   [green]OK[/green] -- updated {config_path}")
+        else:
+            console.print("  MCP   [yellow]could not write Codex config automatically[/yellow]")
+            console.print("        Add this to ~/.codex/config.toml manually:")
+            console.print(
+                '        [cyan][mcp_servers.phileas]\n        command = "phileas"\n        args = ["serve"][/cyan]'
+            )
+
+        from phileas.config import load_config
+
+        recall_mode = load_config(home=home).recall.mode
+
+        changed, msg = _install_skill_codex()
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Skill {marker} -- {msg}")
+
+        changed, msg = _sync_hook_state_codex(recall_mode)
+        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
+        console.print(f"  Hooks {marker} -- {msg}")
+        console.print("  [dim]Restart Codex CLI and review/trust hooks with /hooks.[/dim]")
+
     # 6. Download models
     console.print()
     console.print("[bold]Downloading models...[/bold]")
@@ -622,24 +861,29 @@ def run_wizard() -> None:
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()
 
-    if use_claude_code and not use_standalone and not use_antigravity:
+    if use_claude_code and not use_standalone and not use_antigravity and not use_codex:
         console.print("Next steps:")
         console.print("  [cyan]1.[/cyan] Restart Claude Code")
         console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
         console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
-    elif use_antigravity and not use_standalone and not use_claude_code:
+    elif use_antigravity and not use_standalone and not use_claude_code and not use_codex:
         console.print("Next steps:")
         console.print("  [cyan]1.[/cyan] Restart Antigravity/agy")
         console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
         console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
-    elif use_standalone and not use_claude_code and not use_antigravity:
+    elif use_codex and not use_standalone and not use_claude_code and not use_antigravity:
+        console.print("Next steps:")
+        console.print("  [cyan]1.[/cyan] Restart Codex CLI")
+        console.print("  [cyan]2.[/cyan] Run [cyan]/hooks[/cyan] and trust the Phileas hooks")
+        console.print("  [cyan]3.[/cyan] Start chatting -- Phileas will remember automatically")
+    elif use_standalone and not use_claude_code and not use_antigravity and not use_codex:
         console.print("Try:")
         console.print('  [cyan]phileas remember "something about yourself"[/cyan]')
         console.print('  [cyan]phileas recall "what do you know about me"[/cyan]')
         console.print("  [cyan]phileas status[/cyan]")
     else:
         console.print("Next steps:")
-        console.print("  [cyan]1.[/cyan] Restart Claude Code and/or Antigravity for MCP integration")
+        console.print("  [cyan]1.[/cyan] Restart Claude Code, Antigravity, and/or Codex for MCP integration")
         console.print('  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember "I like Python"[/cyan]')
         console.print("  [cyan]3.[/cyan] Check usage: [cyan]phileas usage[/cyan]")
 

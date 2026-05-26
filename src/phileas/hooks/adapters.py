@@ -188,8 +188,115 @@ class AntigravityAdapter(ClientAdapter):
         }
 
 
+class CodexAdapter(ClientAdapter):
+    """Adapter for Codex CLI integration."""
+
+    def read_prompt(self, payload: dict) -> str:
+        if isinstance(payload, dict):
+            return str(payload.get("prompt", "")).strip()
+        return ""
+
+    def parse_transcript(self, transcript_path: str) -> tuple[bool, str, str]:
+        try:
+            with open(transcript_path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return False, "", ""
+
+        boundary = None
+        user_text = ""
+        for i in range(len(lines) - 1, -1, -1):
+            try:
+                obj = json.loads(lines[i])
+            except Exception:
+                continue
+            payload = obj.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if obj.get("type") == "event_msg" and payload.get("type") == "user_message":
+                message = payload.get("message")
+                if isinstance(message, str):
+                    boundary = i
+                    user_text = message
+                    break
+            if (
+                obj.get("type") == "response_item"
+                and payload.get("type") == "message"
+                and payload.get("role") == "user"
+            ):
+                content = payload.get("content")
+                text = _extract_codex_text(content)
+                if text:
+                    boundary = i
+                    user_text = text
+                    break
+
+        if boundary is None:
+            return False, "", ""
+
+        memorized = False
+        assistant_texts: list[str] = []
+        for line in lines[boundary + 1 :]:
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            payload = obj.get("payload")
+            if not isinstance(payload, dict):
+                continue
+
+            if payload.get("type") == "function_call":
+                name = payload.get("name", "") or ""
+                if "memorize" in name.lower():
+                    memorized = True
+            elif obj.get("type") == "event_msg" and payload.get("type") == "agent_message":
+                message = payload.get("message")
+                if isinstance(message, str) and message:
+                    assistant_texts.append(message)
+            elif (
+                obj.get("type") == "response_item"
+                and payload.get("type") == "message"
+                and payload.get("role") == "assistant"
+            ):
+                text = _extract_codex_text(payload.get("content"))
+                if text:
+                    assistant_texts.append(text)
+
+        return memorized, user_text.strip(), "\n".join(assistant_texts)
+
+    def format_recall_output(self, content: str) -> Any:
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": content,
+            }
+        }
+
+    def format_memorize_output(self, decision: str, reason: str) -> dict:
+        return {
+            "decision": decision,
+            "reason": reason,
+        }
+
+
+def _extract_codex_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    text_parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") in {"input_text", "output_text"}:
+            text_parts.append(block.get("text", "") or "")
+    return "".join(text_parts)
+
+
 def get_adapter(client_name: str) -> ClientAdapter:
     """Return the client adapter for the specified client name."""
+    if client_name == "codex":
+        return CodexAdapter()
     if client_name == "antigravity":
         return AntigravityAdapter()
     return ClaudeAdapter()

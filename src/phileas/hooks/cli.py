@@ -18,15 +18,15 @@ import click
 
 @click.group()
 def app() -> None:
-    """Claude Code / Antigravity hooks for Phileas."""
+    """Claude Code / Antigravity / Codex hooks for Phileas."""
 
 
 @app.command()
 @click.option(
     "--client",
     default="claude",
-    type=click.Choice(["claude", "antigravity"]),
-    help="Target client: 'claude' or 'antigravity'",
+    type=click.Choice(["claude", "antigravity", "codex"]),
+    help="Target client: 'claude', 'antigravity', or 'codex'",
 )
 def recall(client: str) -> None:
     """UserPromptSubmit/PreInvocation hook: pre-recall memories for the current prompt."""
@@ -39,8 +39,8 @@ def recall(client: str) -> None:
 @click.option(
     "--client",
     default="claude",
-    type=click.Choice(["claude", "antigravity"]),
-    help="Target client: 'claude' or 'antigravity'",
+    type=click.Choice(["claude", "antigravity", "codex"]),
+    help="Target client: 'claude', 'antigravity', or 'codex'",
 )
 def memorize(client: str) -> None:
     """Stop hook: evaluate whether the turn produced anything to memorize."""
