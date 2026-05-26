@@ -142,13 +142,19 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         except Exception:
             pass
 
-    # Pre-warm the reranker by importing it
+    # Pre-warm the vector store embeddings and reranker eagerly at startup to avoid cold-start timeouts
+    try:
+        vector._collection.query(query_texts=["warmup"], n_results=1)
+    except Exception as e:
+        log.warning(f"Daemon failed to pre-warm vector store embeddings: {e}")
+
     try:
         from sentence_transformers import CrossEncoder
 
-        CrossEncoder(config.reranker.model, max_length=256)
-    except Exception:
-        pass
+        encoder = CrossEncoder(config.reranker.model, max_length=256)
+        encoder.predict([("warmup", "warmup")])
+    except Exception as e:
+        log.warning(f"Daemon failed to pre-warm reranker: {e}")
 
     # Create request handler with engine reference
     class Handler(BaseHTTPRequestHandler):
