@@ -560,8 +560,13 @@ class MemoryEngine:
         # mechanism: "badminton" → Activity:badminton → memories about badminton
         # → those memories' entities (Ownego, Giang Vo, ...) → all their memories.
         # Catches non-obvious connections that query embeddings miss.
-        graph_pivot_snapshot = set(graph_ids)
-        for mem_id in list(graph_pivot_snapshot):
+        #
+        # Capped by recall.path3b_max_seeds: on entity-rich queries the pool
+        # is already saturated by Path 3 and further bridging is mostly
+        # duplicate. Iteration is deterministic (sorted id) so traces and
+        # tests can compare across runs.
+        graph_pivot_snapshot = sorted(graph_ids)[: self.config.recall.path3b_max_seeds]
+        for mem_id in graph_pivot_snapshot:
             try:
                 pivot_entities = self.graph.get_entities_for_memory(mem_id)
             except Exception as e:
@@ -615,7 +620,15 @@ class MemoryEngine:
         # Skip Day entities: almost every memory is linked to one, and
         # pulling in a whole day's memories via an incidental date link
         # on a keyword candidate floods day_ids with unrelated results.
-        bridge_source_ids = list(candidates.keys())
+        #
+        # Capped by recall.path4_max_seeds. Non-graph candidates (keyword /
+        # semantic / raw_text / event_thread) come first — those are the
+        # seeds Path 4 was actually designed for, producing new bridges
+        # Path 3b couldn't have. graph_ids seeds fill any remaining headroom,
+        # though their bridges duplicate Path 3b's by construction.
+        non_graph_seeds = [m for m in candidates if m not in graph_ids]
+        graph_seeds = [m for m in candidates if m in graph_ids]
+        bridge_source_ids = (non_graph_seeds + graph_seeds)[: self.config.recall.path4_max_seeds]
         for mem_id in bridge_source_ids:
             entities = self.graph.get_entities_for_memory(mem_id)
             for entity in entities:

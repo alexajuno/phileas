@@ -58,6 +58,13 @@ class RecallConfig:
     mmr_lambda: float = 0.7
     default_top_k: int = 10
 
+    # Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph
+    # bridge). Both scale O(seeds × entities × neighbours); on entity-rich
+    # queries Path 3 already saturates the pool, so iterating thousands of
+    # seeds finds duplicates. See research/phileas/recall-path-attribution.md.
+    path3b_max_seeds: int = 30
+    path4_max_seeds: int = 30
+
     # Skill-driven recall delivery (PHI-39).
     mode: str = "auto"  # always | never | auto
     format: str = "pointer"  # inline | pointer
