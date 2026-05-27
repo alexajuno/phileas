@@ -306,6 +306,18 @@ class MemoryEngine:
         _t0 = perf_counter()
         _effective_top_k = top_k if top_k is not None else 9999
 
+        # Per-stage timings (ms) — labelled by the immediately-preceding stage
+        # at each _mark() call. Linear flow assumption: stages don't reorder.
+        # Early-return paths (no candidates) skip the final record_recall(),
+        # so partial timings simply aren't persisted.
+        _stage_timings: dict[str, float] = {}
+        _stage_marker = [perf_counter()]
+
+        def _mark(name: str) -> None:
+            now = perf_counter()
+            _stage_timings[name] = _stage_timings.get(name, 0.0) + (now - _stage_marker[0]) * 1000
+            _stage_marker[0] = now
+
         op_extra(
             query=query,
             top_k=_effective_top_k,
@@ -338,6 +350,7 @@ class MemoryEngine:
         for item in keyword_hits:
             candidates[item.id] = item
             keyword_ids.add(item.id)
+        _mark("keyword")
 
         # Path 2: semantic search (ChromaDB) — bucketed by type
         search_types = [memory_type] if memory_type else _MEMORY_TYPES
@@ -367,6 +380,7 @@ class MemoryEngine:
                     if mem_id in type_item_cache[mtype]:
                         candidates[mem_id] = type_item_cache[mtype][mem_id]
                         break
+        _mark("semantic")
 
         # Path 3: graph entity lookup.
         # Two modes, switched by PHILEAS_PATH3 env var:
@@ -522,6 +536,8 @@ class MemoryEngine:
                     continue
                 _resolve_token(word, word)
 
+        _mark("graph_path3")
+
         # Snapshot Path 3 contribution before 3b/3c expand it — trace input.
         path3_candidate_count = len(graph_ids)
 
@@ -558,6 +574,7 @@ class MemoryEngine:
                         "graph pivot traversal failed",
                         extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
                     )
+        _mark("graph_path3b_pivot")
 
         # Path 3c: LLM-proposed referents (pronoun / kinship resolution)
         # Fires only when stage 0 flagged the query as ambiguous.
@@ -577,6 +594,7 @@ class MemoryEngine:
                     "referent traversal failed",
                     extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
                 )
+        _mark("graph_path3c_referent")
 
         # Path 4: semantic-to-graph bridge
         # Use semantic hits to discover entities, then follow graph
@@ -605,6 +623,7 @@ class MemoryEngine:
                         "graph bridge traversal failed",
                         extra={"op": "recall", "data": {"entity": ename, "error": str(e)}},
                     )
+        _mark("graph_path4_bridge")
 
         # Path 5: raw text search (verbatim conversation snippets)
         # Searches the raw_memories ChromaDB collection — catches details
@@ -618,6 +637,7 @@ class MemoryEngine:
                 item = self.db.get_item(mem_id)
                 if item:
                     candidates[mem_id] = item
+        _mark("raw_text")
 
         # Path 6: event-text search → sibling-memory fanout.
         # An event hit drags in every memory extracted from that event,
@@ -636,6 +656,7 @@ class MemoryEngine:
                 if sibling.id not in candidates:
                     candidates[sibling.id] = sibling
                     candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
+        _mark("events")
 
         # Apply filters
         filtered: dict[str, MemoryItem] = {}
@@ -647,6 +668,7 @@ class MemoryEngine:
             if min_importance is not None and item.importance < min_importance:
                 continue
             filtered[mem_id] = item
+        _mark("filter")
 
         op_extra(candidates=len(filtered))
 
@@ -672,6 +694,7 @@ class MemoryEngine:
         # Cosine similarity for structurally-matched candidates
         cosine_hits = self.vector.search(query, top_k=_effective_top_k * 5)
         cosine_map = {mid: sim for mid, sim in cosine_hits}
+        _mark("cosine_full")
 
         # Cross-encoder for candidates not already validated by
         # keyword match or graph traversal
@@ -691,6 +714,7 @@ class MemoryEngine:
                 norm_ce = {mid: 0.5 for mid in raw_ce}
         else:
             norm_ce = {}
+        _mark("rerank")
 
         # Build unified relevance map
         graph_boost = self.config.recall.graph_boost
@@ -736,6 +760,7 @@ class MemoryEngine:
             if mem_id not in structurally_matched:
                 if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
                     del filtered[mem_id]
+        _mark("score_blend")
 
         if not filtered:
             op_extra(results=0)
@@ -796,6 +821,7 @@ class MemoryEngine:
                 top_k=top_k,
                 lambda_param=self.config.recall.mmr_lambda,
             )
+        _mark("mmr")
 
         # ----------------------------------------------------------
         # Final scoring with importance/recency as tiebreakers
@@ -841,10 +867,12 @@ class MemoryEngine:
             )
 
         results.sort(key=_sort_key)
+        _mark("final_score")
 
         # Bump access counts
         for r in results:
             self.db.bump_access(r["id"])
+        _mark("bump_access")
 
         op_extra(results=len(results))
         if results:
@@ -863,6 +891,7 @@ class MemoryEngine:
                 empty=not results,
                 hot_hit=False,
                 latency_ms=_elapsed_ms,
+                stage_timings={k: round(v, 2) for k, v in _stage_timings.items()},
             )
         except Exception:
             pass

@@ -22,6 +22,27 @@ def test_writer_creates_schema(tmp_path: Path):
     assert rows == [(0.9, 1, 0)]
 
 
+def test_writer_records_stage_timings(tmp_path: Path):
+    w = MetricsWriter(tmp_path / "metrics.db")
+    w.record_recall(
+        query_len=5,
+        top_k=10,
+        returned=2,
+        top1_score=0.8,
+        mean_score=0.6,
+        empty=False,
+        hot_hit=False,
+        latency_ms=42.0,
+        stage_timings={"keyword": 1.2, "rerank": 38.5, "mmr": 2.3},
+    )
+    w.close()
+    conn = sqlite3.connect(tmp_path / "metrics.db")
+    (raw,) = conn.execute("SELECT stage_timings_json FROM recall_events").fetchone()
+    import json
+
+    assert json.loads(raw) == {"keyword": 1.2, "rerank": 38.5, "mmr": 2.3}
+
+
 def test_writer_records_ingest(tmp_path: Path):
     w = MetricsWriter(tmp_path / "metrics.db")
     w.record_ingest(memory_type="event", importance=7, entity_count=2, deduped=False, source="cli")
