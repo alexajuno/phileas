@@ -334,6 +334,12 @@ class MemoryEngine:
         keyword_ids: set[str] = set()  # track keyword-matched candidates
         semantic_ids: set[str] = set()  # track semantic-matched candidates
         graph_ids: set[str] = set()  # track graph-matched candidates
+        # Sub-path breakdowns of graph_ids — observability only, so we can tell
+        # whether Path 4 (~17s) earns its keep vs Path 3/3b. A memory can appear
+        # in multiple (e.g. Path 3 finds it, then Path 3b re-adds via pivot).
+        path3_ids: set[str] = set()  # Path 3: entity lookup + 1-hop neighbours
+        path3b_ids: set[str] = set()  # Path 3b: memory-pivot expansion
+        path4_ids: set[str] = set()  # Path 4: semantic-to-graph bridge
         raw_text_ids: set[str] = set()  # track raw-text matched candidates
         event_thread_ids: set[str] = set()  # track event-text sibling fanout
 
@@ -422,6 +428,7 @@ class MemoryEngine:
             *,
             hop: int = 0,
             referent_rank_value: int | None = None,
+            sub_path: set[str] | None = None,
         ) -> None:
             """Add memories linked to an entity to the candidates pool.
 
@@ -433,6 +440,10 @@ class MemoryEngine:
             from the LLM referent-resolution step and at what rank. Smaller
             rank = more confident. Used by scoring to keep the resolver's
             ranking visible in the final top-K order.
+
+            ``sub_path`` is an observability-only set updated with every
+            mem_id added — callers pass path3_ids / path3b_ids / path4_ids
+            so we can attribute graph_ids growth to the originating block.
             """
             if (ename, etype) in seen_entities:
                 return
@@ -444,6 +455,8 @@ class MemoryEngine:
                 return
             for mem_id in memory_ids:
                 graph_ids.add(mem_id)
+                if sub_path is not None:
+                    sub_path.add(mem_id)
                 # Keep the closest (lowest) hop seen for this memory.
                 if mem_id not in candidate_hop or hop < candidate_hop[mem_id]:
                     candidate_hop[mem_id] = hop
@@ -482,7 +495,7 @@ class MemoryEngine:
                 if not entity_name or not entity_type:
                     continue
                 path3_hop0_entities.append({"token": source_token, "name": entity_name, "type": entity_type})
-                _add_memories_for_entity(entity_type, entity_name, hop=0)
+                _add_memories_for_entity(entity_type, entity_name, hop=0, sub_path=path3_ids)
                 # Follow entity↔entity edges to discover related entities.
                 # Skip Day-typed neighbours: they fan out to a whole day's
                 # memories and flood day_ids with unrelated results.
@@ -491,7 +504,7 @@ class MemoryEngine:
                     for rel in related:
                         if rel["type"] == "Day":
                             continue
-                        _add_memories_for_entity(rel["type"], rel["name"], hop=1)
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=1, sub_path=path3_ids)
                 except Exception as e:
                     log.debug(
                         "graph traversal failed",
@@ -513,13 +526,13 @@ class MemoryEngine:
                     if not entity_name or not entity_type:
                         continue
                     path3_hop0_entities.append({"token": phrase, "name": entity_name, "type": entity_type})
-                    _add_memories_for_entity(entity_type, entity_name, hop=0)
+                    _add_memories_for_entity(entity_type, entity_name, hop=0, sub_path=path3_ids)
                     try:
                         related = self.graph.get_related_entities(entity_type, entity_name)
                         for rel in related:
                             if rel["type"] == "Day":
                                 continue
-                            _add_memories_for_entity(rel["type"], rel["name"], hop=1)
+                            _add_memories_for_entity(rel["type"], rel["name"], hop=1, sub_path=path3_ids)
                     except Exception as e:
                         log.debug(
                             "graph traversal failed",
@@ -562,13 +575,13 @@ class MemoryEngine:
                 etype = entity["type"]
                 if etype == "Day":
                     continue  # Day entities fan out too broadly
-                _add_memories_for_entity(etype, ename, hop=1)
+                _add_memories_for_entity(etype, ename, hop=1, sub_path=path3b_ids)
                 try:
                     related = self.graph.get_related_entities(etype, ename)
                     for rel in related:
                         if rel["type"] == "Day":
                             continue
-                        _add_memories_for_entity(rel["type"], rel["name"], hop=2)
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=2, sub_path=path3b_ids)
                 except Exception as e:
                     log.debug(
                         "graph pivot traversal failed",
@@ -610,14 +623,14 @@ class MemoryEngine:
                 etype = entity["type"]
                 if etype == "Day":
                     continue
-                _add_memories_for_entity(etype, ename, hop=1)
+                _add_memories_for_entity(etype, ename, hop=1, sub_path=path4_ids)
                 # Follow entity↔entity edges from bridge entities
                 try:
                     related = self.graph.get_related_entities(etype, ename)
                     for rel in related:
                         if rel["type"] == "Day":
                             continue
-                        _add_memories_for_entity(rel["type"], rel["name"], hop=2)
+                        _add_memories_for_entity(rel["type"], rel["name"], hop=2, sub_path=path4_ids)
                 except Exception as e:
                     log.debug(
                         "graph bridge traversal failed",
@@ -905,8 +918,15 @@ class MemoryEngine:
                 s.append("keyword")
             if mid in semantic_ids:
                 s.append("semantic")
-            if mid in graph_ids:
-                s.append("graph")
+            # Graph sub-paths replace the umbrella "graph" tag — a memory can
+            # be in multiple (e.g. Path 3 found it AND Path 3b re-added via pivot),
+            # so keep every matching tag rather than picking a "primary".
+            if mid in path3_ids:
+                s.append("path3")
+            if mid in path3b_ids:
+                s.append("path3b")
+            if mid in path4_ids:
+                s.append("path4")
             if mid in raw_text_ids:
                 s.append("raw_text")
             if mid in event_thread_ids:
@@ -942,6 +962,9 @@ class MemoryEngine:
                 "path3_tokens_matched": path3_tokens_matched,
                 "path3_hop0_entities": path3_hop0_entities,
                 "path3_candidate_count": path3_candidate_count,
+                "path3_count": len(path3_ids),
+                "path3b_count": len(path3b_ids),
+                "path4_count": len(path4_ids),
             },
         )
 

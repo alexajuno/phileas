@@ -25,6 +25,39 @@ def test_store_and_recall(tmp_dir):
     assert any("coffee" in r["summary"] for r in results)
 
 
+def test_recall_trace_includes_graph_subpath_counts(tmp_dir):
+    """recall() must expose per-sub-path counts (path3/3b/4) on the trace
+    so we can attribute graph_ids growth without re-running the recall."""
+    import json
+    import sqlite3
+
+    engine = _make_engine(tmp_dir)
+    engine.memorize(
+        summary="Giao plays badminton at Giang Vo",
+        memory_type="event",
+        importance=6,
+        entities=[
+            {"name": "Giao", "type": "Person"},
+            {"name": "badminton", "type": "Activity"},
+            {"name": "Giang Vo", "type": "Place"},
+        ],
+    )
+    engine.recall("badminton")
+
+    conn = sqlite3.connect(tmp_dir / "metrics.db")
+    rows = conn.execute(
+        "SELECT extra FROM recall_traces WHERE source = 'engine.recall' ORDER BY id DESC LIMIT 1"
+    ).fetchall()
+    conn.close()
+    assert rows, "expected at least one engine.recall trace row"
+    extra = json.loads(rows[0][0])
+    assert "path3_count" in extra
+    assert "path3b_count" in extra
+    assert "path4_count" in extra
+    # Existing key must remain for backward compat.
+    assert "path3_candidate_count" in extra
+
+
 def test_memorize_with_entities(tmp_dir):
     engine = _make_engine(tmp_dir)
     engine.memorize(
