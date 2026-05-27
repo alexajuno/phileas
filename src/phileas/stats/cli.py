@@ -31,7 +31,7 @@ def _resolve_window(since_expr: str) -> tuple[datetime | None, datetime, str]:
 @click.group("stats", invoke_without_command=True)
 @click.pass_context
 def stats(ctx):
-    """Observability for Phileas — LLM, memory, graph, consolidation."""
+    """Observability for Phileas — LLM, memory, graph, recall, ingest, daemon."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(stats_overview, since="7d", bucket="auto", as_json=False)
 
@@ -166,33 +166,6 @@ def stats_graph(as_json: bool):
         render.console.print(et)
 
 
-@stats.command("consolidation")
-@_shared_flags
-def stats_consolidation(since: str, bucket: str, as_json: bool):
-    """Consolidation / reflection runs — count, cost, last run."""
-    cfg = load_config()
-    since_dt, _, _ = _resolve_window(since)
-    usage_db = cfg.home / "usage.db"
-    if not usage_db.exists():
-        click.echo("No usage data yet.", err=True)
-        raise SystemExit(1)
-    data = queries.consolidation_runs(usage_db, since_dt)
-    if as_json:
-        click.echo(json_mod.dumps(data, default=str))
-        return
-    render.console.print(
-        render.headline(
-            f"Consolidation ({since})",
-            [
-                ("Runs", str(data["runs"])),
-                ("Cost", f"${data['total_cost_usd']:.4f}"),
-                ("Tokens", f"{data['total_tokens']:,}"),
-                ("Last run", data["last_run"] or "never"),
-            ],
-        )
-    )
-
-
 @stats.command("recall")
 @_shared_flags
 def stats_recall(since: str, bucket: str, as_json: bool):
@@ -280,7 +253,6 @@ def stats_daemon(since: str, bucket: str, as_json: bool):
             [
                 ("Errors", str(data["errors"])),
                 ("Lock contentions", str(data["lock_contentions"])),
-                ("Consolidate runs", str(data["consolidate_runs"])),
                 ("Reflect runs", str(data["reflect_runs"])),
                 ("Last start", data["last_start"] or "—"),
                 ("Last stop", data["last_stop"] or "—"),
@@ -298,7 +270,6 @@ def stats_overview(ctx, since: str, bucket: str, as_json: bool):
     ctx.invoke(stats_llm, since=since, bucket=bucket, as_json=as_json)
     ctx.invoke(stats_memory, since=since, bucket=bucket, as_json=as_json)
     ctx.invoke(stats_graph, as_json=as_json)
-    ctx.invoke(stats_consolidation, since=since, bucket=bucket, as_json=as_json)
     if (cfg.home / "metrics.db").exists():
         ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json)
         ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json)
@@ -312,9 +283,6 @@ _WATCHABLE = {
     "llm": lambda ctx, since, bucket, as_json: ctx.invoke(stats_llm, since=since, bucket=bucket, as_json=as_json),
     "memory": lambda ctx, since, bucket, as_json: ctx.invoke(stats_memory, since=since, bucket=bucket, as_json=as_json),
     "graph": lambda ctx, since, bucket, as_json: ctx.invoke(stats_graph, as_json=as_json),
-    "consolidation": lambda ctx, since, bucket, as_json: ctx.invoke(
-        stats_consolidation, since=since, bucket=bucket, as_json=as_json
-    ),
     "recall": lambda ctx, since, bucket, as_json: ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json),
     "ingest": lambda ctx, since, bucket, as_json: ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json),
     "daemon": lambda ctx, since, bucket, as_json: ctx.invoke(stats_daemon, since=since, bucket=bucket, as_json=as_json),

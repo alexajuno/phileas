@@ -220,7 +220,7 @@ def test_cli_init(tmp_dir, monkeypatch):
 
 
 # ------------------------------------------------------------------
-# ingest / consolidate / contradictions — deprecated after the move to
+# ingest / contradictions — deprecated after the move to
 # agent-driven architecture. CLI exits non-zero with a deprecation note.
 # ------------------------------------------------------------------
 
@@ -228,13 +228,6 @@ def test_cli_init(tmp_dir, monkeypatch):
 def test_cli_ingest_deprecated(tmp_dir, monkeypatch):
     runner = _runner_with_home(tmp_dir, monkeypatch)
     result = runner.invoke(app, ["ingest", "some text to ingest"])
-    assert result.exit_code != 0
-    assert "deprecated" in result.stderr.lower()
-
-
-def test_cli_consolidate_deprecated(tmp_dir, monkeypatch):
-    runner = _runner_with_home(tmp_dir, monkeypatch)
-    result = runner.invoke(app, ["consolidate"])
     assert result.exit_code != 0
     assert "deprecated" in result.stderr.lower()
 

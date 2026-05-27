@@ -339,31 +339,6 @@ def ingest(source: str):
 
 
 # ------------------------------------------------------------------
-# consolidate
-# ------------------------------------------------------------------
-
-
-@click.command()
-@click.option("--min-cluster", default=3, type=int, help="Minimum cluster size.")
-@click.option("--max-clusters", default=10, type=int, help="Maximum clusters to process.")
-def consolidate(min_cluster: int, max_clusters: int):
-    """Deprecated: daemon-side LLM consolidation was removed.
-
-    The `consolidate` MCP tool still finds clusters of similar memories — but
-    summarization is now the host Claude's job: it reads the cluster, writes
-    the consolidated summary via memorize(), and marks children via the
-    existing forget/consolidated_into flow.
-    """
-    _ = (min_cluster, max_clusters)  # preserved for CLI signature compat
-    print_error(
-        "phileas consolidate is deprecated. Daemon no longer calls an LLM. "
-        "Use Claude Code + the `consolidate` MCP tool to find clusters, "
-        "then write consolidated summaries via `memorize`."
-    )
-    raise SystemExit(2)
-
-
-# ------------------------------------------------------------------
 # reflect
 # ------------------------------------------------------------------
 

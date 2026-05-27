@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
-    consolidated_into TEXT REFERENCES memory_items(id),
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
     created_at TEXT NOT NULL,
@@ -73,6 +72,7 @@ MIGRATIONS = [
     "ALTER TABLE events DROP COLUMN extraction_status",
     "ALTER TABLE events DROP COLUMN extraction_error",
     "ALTER TABLE events DROP COLUMN memory_count",
+    "ALTER TABLE memory_items DROP COLUMN consolidated_into",
 ]
 
 
@@ -105,9 +105,9 @@ class Database:
             """INSERT OR REPLACE INTO memory_items
                (id, summary, memory_type, importance, status,
                 access_count, last_accessed, daily_ref,
-                consolidated_into, reinforcement_count, last_reinforced,
+                reinforcement_count, last_reinforced,
                 raw_text, source_event_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -117,7 +117,6 @@ class Database:
                 item.access_count,
                 item.last_accessed.isoformat() if item.last_accessed else None,
                 item.daily_ref,
-                item.consolidated_into,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
                 item.raw_text,
@@ -208,7 +207,6 @@ class Database:
             access_count=item.access_count,
             last_accessed=item.last_accessed,
             daily_ref=item.daily_ref,
-            consolidated_into=item.consolidated_into,
             created_at=item.created_at,
         )
         self.save_item(snapshot)
@@ -313,7 +311,6 @@ class Database:
             access_count=row["access_count"],
             last_accessed=last_accessed,
             daily_ref=row["daily_ref"],
-            consolidated_into=row["consolidated_into"],
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
             raw_text=row["raw_text"] if "raw_text" in row.keys() else None,

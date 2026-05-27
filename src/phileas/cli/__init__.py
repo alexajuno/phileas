@@ -10,7 +10,6 @@ import click
 
 from phileas import __version__
 from phileas.cli.commands import (
-    consolidate,
     contradictions,
     export_cmd,
     forget,
@@ -47,7 +46,6 @@ app.add_command(update_cmd)
 app.add_command(list_cmd)
 app.add_command(show)
 app.add_command(ingest)
-app.add_command(consolidate)
 app.add_command(reflect)
 app.add_command(infer_graph)
 app.add_command(contradictions)
