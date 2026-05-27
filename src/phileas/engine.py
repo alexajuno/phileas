@@ -18,7 +18,6 @@ from typing import cast, get_args
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.graph import GraphStore
-from phileas.hot import HotMemorySet
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
 from phileas.scoring import compute_score, mmr_select
@@ -104,22 +103,10 @@ class MemoryEngine:
         usage_db = self.config.home / "usage.db"
         self._usage_tracker = UsageTracker(usage_db)
 
-        # Hot memory cache — always-relevant memories loaded at startup
-        self._hot = HotMemorySet.build(self.db, self.config.hot_set)
-
         # Metrics sink — best-effort, never raises into user paths
         from phileas.stats.writer import MetricsWriter
 
         self._metrics = MetricsWriter(self.config.home / "metrics.db")
-
-    # ------------------------------------------------------------------
-    # hot memory access
-    # ------------------------------------------------------------------
-
-    def get_hot_memories(self, top_k: int = 10, memory_type: str | None = None) -> list[dict]:
-        """Return hot memories sorted by importance, without the recall pipeline."""
-        items = self._hot.get(top_k=top_k, memory_type=memory_type)
-        return [_item_to_dict(item) for item in items]
 
     # ------------------------------------------------------------------
     # ingest event (raw turn)
@@ -256,9 +243,6 @@ class MemoryEngine:
 
         # 7. Entity extraction is agent-driven too: callers should pass
         # `entities` / `relationships` when they have them.
-
-        # 8. Update hot set if this memory qualifies
-        self._hot.add(item)
 
         try:
             self._metrics.record_ingest(
@@ -1015,11 +999,6 @@ class MemoryEngine:
 
         op_extra(snapshot_id=snapshot_id)
 
-        # Refresh hot set entry (may add, update, or remove)
-        updated_item = self.db.get_item(memory_id)
-        if updated_item:
-            self._hot.refresh_item(updated_item)
-
         return {
             "id": memory_id,
             "snapshot_id": snapshot_id,
@@ -1047,7 +1026,6 @@ class MemoryEngine:
         except Exception:
             pass  # Raw text may not exist for this memory
 
-        self._hot.remove(memory_id)
         return f"Memory {memory_id} archived."
 
     # ------------------------------------------------------------------

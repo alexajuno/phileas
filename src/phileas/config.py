@@ -90,15 +90,6 @@ class LoggingConfig:
     file_backup_count: int = 3
 
 
-@dataclass
-class HotSetConfig:
-    profile_behavior_floor: int = 7  # Min importance for profile/behavior types
-    identity_floor: int = 9  # Min importance for any type
-    reinforcement_floor: int = 3  # Min reinforcement_count (with importance >= 6)
-    access_floor: int = 20  # Min access_count (with importance >= 6)
-    max_size: int = 100  # Safety cap on hot set size
-
-
 # ------------------------------------------------------------------
 # Top-level config
 # ------------------------------------------------------------------
@@ -118,7 +109,6 @@ class PhileasConfig:
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     reinforcement: ReinforcementConfig = field(default_factory=ReinforcementConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    hot_set: HotSetConfig = field(default_factory=HotSetConfig)
 
     # -- Derived paths --
 
@@ -168,7 +158,6 @@ def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
         "scoring": cfg.scoring,
         "reinforcement": cfg.reinforcement,
         "logging": cfg.logging,
-        "hot_set": cfg.hot_set,
     }
     for section_name, section_obj in section_map.items():
         if section_name in data:
