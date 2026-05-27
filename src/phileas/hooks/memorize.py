@@ -5,25 +5,32 @@ Two responsibilities, one stop fire:
 1. **Raw event capture.** POST the just-finished user+assistant turn to the
    daemon's `ingest` method, which lands it in the `events` table and embeds
    it for `thread()` / Path-6 recall. Returns the new event_id.
-2. **Memorize hint.** Emit a passive `<phileas-memorize-hint>` block via
-   `decision: "block"` so Claude can call `mcp__phileas__memorize` for
-   anything memory-worthy inside the same turn. The hint embeds the
-   event_id from step 1 so memorize() calls can pass it as
-   `source_event_id`, linking each memory back to its originating turn.
+2. **Memorize hint.** Emit a passive `<phileas-memorize-hint>` block. For
+   the Claude adapter the hint is written to stderr + exit code 2 so the
+   host's `asyncRewake` Stop-hook path wakes the model after the turn
+   completes (rendering as a single-line "Phileas: memorize check"
+   notification, not the noisy "Stop hook error: <wall of text>" block
+   that the synchronous `decision:"block"` JSON path produced). Other
+   adapters (Antigravity, Codex) still use the `decision:"block"` JSON
+   contract via `format_memorize_output`. The hint embeds the event_id
+   from step 1 so memorize() calls can pass it as `source_event_id`,
+   linking each memory back to its originating turn.
 
-Capture happens on the first fire (regardless of whether we block); the
+Capture happens on the first fire (regardless of whether we wake); the
 loop fire (`stop_hook_active=True`) is a no-op for capture so we don't
 double-insert. The captured text reflects the assistant's response up to
-the point of blocking — trailing acks emitted after the hint are not
+the point of the wake — trailing acks emitted after the hint are not
 re-ingested.
 
 Skip rules:
   - `recall.mode = "never"`  → both capture and hint are no-ops (global opt-out).
-  - `stop_hook_active` true  → no capture, no block (loop guard).
+  - `stop_hook_active` true  → no capture, no hint (loop guard — asyncRewake
+                               re-fires Stop with this flag set after the
+                               model wakes; without the guard we'd loop).
   - Memorize already called  → no hint; capture still runs.
   - Trivial turn             → no hint; capture skipped if combined text < threshold.
 
-Fail-open: any error returns 0 (no block). Better to miss a hint or drop one
+Fail-open: any error returns 0 (no wake). Better to miss a hint or drop one
 event than to stall the user's session in a stop loop.
 """
 
@@ -237,6 +244,17 @@ def main(client_name: str = "claude") -> int:
         return 0
 
     hint = format_hint(event_id)
+
+    # Claude: write hint to stderr and exit 2 so the host's asyncRewake
+    # Stop-hook config wakes the model with a clean "Phileas: memorize
+    # check" task notification, instead of the synchronous decision:"block"
+    # path which surfaces in the interactive UI as a noisy
+    # "Stop hook error: <full hint body>" line.
+    if client_name == "claude":
+        print(hint, file=sys.stderr)
+        return 2
+
+    # Antigravity / Codex still use the decision:"block" JSON contract.
     output = adapter.format_memorize_output("block", hint)
     print(json.dumps(output))
     return 0
