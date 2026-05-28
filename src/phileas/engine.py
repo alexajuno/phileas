@@ -81,6 +81,7 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
         "importance": item.importance,
         "score": score,
         "created_at": item.created_at.isoformat() if item.created_at else None,
+        "source_event_id": item.source_event_id,
     }
 
 

@@ -250,7 +250,8 @@ def recall(
         imp_str = f"importance={item['importance']}"
         created = item.get("created_at")
         created_str = f"created={created[:19]}" if created else ""
-        meta = ", ".join(filter(None, [imp_str, score_str, created_str]))
+        event_str = f"event={item['source_event_id']}" if item.get("source_event_id") else ""
+        meta = ", ".join(filter(None, [imp_str, score_str, created_str, event_str]))
         lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']} ({meta})")
     return "\n".join(lines)
 
@@ -387,7 +388,9 @@ def about(
 
     lines = [f"Memories about '{name}' ({len(items)} found):"]
     for item in items:
-        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
+        event = item.get("source_event_id")
+        suffix = f" (event={event})" if event else ""
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}{suffix}")
     return "\n".join(lines)
 
 
@@ -410,7 +413,9 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
     range_str = f"{start_date} to {end_date}" if end_date else start_date
     lines = [f"Memories for {range_str} ({len(items)} found):"]
     for item in items:
-        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
+        event = item.get("source_event_id")
+        suffix = f" (event={event})" if event else ""
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}{suffix}")
     return "\n".join(lines)
 
 
@@ -464,7 +469,9 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
         lines.append(f"\n{day} ({len(day_items)} total, showing {len(top)}):")
         for item in top:
             imp = item.get("importance", "?")
-            lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}")
+            event = item.get("source_event_id")
+            suffix = f" (event={event})" if event else ""
+            lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}{suffix}")
 
     _trace_recent(
         items=selected,
