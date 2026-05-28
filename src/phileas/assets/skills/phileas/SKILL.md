@@ -76,22 +76,24 @@ Inline `mcp__phileas__memorize` (and `memorize_batch` for multiple facts from on
 
 ### What to save
 
-Save facts that will still be useful in a future conversation:
+Phileas captures what the code alone and git alone will not preserve. **Archaeology test:** will this still be useful when the code shows only the result and git shows only the diff?
 
 - **Personal facts** the user states about themselves, people in their life, or their situation.
 - **Preferences** about tools, workflow, tone, collaboration style.
 - **Decisions** — especially ones with a stated reason ("we're going with X because Y").
+- **Project decision archaeology** — why X over Y, what was rejected, who pushed back, deadline/constraint that forced the call, alternative tried and reverted. The narrative behind the diff.
 - **Events** with a time anchor ("shipped v0.1.0 on Apr 4", "trip to Tokyo next month").
 - **Patterns** observed over time — recurring frustrations, emotional throughlines, habits.
 - **Project state** not derivable from code or git (ownership, blockers, why a design was chosen).
 
 ### What NOT to save
 
-- Code conventions, file paths, architecture — re-readable from the repo.
-- Git history, recent commits, who-changed-what — `git log`/`git blame` are authoritative.
-- Transient task state (current in-progress step, conversation context, temp debugging notes).
-- Anything already in `CLAUDE.md` or the repo's own docs.
-- Fix recipes from debugging — the commit explains the fix; don't mirror it in memory.
+- **Forward-prescriptive conventions** ("always use snake_case", "tests live in `tests/`") — those belong in `CLAUDE.md`, which is the right home for rules. Phileas holds the *backward-narrative* archaeology, not the rulebook.
+- **How the code works** — re-readable from the repo.
+- **Git history, recent commits, who-changed-what** — `git log`/`git blame` are authoritative.
+- **Transient task state** (current in-progress step, conversation context, temp debugging notes).
+- **Anything already in `CLAUDE.md` or the repo's own docs.**
+- **Fix recipes from debugging** — the commit explains the fix; don't mirror it in memory.
 
 ### Memory types
 

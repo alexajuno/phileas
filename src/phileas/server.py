@@ -117,11 +117,12 @@ def memorize(
 ) -> str:
     """Store a memory about the user.
 
-    Scope: personal/life/work-style facts — preferences, patterns,
-    emotional throughlines, life events, decisions about self. Skip
-    project-technical decisions (library choices, API field selections,
-    schema/architecture calls); those belong in the repo's CLAUDE.md or
-    docs/, not Phileas. See the <phileas-memorize-hint> for full guidance.
+    Scope: facts that code and git alone will not preserve — personal
+    context, preferences, patterns, emotional throughlines, life events,
+    and project decisions with stated reasoning (why X over Y, what was
+    rejected, deadline/constraint that forced the call). Skip
+    forward-prescriptive conventions ("always do X") — those belong in
+    the repo's CLAUDE.md. See the <phileas-memorize-hint> for full guidance.
 
     Write `summary` as an objective, AI-written fact — never paste raw
     conversation verbatim. Raw turns belong in the events table (auto-ingested
@@ -163,8 +164,9 @@ def memorize_batch(memories: list | str) -> str:
     """Store multiple memories in one call.
 
     Use when catching up on a conversation or saving several related memories at once.
-    Same scope as `memorize`: personal/life/work-style only — skip
-    project-technical decisions (those go in repo CLAUDE.md/docs).
+    Same scope as `memorize`: facts that code and git won't preserve —
+    personal context, patterns, life events, and project decisions with
+    reasoning. Skip forward-prescriptive conventions (those go in CLAUDE.md).
 
     Args:
         memories: List or JSON string of memory objects. Each object has:
