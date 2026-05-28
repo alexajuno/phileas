@@ -124,7 +124,56 @@ export function getTrace(id: number): TraceRow | null {
        FROM recall_traces WHERE id = ?`,
     )
     .get(id) as RawTraceRow | undefined;
-  return row ? hydrate(row) : null;
+  if (!row) return null;
+  const hydrated = hydrate(row);
+  if (
+    hydrated.source === "engine.recall" &&
+    hydrated.latency_ms != null &&
+    (!hydrated.extra || hydrated.extra.stage_timings == null)
+  ) {
+    const stages = lookupStageTimings(hydrated.created_at, hydrated.latency_ms);
+    if (stages) {
+      hydrated.extra = { ...(hydrated.extra ?? {}), stage_timings: stages };
+    }
+  }
+  return hydrated;
+}
+
+function lookupStageTimings(
+  traceCreatedAt: string,
+  latencyMs: number,
+): Record<string, number> | null {
+  const db = getMetricsDb();
+  const t = new Date(traceCreatedAt).getTime();
+  if (!Number.isFinite(t)) return null;
+  const windowMs = 5_000;
+  const lo = new Date(t - windowMs).toISOString();
+  const hi = new Date(t + windowMs).toISOString();
+  const row = db
+    .prepare(
+      `SELECT stage_timings_json, ABS(latency_ms - ?) AS lat_delta,
+              ABS(strftime('%s', created_at) - strftime('%s', ?)) AS t_delta
+       FROM recall_events
+       WHERE created_at BETWEEN ? AND ?
+         AND stage_timings_json IS NOT NULL
+         AND ABS(latency_ms - ?) < 1
+       ORDER BY lat_delta ASC, t_delta ASC
+       LIMIT 1`,
+    )
+    .get(latencyMs, traceCreatedAt, lo, hi, latencyMs) as
+    | { stage_timings_json: string | null }
+    | undefined;
+  if (!row || !row.stage_timings_json) return null;
+  try {
+    const parsed = JSON.parse(row.stage_timings_json) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "number") out[k] = v;
+    }
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 export interface AggregateRow {

@@ -3,12 +3,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type {
   AggregateResult,
@@ -17,6 +11,20 @@ import type {
   TraceRow,
 } from "@/lib/metrics-db";
 
+import {
+  type DetailPayload,
+  FractionBar,
+  GATHER_PATHS,
+  HopBars,
+  PATH_COLORS,
+  PATH_LABEL,
+  formatChars,
+  formatLatency,
+  gatherSources,
+  hopHistogram,
+} from "./monitoring-shared";
+import { TraceDetailDialog } from "./trace-detail-dialog";
+
 const SOURCES = [
   { value: "", label: "All sources" },
   { value: "hook_dispatch", label: "Hook dispatch" },
@@ -24,35 +32,6 @@ const SOURCES = [
   { value: "engine.recall_recent", label: "engine.recall_recent" },
   { value: "engine.recall", label: "engine.recall" },
 ];
-
-const GATHER_PATHS = ["keyword", "semantic", "graph", "raw_text"] as const;
-
-const PATH_COLORS: Record<string, string> = {
-  keyword: "bg-sky-500",
-  semantic: "bg-emerald-500",
-  graph: "bg-violet-500",
-  raw_text: "bg-amber-500",
-};
-
-const PATH_LABEL: Record<string, string> = {
-  keyword: "Keyword",
-  semantic: "Semantic",
-  graph: "Graph",
-  raw_text: "Raw text",
-};
-
-type ResolvedMemory = {
-  id: string;
-  summary: string | null;
-  memory_type: string | null;
-  importance: number | null;
-  created_at: string | null;
-};
-
-type DetailPayload = {
-  trace: TraceRow;
-  memories: ResolvedMemory[];
-};
 
 type Props = {
   initialDate: string;
@@ -74,25 +53,6 @@ function formatTime(iso: string): string {
   });
 }
 
-function formatLatency(ms: number | null): string {
-  if (ms == null) return "—";
-  if (ms < 1) return "<1 ms";
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  return `${(ms / 1000).toFixed(2)} s`;
-}
-
-function formatChars(n: number | null): string {
-  if (n == null) return "—";
-  if (n < 1000) return `${n}`;
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
-}
-
-function estTokens(chars: number | null): number | null {
-  if (chars == null) return null;
-  return Math.round(chars / 4);
-}
-
 function sourceBadgeClass(source: string): string {
   if (source === "hook_dispatch")
     return "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30";
@@ -103,22 +63,6 @@ function sourceBadgeClass(source: string): string {
   if (source === "engine.recall")
     return "bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30";
   return "bg-muted text-muted-foreground";
-}
-
-function gatherSources(row: TraceRow): Record<string, number> {
-  const ex = row.extra;
-  if (!ex || typeof ex !== "object") return {};
-  const gs = (ex as Record<string, unknown>).gather_sources;
-  if (!gs || typeof gs !== "object") return {};
-  return gs as Record<string, number>;
-}
-
-function hopHistogram(row: TraceRow): Record<string, number> {
-  const ex = row.extra;
-  if (!ex || typeof ex !== "object") return {};
-  const hd = (ex as Record<string, unknown>).hop_distribution;
-  if (!hd || typeof hd !== "object") return {};
-  return hd as Record<string, number>;
 }
 
 function topHop(hist: Record<string, number>): string {
@@ -172,62 +116,6 @@ function SourceMixBar({
   );
 }
 
-function FractionBar({ fractions }: { fractions: Record<string, number> }) {
-  const total = Object.values(fractions).reduce((a, c) => a + c, 0);
-  if (total <= 0) {
-    return <div className="h-3 w-full rounded bg-muted/40" />;
-  }
-  return (
-    <div className="flex h-3 w-full overflow-hidden rounded bg-muted/40">
-      {GATHER_PATHS.map((path) => {
-        const v = fractions[path] ?? 0;
-        if (v <= 0) return null;
-        const pct = (v / total) * 100;
-        return (
-          <div
-            key={path}
-            className={PATH_COLORS[path] ?? "bg-muted-foreground"}
-            style={{ width: `${pct}%` }}
-            title={`${path}: ${(pct).toFixed(0)}%`}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function HopBars({ fractions }: { fractions: Record<string, number> }) {
-  const keys = Object.keys(fractions).sort((a, b) => Number(a) - Number(b));
-  if (!keys.length) {
-    return (
-      <p className="text-xs text-muted-foreground">no hop data</p>
-    );
-  }
-  const max = Math.max(...keys.map((k) => fractions[k]));
-  return (
-    <div className="space-y-1">
-      {keys.map((k) => {
-        const v = fractions[k];
-        const pct = max > 0 ? (v / max) * 100 : 0;
-        return (
-          <div key={k} className="flex items-center gap-2 text-[11px]">
-            <span className="w-6 font-mono text-muted-foreground">h{k}</span>
-            <div className="flex-1">
-              <div
-                className="h-2 rounded bg-violet-500"
-                style={{ width: `${pct}%`, minWidth: pct > 0 ? "2px" : 0 }}
-              />
-            </div>
-            <span className="w-12 text-right font-mono tabular-nums text-muted-foreground">
-              {(v * 100).toFixed(0)}%
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function ChangePill({
   before,
   after,
@@ -244,20 +132,22 @@ function ChangePill({
   if (before === 0) return null;
   const pct = (delta / before) * 100;
   const isImprovement = invert ? delta < 0 : delta > 0;
-  const cls = Math.abs(pct) < 0.5
-    ? "text-muted-foreground"
-    : isImprovement
-      ? "text-emerald-400"
-      : "text-rose-400";
+  const cls =
+    Math.abs(pct) < 0.5
+      ? "text-muted-foreground"
+      : isImprovement
+        ? "text-emerald-400"
+        : "text-rose-400";
   const sign = delta > 0 ? "+" : "";
   return (
     <span className={cn("font-mono text-[11px]", cls)}>
       {sign}
-      {Math.abs(pct) >= 100
-        ? `${pct.toFixed(0)}%`
-        : `${pct.toFixed(1)}%`}{" "}
-      <span className="text-muted-foreground">({sign}
-        {Math.round(delta)}{unit})</span>
+      {Math.abs(pct) >= 100 ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`}{" "}
+      <span className="text-muted-foreground">
+        ({sign}
+        {Math.round(delta)}
+        {unit})
+      </span>
     </span>
   );
 }
@@ -328,7 +218,9 @@ export function MonitoringView({
     setDetailLoading(true);
     const reqId = ++detailReqId.current;
     try {
-      const res = await fetch(`/api/monitoring/traces/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/monitoring/traces/${id}`, {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error(await res.text());
       const data: DetailPayload = await res.json();
       if (detailReqId.current === reqId) setDetail(data);
@@ -444,13 +336,17 @@ export function MonitoringView({
             <Card
               label="Avg p50 latency"
               value={
-                aggCards?.overallP50 != null ? formatLatency(aggCards.overallP50) : "—"
+                aggCards?.overallP50 != null
+                  ? formatLatency(aggCards.overallP50)
+                  : "—"
               }
             />
             <Card
               label="Avg p90 latency"
               value={
-                aggCards?.overallP90 != null ? formatLatency(aggCards.overallP90) : "—"
+                aggCards?.overallP90 != null
+                  ? formatLatency(aggCards.overallP90)
+                  : "—"
               }
             />
             <Card
@@ -552,7 +448,9 @@ export function MonitoringView({
                           </span>
                         </td>
                         <td className="max-w-[22rem] truncate px-3 py-2 text-foreground">
-                          {row.query ?? <span className="text-muted-foreground">—</span>}
+                          {row.query ?? (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs">
                           {row.candidate_count ?? "—"}
@@ -579,28 +477,15 @@ export function MonitoringView({
         </>
       )}
 
-      <Dialog
-        open={selectedId != null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedId(null);
-            setDetail(null);
-          }
+      <TraceDetailDialog
+        traceId={selectedId}
+        detail={detail}
+        loading={detailLoading}
+        onClose={() => {
+          setSelectedId(null);
+          setDetail(null);
         }}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Trace #{selectedId}</DialogTitle>
-          </DialogHeader>
-          {detailLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : detail ? (
-            <TraceDetail detail={detail} />
-          ) : (
-            <p className="text-sm text-muted-foreground">No data.</p>
-          )}
-        </DialogContent>
-      </Dialog>
+      />
     </div>
   );
 }
@@ -649,10 +534,7 @@ function ComparePanel({
       {open ? (
         <div className="border-t border-border/60 px-3 py-3">
           <div className="mb-3 flex flex-wrap items-center gap-3">
-            <label
-              className="text-xs text-muted-foreground"
-              htmlFor="m-cutoff"
-            >
+            <label className="text-xs text-muted-foreground" htmlFor="m-cutoff">
               Cutoff (default: most recent commit on main)
             </label>
             <input
@@ -777,7 +659,9 @@ function Legend() {
     <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
       {GATHER_PATHS.map((path) => (
         <span key={path} className="inline-flex items-center gap-1">
-          <span className={cn("inline-block h-2 w-3 rounded", PATH_COLORS[path])} />
+          <span
+            className={cn("inline-block h-2 w-3 rounded", PATH_COLORS[path])}
+          />
           {PATH_LABEL[path]}
         </span>
       ))}
@@ -792,136 +676,6 @@ function Card({ label, value }: { label: string; value: string | number }) {
         {label}
       </div>
       <div className="mt-0.5 text-lg font-semibold tabular-nums">{value}</div>
-    </div>
-  );
-}
-
-function TraceDetail({ detail }: { detail: DetailPayload }) {
-  const { trace, memories } = detail;
-  const tokens = estTokens(trace.pool_chars);
-  const hist = gatherSources(trace);
-  const hops = hopHistogram(trace);
-  const histTotal = Object.values(hist).reduce((a, c) => a + c, 0);
-  const hopTotal = Object.entries(hops)
-    .filter(([k]) => k !== "None")
-    .reduce((a, [, v]) => a + v, 0);
-  return (
-    <div className="space-y-4 text-sm">
-      <div className="grid grid-cols-2 gap-3">
-        <KV label="Source" value={trace.source} />
-        <KV label="When" value={new Date(trace.created_at).toLocaleString()} />
-        <KV label="Latency" value={formatLatency(trace.latency_ms)} />
-        <KV
-          label="Candidates"
-          value={trace.candidate_count?.toString() ?? "—"}
-        />
-        <KV
-          label="Pool size"
-          value={
-            trace.pool_chars != null
-              ? `${formatChars(trace.pool_chars)} chars · ~${tokens} tok`
-              : "—"
-          }
-        />
-        <KV label="Returned" value={(trace.returned_ids?.length ?? 0).toString()} />
-      </div>
-
-      {trace.query && (
-        <div>
-          <Label>Query</Label>
-          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-muted/30 p-2 font-mono text-xs">
-            {trace.query}
-          </pre>
-        </div>
-      )}
-
-      {histTotal > 0 && (
-        <div>
-          <Label>Source mix ({histTotal} matches)</Label>
-          <div className="mt-1.5 space-y-1.5">
-            <FractionBar fractions={hist} />
-            <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-              {GATHER_PATHS.map((path) => {
-                const v = hist[path] ?? 0;
-                if (v <= 0) return null;
-                const pct = (v / histTotal) * 100;
-                return (
-                  <span key={path} className="inline-flex items-center gap-1">
-                    <span
-                      className={cn("inline-block h-2 w-3 rounded", PATH_COLORS[path])}
-                    />
-                    {PATH_LABEL[path]}: {v} ({pct.toFixed(0)}%)
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {hopTotal > 0 && (
-        <div>
-          <Label>Hop distribution (graph distance)</Label>
-          <div className="mt-1.5">
-            <HopBars
-              fractions={Object.fromEntries(
-                Object.entries(hops)
-                  .filter(([k]) => k !== "None")
-                  .map(([k, v]) => [k, v / hopTotal]),
-              )}
-            />
-          </div>
-        </div>
-      )}
-
-      {trace.extra && Object.keys(trace.extra).length > 0 && (
-        <details className="rounded-md border border-border/40 bg-muted/10">
-          <summary className="cursor-pointer px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-            Raw extra
-          </summary>
-          <pre className="max-h-48 overflow-auto p-2 font-mono text-xs">
-            {JSON.stringify(trace.extra, null, 2)}
-          </pre>
-        </details>
-      )}
-
-      {memories.length > 0 && (
-        <div>
-          <Label>Memories returned ({memories.length})</Label>
-          <ul className="mt-1 max-h-72 space-y-1 overflow-auto rounded-md border border-border/60 bg-muted/20 p-2 text-xs">
-            {memories.map((m) => (
-              <li key={m.id} className="font-mono">
-                <span className="text-muted-foreground">[{m.id.slice(0, 8)}]</span>{" "}
-                {m.memory_type ? (
-                  <span className="text-amber-400">[{m.memory_type}]</span>
-                ) : (
-                  <span className="text-destructive">[deleted?]</span>
-                )}{" "}
-                {m.summary ?? <span className="text-muted-foreground">(missing)</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function KV({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-border/40 bg-muted/20 px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        {label}
-      </div>
-      <div className="mt-0.5 font-mono text-xs">{value}</div>
-    </div>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-      {children}
     </div>
   );
 }

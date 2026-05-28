@@ -978,6 +978,7 @@ class MemoryEngine:
                 "path3_count": len(path3_ids),
                 "path3b_count": len(path3b_ids),
                 "path4_count": len(path4_ids),
+                "stage_timings": {k: round(v, 2) for k, v in _stage_timings.items()},
             },
         )
 
