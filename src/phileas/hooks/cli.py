@@ -49,5 +49,19 @@ def memorize(client: str) -> None:
     sys.exit(main(client_name=client))
 
 
+@app.command()
+@click.option(
+    "--client",
+    default="claude",
+    type=click.Choice(["claude", "antigravity", "codex"]),
+    help="Target client: 'claude', 'antigravity', or 'codex'",
+)
+def distill(client: str) -> None:
+    """Stop hook: evaluate whether the turn executed a procedure worth a skill."""
+    from phileas.hooks.distill import main
+
+    sys.exit(main(client_name=client))
+
+
 if __name__ == "__main__":
     app()
