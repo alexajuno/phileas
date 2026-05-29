@@ -558,8 +558,8 @@ class MemoryEngine:
         # Path 3b: Memory pivot — graph-first expansion.
         # For each memory found via entity lookup, discover ALL its entities,
         # then pull ALL memories of those entities. This is the key graph-first
-        # mechanism: "badminton" → Activity:badminton → memories about badminton
-        # → those memories' entities (Ownego, Giang Vo, ...) → all their memories.
+        # mechanism: "tennis" → Activity:tennis → memories about tennis
+        # → those memories' entities (Acme, Lakeside, ...) → all their memories.
         # Catches non-obvious connections that query embeddings miss.
         #
         # Capped by recall.path3b_max_seeds: on entity-rich queries the pool
@@ -599,7 +599,7 @@ class MemoryEngine:
         # Fires only when stage 0 flagged the query as ambiguous.
         # Only the directly resolved entity gets the referent boost —
         # neighbours traversed via REL edges ride the regular graph_boost,
-        # so e.g. resolving "chị" → phuongtq doesn't pull every coworker's
+        # so e.g. resolving a kinship term → its linked person doesn't pull every coworker's
         # unrelated memory to the top. Rank (1-indexed) comes from the
         # LLM output order so the most-confident pick wins ties.
         for idx, (etype, ename) in enumerate(referent_names, start=1):

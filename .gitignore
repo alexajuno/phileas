@@ -6,5 +6,8 @@ __pycache__/
 # local data + transient artifacts
 simulation_results.json
 research/
-tests/e2e_runs/
-tests/path3_runs/
+
+# tests kept LOCAL only, never tracked — they carry fixtures sampled from real
+# Claude Code sessions with private personal conversation context (issue #39).
+# Regenerate synthetic fixtures before re-tracking any of this.
+tests/
