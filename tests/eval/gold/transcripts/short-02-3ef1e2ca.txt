@@ -1,3 +1,0 @@
-User: remove those two errors
-
-Assistant: Done. Disabled both `explanatory-output-style` and `learning-output-style` plugins. The SessionStart errors should be gone on your next session.
