@@ -44,7 +44,7 @@ In `mode = "auto"` and `mode = "always"`, a `phileas-hook recall` UserPromptSubm
 
 ### Step 3: Branch on `pipeline`
 
-**Query shape contract (applies to both pipelines).** Phileas treats `recall(query=...)` as a *focused term phrase* — one concept, 1–4 words. The keyword path AND-matches every token against memory summaries, so verbatim user sentences ("what did the user say about phuongtq and poker") AND-match almost nothing on keyword and rely entirely on graph + semantic. The right shape: **extract the named entities and concepts from the prompt first**, then issue one tool call per concept and merge the results by `id`. For a prompt like *"today somehow phuongtq is the dealer for the poker game in olympic"*: call `about(phuongtq)`, `recall("poker game")`, `recall("olympic")` in parallel — not `recall("today somehow phuongtq is the dealer for the poker game in olympic")`.
+**Query shape contract (applies to both pipelines).** Phileas treats `recall(query=...)` as a *focused term phrase* — one concept, 1–4 words. The keyword path AND-matches every token against memory summaries, so verbatim user sentences ("what did the user say about Alex and the Q3 budget") AND-match almost nothing on keyword and rely entirely on graph + semantic. The right shape: **extract the named entities and concepts from the prompt first**, then issue one tool call per concept and merge the results by `id`. For a prompt like *"did Alex bring up the Q3 budget at the planning offsite"*: call `about(Alex)`, `recall("Q3 budget")`, `recall("planning offsite")` in parallel — not `recall("did Alex bring up the Q3 budget at the planning offsite")`.
 
 - **`pipeline = "rerank"`** (default) → the hook has already fired with the verbatim prompt and surfaced its result. Use that result as background. If the prompt has clear concepts the hook didn't cover, supplement with focused-term `recall()` / `about()` / `recall_recent()` calls per the contract above.
 - **`pipeline = "direct"`** → main agent calls phileas tools directly using a cognitive routing ladder. Pick the tool by query shape; call several in parallel when shapes overlap, then merge results by `id`:
@@ -120,7 +120,7 @@ Before calling `memorize`, do a quick `recall` on the core entity or topic. If a
 
 *Examples:*
 - Source: "Sếp bảo phải nộp báo cáo trước thứ 6." → Summary: "Boss said the report must be submitted before Friday."
-- Source: "Tung nhắc Giao về *tiền đen* trong ngành." → Summary: "Tung warned Giao about *tiền đen* (off-the-books money) in the industry." (preserve the term, gloss it once)
+- Source: "Anh ấy nhắc về *tiền đen* trong ngành." → Summary: "He warned about *tiền đen* (off-the-books money) in the industry." (preserve the term, gloss it once)
 - Don't store: "user mới biết hả" — translate: "User just learned this."
 
 ### Batching
@@ -146,4 +146,4 @@ Identity in the graph is an opaque uuid; `name` and `type` are attributes. The l
 {"name": "Apple", "type": "Company", "description": "consumer electronics maker (Tim Cook era)"}
 ```
 
-Skip `description` when the name is unambiguous in the user's world (their colleagues, their projects). For multi-type referents the same physical thing may carry — `Ownego` is a place AND the company that owns it AND a project name — let the linker collapse them onto one uuid by tagging consistently and the migration script handles legacy splits.
+Skip `description` when the name is unambiguous in the user's world (their colleagues, their projects). For multi-type referents the same physical thing may carry — `Acme` is a place AND the company that owns it AND a project name — let the linker collapse them onto one uuid by tagging consistently and the migration script handles legacy splits.

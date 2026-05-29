@@ -1,3 +1,0 @@
-User: <command-name>/clear</command-name>
-            <command-message>clear</command-message>
-            <command-args></command-args>
