@@ -496,9 +496,17 @@ def serve():
     about, timeline, status, ...) over the Model Context Protocol.
     """
     try:
+        import os
+
         from phileas.server import mcp
 
-        mcp.run()
+        # HTTP mode (PHILEAS_MCP_TRANSPORT=http) serves the OAuth-gated MCP over
+        # streamable-http for the phone connector; default stays stdio for local
+        # Claude Code. See phileas.mcp_auth.
+        if os.environ.get("PHILEAS_MCP_TRANSPORT", "stdio").lower() == "http":
+            mcp.run(transport="streamable-http")
+        else:
+            mcp.run()
     except Exception as exc:
         print_error(str(exc))
         raise SystemExit(1)

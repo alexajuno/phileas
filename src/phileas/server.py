@@ -28,10 +28,18 @@ from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph_proxy import GraphProxy
+from phileas.mcp_auth import build_auth_components, register_login_routes
 from phileas.vector import VectorStore
+
+# OAuth + HTTP serving is opt-in (PHILEAS_MCP_TRANSPORT=http) so the phone can
+# reach Phileas via the consumer Claude app's custom-connector OAuth flow. In
+# the default stdio mode (local Claude Code) this returns ({}, None) and adds
+# nothing. See phileas.mcp_auth and ~/notes/vps/.
+_auth_kwargs, _oauth_provider = build_auth_components()
 
 mcp = FastMCP(
     "phileas",
+    **_auth_kwargs,
     instructions=(
         "Phileas is a long-term memory companion. Choose tools by query type:\n"
         "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
@@ -53,6 +61,10 @@ mcp = FastMCP(
         "- memorize(): store new memories; prefer memorize_batch() for multiple at once"
     ),
 )
+
+# In HTTP mode, attach the single-user login page that gates /authorize.
+if _oauth_provider is not None:
+    register_login_routes(mcp, _oauth_provider)
 
 _config = load_config()
 
