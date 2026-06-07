@@ -443,6 +443,16 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             }
             for i in items
         ]
+    elif method == "sync_export":
+        # Non-blocking sync: the daemon already owns all three stores, so it can
+        # snapshot in-process while serving — no stop-the-world needed.
+        from phileas.sync import export_bundle
+
+        return export_bundle(engine, since=params.get("since"))
+    elif method == "sync_apply":
+        from phileas.sync import import_bundle
+
+        return import_bundle(engine, params["bundle"])
     elif method == "infer_graph":
         return engine.infer_graph()
     elif method == "ingest":
@@ -539,8 +549,17 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
 # -- Client -----------------------------------------------------------
 
 
-def call(method: str, params: dict | None = None, config: PhileasConfig | None = None) -> dict | None:
-    """Call the daemon. Returns response dict or None if daemon not running."""
+def call(
+    method: str,
+    params: dict | None = None,
+    config: PhileasConfig | None = None,
+    timeout: float = 30,
+) -> dict | None:
+    """Call the daemon. Returns response dict or None if daemon not running.
+
+    `timeout` is bumped by callers like sync_apply whose work (re-embedding a
+    delta of memories) can exceed the default.
+    """
     config = config or load_config()
     port = is_running(config)
     if port is None:
@@ -557,7 +576,7 @@ def call(method: str, params: dict | None = None, config: PhileasConfig | None =
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except Exception:
         return None

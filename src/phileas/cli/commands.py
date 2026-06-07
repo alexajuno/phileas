@@ -28,11 +28,11 @@ from phileas.graph import GraphStore
 from phileas.vector import VectorStore
 
 
-def _daemon_call(method: str, params: dict | None = None) -> dict | None:
+def _daemon_call(method: str, params: dict | None = None, timeout: float = 30) -> dict | None:
     """Try calling the daemon. Returns response or None if not running."""
     from phileas.daemon import call
 
-    return call(method, params)
+    return call(method, params, timeout=timeout)
 
 
 def _get_engine() -> MemoryEngine:
@@ -478,6 +478,107 @@ def export_cmd(fmt: str, output: str | None):
             print_success(f"Exported {len(data)} memories to {output}")
         else:
             click.echo(json_str)
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+# ------------------------------------------------------------------
+# sync (two-way laptop <-> box reconciliation)
+# ------------------------------------------------------------------
+
+
+@click.command("sync-export")
+@click.option("--output", "-o", default=None, help="Output file path (default: stdout).")
+@click.option("--since", default=None, help="Incremental: only rows changed after this ISO timestamp.")
+def sync_export_cmd(output: str | None, since: str | None):
+    """Snapshot this store into a sync bundle (memories + events + graph links).
+
+    Uses the running daemon (non-blocking — it already owns the stores) when up;
+    otherwise opens the stores directly, which requires the daemon stopped so
+    nothing else holds the Kuzu lock. `--since` makes it incremental (only
+    changed rows). Consumed by `sync-plan`.
+    """
+    try:
+        from pathlib import Path
+
+        from phileas.daemon import is_running
+
+        # Daemon up -> route through it (non-blocking; it owns the Kuzu lock, so a
+        # fresh engine here would just deadlock). Daemon down -> direct/exclusive.
+        if is_running():
+            resp = _daemon_call("sync_export", {"since": since}, timeout=300)
+            if not (resp and resp.get("ok")):
+                raise RuntimeError((resp or {}).get("error") or "daemon sync_export failed")
+            bundle = resp["result"]
+        else:
+            from phileas.sync import export_bundle
+
+            bundle = export_bundle(_get_engine(), since=since)
+        payload = json.dumps(bundle)
+        if output:
+            Path(output).write_text(payload, encoding="utf-8")
+            print_success(f"Exported {len(bundle['memories'])} memories / {len(bundle['events'])} events to {output}")
+        else:
+            click.echo(payload)
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+@click.command("sync-plan")
+@click.option("--local", "local_path", required=True, help="Local store's bundle JSON.")
+@click.option("--remote", "remote_path", required=True, help="Remote store's bundle JSON.")
+@click.option("--out-local", required=True, help="Where to write rows to import LOCALLY.")
+@click.option("--out-remote", required=True, help="Where to write rows to import REMOTELY.")
+def sync_plan_cmd(local_path: str, remote_path: str, out_local: str, out_remote: str):
+    """Diff two bundles into two import bundles (pure JSON, no store access)."""
+    try:
+        from pathlib import Path
+
+        from phileas.sync import plan_sync
+
+        local = json.loads(Path(local_path).read_text(encoding="utf-8"))
+        remote = json.loads(Path(remote_path).read_text(encoding="utf-8"))
+        plan = plan_sync(local, remote)
+        Path(out_local).write_text(json.dumps(plan["to_local"]), encoding="utf-8")
+        Path(out_remote).write_text(json.dumps(plan["to_remote"]), encoding="utf-8")
+        tl, tr = plan["to_local"], plan["to_remote"]
+        print_success(
+            f"Plan: +{len(tl['memories'])} mem / +{len(tl['events'])} ev -> local; "
+            f"+{len(tr['memories'])} mem / +{len(tr['events'])} ev -> remote"
+        )
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+@click.command("sync-import")
+@click.option("--input", "input_path", required=True, help="Import bundle JSON.")
+def sync_import_cmd(input_path: str):
+    """Apply an import bundle, rebuilding Chroma + graph for new/updated rows.
+
+    Uses the running daemon (non-blocking) when up; otherwise opens the stores
+    directly, which requires the daemon stopped. Idempotent.
+    """
+    try:
+        from pathlib import Path
+
+        from phileas.daemon import is_running
+
+        bundle = json.loads(Path(input_path).read_text(encoding="utf-8"))
+        if is_running():
+            resp = _daemon_call("sync_apply", {"bundle": bundle}, timeout=300)
+            if not (resp and resp.get("ok")):
+                raise RuntimeError((resp or {}).get("error") or "daemon sync_apply failed")
+            stats = resp["result"]
+        else:
+            from phileas.sync import import_bundle
+
+            stats = import_bundle(_get_engine(), bundle)
+        print_success(
+            f"Imported {stats['memories']} memories, {stats['events']} events, {stats['links']} entity links."
+        )
     except Exception as exc:
         print_error(str(exc))
         raise SystemExit(1)

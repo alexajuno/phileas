@@ -1394,6 +1394,26 @@ class GraphStore:
             result.close()
 
     @_locked
+    def all_about_edges(self) -> dict[str, list[dict[str, str]]]:
+        """Bulk export of every memory→entity ABOUT edge in one query.
+
+        Returns ``{memory_id: [{"name": str, "type": str, "types": list[str]}]}``.
+        Used by the sync exporter so it doesn't issue one point-query per memory.
+        """
+        if not self._ensure_connected():
+            return {}
+        result = self._conn.execute("MATCH (m:Memory)-[:ABOUT]->(e:Entity) RETURN m.id, e.primary_name, e.types")
+        edges: dict[str, list[dict[str, str]]] = {}
+        try:
+            while result.has_next():
+                mid, name, raw_types = result.get_next()
+                types = _parse_list(raw_types)
+                edges.setdefault(mid, []).append({"name": name, "type": types[0] if types else "", "types": types})
+            return edges
+        finally:
+            result.close()
+
+    @_locked
     def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
         """Find all entities linked to a memory via ABOUT edges.
 

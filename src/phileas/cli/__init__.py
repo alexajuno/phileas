@@ -26,6 +26,9 @@ from phileas.cli.commands import (
     start,
     status,
     stop_cmd,
+    sync_export_cmd,
+    sync_import_cmd,
+    sync_plan_cmd,
     update_cmd,
     usage,
 )
@@ -56,4 +59,7 @@ app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)
 app.add_command(retry_events)
+app.add_command(sync_export_cmd)
+app.add_command(sync_plan_cmd)
+app.add_command(sync_import_cmd)
 app.add_command(stats)
