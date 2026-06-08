@@ -1282,31 +1282,6 @@ class MemoryEngine:
         return []
 
     # ------------------------------------------------------------------
-    # infer_graph
-    # ------------------------------------------------------------------
-
-    @timed_op("infer_graph")
-    def infer_graph(self) -> dict:
-        """Run two-pass inference on recent memories.
-
-        Pass 1: Fact derivation — recall related memories for each new memory,
-                build clusters, ask LLM to derive facts by combining them.
-        Pass 2: Entity gap fill — find memories with sparse graph links and
-                run entity extraction on them.
-
-        Uses a marker memory to track the last inference time.
-        Returns {"facts_derived": N, "entities_filled": N, "memories_processed": N}.
-        """
-        # Deprecated: daemon-side fact derivation and entity gap-fill both
-        # required an LLM. Moved to agent-driven: the host Claude calls the
-        # relevant MCP tools (recall, about, timeline) to explore recent
-        # memories and writes derived facts / entity updates via memorize()
-        # and relate(). This stub keeps the systemd timer callable without
-        # a crash.
-        op_extra(skipped="agent_driven")
-        return {"facts_derived": 0, "entities_filled": 0, "memories_processed": 0}
-
-    # ------------------------------------------------------------------
     # status
     # ------------------------------------------------------------------
 

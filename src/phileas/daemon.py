@@ -652,8 +652,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         from phileas.sync import import_bundle
 
         return import_bundle(engine, params["bundle"])
-    elif method == "infer_graph":
-        return engine.infer_graph()
     elif method == "ingest":
         # Store the raw turn as an event for thread() recall and the
         # in-turn memorize-hint trigger. No LLM call happens here.

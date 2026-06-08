@@ -2,7 +2,6 @@
 
 Installs/removes systemd user units for:
   - phileas-reflect: daily reflection (catches up on missed days)
-  - phileas-infer: graph inference every 2 hours
 """
 
 from __future__ import annotations
@@ -49,29 +48,6 @@ Description=Phileas daily reflection timer
 
 [Timer]
 OnCalendar=*-*-* 23:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-""",
-    },
-    "phileas-infer": {
-        "service": """\
-[Unit]
-Description=Phileas graph inference
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart={bin} infer-graph
-Environment=PHILEAS_HOME={home}
-""",
-        "timer": """\
-[Unit]
-Description=Phileas graph inference timer (every 2h)
-
-[Timer]
-OnCalendar=*-*-* 00/2:00:00
 Persistent=true
 
 [Install]

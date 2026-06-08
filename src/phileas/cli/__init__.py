@@ -13,7 +13,6 @@ from phileas.cli.commands import (
     contradictions,
     export_cmd,
     forget,
-    infer_graph,
     ingest,
     init_cmd,
     list_cmd,
@@ -50,7 +49,6 @@ app.add_command(list_cmd)
 app.add_command(show)
 app.add_command(ingest)
 app.add_command(reflect)
-app.add_command(infer_graph)
 app.add_command(contradictions)
 app.add_command(export_cmd)
 app.add_command(serve)
