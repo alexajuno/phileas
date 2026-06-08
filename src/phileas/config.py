@@ -97,6 +97,30 @@ class LoggingConfig:
     file_backup_count: int = 3
 
 
+@dataclass
+class SyncConfig:
+    """Event-driven sync (push-on-write).
+
+    The daemon owns *when* to push (a write fires a debounced, fire-and-forget
+    signal); transport owns *how* (the `push_command`). This decouples the
+    trigger from the cross-machine transport, which is being moved to an
+    HTTP/SSE path against the box (AA-104). Disabled by default — opt in once a
+    `push_command` is configured.
+    """
+
+    push_on_write: bool = False
+    # Coalesce a burst of writes into one push: wait this long after the last
+    # write before pushing.
+    debounce_seconds: float = 3.0
+    # Floor between consecutive pushes so a steady write stream can't hammer the
+    # transport.
+    min_interval_seconds: float = 10.0
+    # Shell command the daemon runs to perform a push. None → the trigger fires
+    # but no-ops (safe default until transport is wired).
+    push_command: str | None = None
+    push_timeout_seconds: float = 300.0
+
+
 # ------------------------------------------------------------------
 # Top-level config
 # ------------------------------------------------------------------
@@ -116,6 +140,7 @@ class PhileasConfig:
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     reinforcement: ReinforcementConfig = field(default_factory=ReinforcementConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    sync: SyncConfig = field(default_factory=SyncConfig)
 
     # -- Derived paths --
 
@@ -165,6 +190,7 @@ def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
         "scoring": cfg.scoring,
         "reinforcement": cfg.reinforcement,
         "logging": cfg.logging,
+        "sync": cfg.sync,
     }
     for section_name, section_obj in section_map.items():
         if section_name in data:

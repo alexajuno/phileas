@@ -29,6 +29,14 @@ log = logging.getLogger("phileas.daemon")
 # Module-level reinforcement queue, initialized by start()
 _reinforce_queue: deque[dict] | None = None
 
+# Push-on-write trigger, initialized by start() when sync.push_on_write is set.
+_sync_pusher: SyncPusher | None = None
+
+# Dispatch methods that mutate the canonical (synced) store and should arm a
+# push. Events ride along incrementally on the next push, and the derived graph
+# is rebuilt on import, so neither needs its own trigger here.
+_WRITE_METHODS = frozenset({"memorize", "forget", "update", "reflect"})
+
 
 def _pid_path(config: PhileasConfig) -> Path:
     return config.home / "daemon.pid"
@@ -85,6 +93,77 @@ def stop(config: PhileasConfig | None = None) -> bool:
         pass
 
     return True
+
+
+class SyncPusher:
+    """Debounced, fire-and-forget push-on-write trigger.
+
+    A write calls :meth:`notify`, which is cheap and never blocks the caller —
+    it just stamps the time and wakes a background worker. The worker coalesces
+    a burst of writes into a single push (waits ``debounce_s`` of quiet after
+    the last write) and never pushes more often than every ``min_interval_s``.
+
+    ``push_fn`` is injected so transport stays pluggable (and tests can pass a
+    fake): today it shells out to a configured command; the AA-104 HTTP/SSE path
+    will swap in a native push without touching this scheduler.
+    """
+
+    def __init__(
+        self,
+        push_fn,
+        debounce_s: float = 3.0,
+        min_interval_s: float = 10.0,
+    ) -> None:
+        import threading
+
+        self._push_fn = push_fn
+        self._debounce_s = debounce_s
+        self._min_interval_s = min_interval_s
+        self._cond = threading.Condition()
+        self._pending = False
+        self._last_notify = 0.0
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        import threading
+
+        self._thread = threading.Thread(target=self._run, daemon=True, name="phileas-sync-push")
+        self._thread.start()
+
+    def notify(self) -> None:
+        """Arm a push. Cheap, non-blocking — safe to call on the write path."""
+        import time
+
+        with self._cond:
+            self._pending = True
+            self._last_notify = time.monotonic()
+            self._cond.notify()
+
+    def _run(self) -> None:
+        import time
+
+        while True:
+            with self._cond:
+                while not self._pending:
+                    self._cond.wait()
+                # Debounce: re-wait while writes keep arriving, so a burst
+                # collapses into one push once things go quiet.
+                while True:
+                    elapsed = time.monotonic() - self._last_notify
+                    if elapsed >= self._debounce_s:
+                        break
+                    self._cond.wait(timeout=self._debounce_s - elapsed)
+                # Consume the window. A write landing after this point re-arms
+                # _pending, so its data is never dropped — it rides the next push.
+                self._pending = False
+
+            try:
+                self._push_fn()
+            except Exception as e:
+                log.warning("sync push failed", extra={"op": "sync", "data": {"error": str(e)}})
+
+            # Throttle: floor the gap between pushes regardless of write rate.
+            time.sleep(self._min_interval_s)
 
 
 def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
@@ -170,6 +249,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
             try:
                 result = _dispatch(engine, method, params)
+                # Arm a push only after the write succeeded — never block the
+                # response on it (notify() is non-blocking and fire-and-forget).
+                if method in _WRITE_METHODS and _sync_pusher is not None:
+                    _sync_pusher.notify()
                 self._respond(200, {"ok": True, "result": result})
             except Exception as exc:
                 self._respond(500, {"ok": False, "error": str(exc)})
@@ -345,6 +428,55 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     rss_thread = threading.Thread(target=_rss_watchdog_loop, daemon=True, name="phileas-rss-watchdog")
     rss_thread.start()
+
+    # -- Push-on-write (event-driven sync) ---------------------------------
+    # A write arms a debounced push instead of waiting for a poll. The push
+    # itself is a configured command for now; the AA-104 HTTP/SSE transport
+    # slots in here without changing the trigger.
+    global _sync_pusher
+    _sync_pusher = None
+    if config.sync.push_on_write:
+
+        def _do_push():
+            import subprocess
+
+            cmd = config.sync.push_command
+            if not cmd:
+                log.debug("push-on-write fired but no push_command configured", extra={"op": "sync"})
+                return
+            proc = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=config.sync.push_timeout_seconds,
+            )
+            if proc.returncode != 0:
+                log.warning(
+                    "push_command failed",
+                    extra={"op": "sync", "data": {"rc": proc.returncode, "stderr": proc.stderr[-500:]}},
+                )
+            try:
+                engine._metrics.record_daemon("sync_push", payload={"rc": proc.returncode})
+            except Exception:
+                pass
+
+        _sync_pusher = SyncPusher(
+            push_fn=_do_push,
+            debounce_s=config.sync.debounce_seconds,
+            min_interval_s=config.sync.min_interval_seconds,
+        )
+        _sync_pusher.start()
+        log.info(
+            "push-on-write enabled",
+            extra={
+                "op": "sync",
+                "data": {
+                    "debounce_s": config.sync.debounce_seconds,
+                    "has_command": bool(config.sync.push_command),
+                },
+            },
+        )
 
     # Daemon-side LLM extraction was removed during the agent-driven
     # migration. Events land in the `events` table; memories are extracted
