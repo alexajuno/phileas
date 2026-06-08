@@ -167,10 +167,10 @@ class SyncPusher:
         self._last_notify = 0.0
         self._thread: threading.Thread | None = None
 
-    def start(self) -> None:
+    def start(self, name: str = "phileas-sync-push") -> None:
         import threading
 
-        self._thread = threading.Thread(target=self._run, daemon=True, name="phileas-sync-push")
+        self._thread = threading.Thread(target=self._run, daemon=True, name=name)
         self._thread.start()
 
     def notify(self) -> None:
@@ -516,7 +516,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
             debounce_s=config.sync.debounce_seconds,
             min_interval_s=config.sync.min_interval_seconds,
         )
-        _sync_pusher.start()
+        _sync_pusher.start(name="phileas-sync-push")
         log.info(
             "push-on-write enabled",
             extra={"op": "sync", "data": {"has_command": bool(config.sync.push_command)}},
@@ -534,7 +534,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
             debounce_s=config.sync.debounce_seconds,
             min_interval_s=config.sync.min_interval_seconds,
         )
-        pull_pusher.start()
+        pull_pusher.start(name="phileas-sync-pull")
         threading.Thread(
             target=_sse_subscriber_loop,
             args=(config, pull_pusher),
