@@ -191,7 +191,7 @@ class GraphStore:
 
         Must be called by every write path that touches Entity rows or
         ABOUT edges, since cached rows include aliases (mutated by
-        _maybe_add_alias / set_aliases / merge_entities) and a
+        _append_alias / set_aliases / merge_entities) and a
         memory_count derived from COUNT(:ABOUT) (changed by link_memory
         and merge_entities).
         """
@@ -829,7 +829,6 @@ class GraphStore:
                 cand_lower = _types_lower(c["types"])
                 if hint_lower and hint_lower.issubset(cand_lower):
                     self._merge_into_existing(c["id"], hint_types, description)
-                    self._maybe_add_alias(c["id"], name)
                     return c["id"]
 
             max_count = self._max_memory_count()
@@ -840,7 +839,6 @@ class GraphStore:
             best_score = self._score_candidate(best, hint_types, context_neighbors, max_count)
             if best_score >= LINK_HIGH:
                 self._merge_into_existing(best["id"], hint_types, description)
-                self._maybe_add_alias(best["id"], name)
                 return best["id"]
             # Below LINK_HIGH (including the LINK_LOW..LINK_HIGH mid-band)
             # falls through to mint-new for safety, per the design doc.
@@ -866,37 +864,40 @@ class GraphStore:
         self._invalidate_candidate_cache()
         return new_id
 
-    def _maybe_add_alias(self, entity_id: str, incoming_name: str) -> None:
+    def _append_alias(self, entity_id: str, incoming_name: str) -> bool:
         """Append ``incoming_name`` to the entity's alias list iff it's a new variant.
 
-        Self-improving step on the entity_lookup reuse paths (AA-57 / Phase 2 of
-        AA-55): once the scorer has accepted that this mention names an
-        existing entity, persist that decision so the *next* mention by the
-        same variant exact-matches in ``_candidate_rows`` and skips scoring.
-        Idempotent + case-insensitive against both primary_name and the
-        existing alias list.
+        Returns True if an alias was appended, False on any no-op (entity gone,
+        empty name, exact-case match against primary, or already an alias).
+
+        Formerly auto-invoked from the ``entity_lookup`` reuse paths (AA-57 /
+        Phase 2). Since AA-59 the linker no longer learns aliases on its own —
+        this runs only from the explicit ``add_alias`` path, so a human decides
+        which variant maps to which entity (handle stems like "huyen" collide
+        across distinct people, so auto-learning was unsafe). Idempotent +
+        case-insensitive against both primary_name and the existing alias list.
         """
         result = self._conn.execute(
             "MATCH (e:Entity {id: $id}) RETURN e.primary_name, e.aliases",
             parameters={"id": entity_id},
         )
         if not result.has_next():
-            return
+            return False
         row = result.get_next()
         primary = (row[0] or "").strip()
         aliases = _parse_list(row[1])
         name = incoming_name.strip()
         if not name:
-            return
+            return False
         # Skip the no-op surface form (exact-case match against primary).
         # A case-only variant of primary is still worth capturing as an alias —
         # downstream display/search may want the actual surface form, even
         # though _candidate_rows normalizes primary_name on lookup.
         if name == primary:
-            return
+            return False
         name_lower = name.lower()
         if any(a.strip().lower() == name_lower for a in aliases):
-            return
+            return False
         aliases.append(name)
         self._conn.execute(
             "MATCH (e:Entity {id: $id}) SET e.aliases = $aliases, e.aliases_norm = $aliases_norm",
@@ -907,6 +908,7 @@ class GraphStore:
             },
         )
         self._invalidate_candidate_cache()
+        return True
 
     def _merge_into_existing(self, entity_id: str, new_types: list[str], description: str) -> None:
         """Union new types into the entity row; leave name + description alone."""
@@ -1064,6 +1066,52 @@ class GraphStore:
         return results
 
     @_locked
+    def find_similar_nodes(self, name_query: str) -> list[dict[str, Any]]:
+        """Norm-aware CONTAINS search over entity primary names and aliases.
+
+        Disambiguation primitive (AA-59): a mention like "huyen" returns every
+        entity whose normalized primary_name or alias contains the normalized
+        query — so the caller can surface "huyenntk vs huyenctk vs Huyền" and
+        ask the user which one is meant, then persist the answer via
+        ``add_alias``. Unlike ``lookup_nodes`` (exact norm match) this is
+        substring; unlike ``search_nodes`` it matches on the diacritic-folded
+        form, so "huyen" also catches "Huyền". Ordered by memory mass (most
+        established entity first). Pass a discriminative stem — very short
+        queries match broadly.
+        """
+        if not self._ensure_connected():
+            return []
+        q = _normalize_name(name_query)
+        if not q:
+            return []
+        result = self._conn.execute(
+            "MATCH (e:Entity) "
+            "WHERE e.primary_name_norm CONTAINS $q OR e.aliases_norm CONTAINS $q "
+            "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+            "WITH e, COUNT(m) AS cnt "
+            "RETURN e.id, e.primary_name, e.types, e.aliases, e.description, cnt "
+            "ORDER BY cnt DESC",
+            parameters={"q": q},
+        )
+        try:
+            rows: list[dict[str, Any]] = []
+            while result.has_next():
+                r = result.get_next()
+                rows.append(
+                    {
+                        "id": r[0],
+                        "name": r[1],
+                        "types": _parse_list(r[2]),
+                        "aliases": _parse_list(r[3]),
+                        "description": r[4] or "",
+                        "memory_count": int(r[5]),
+                    }
+                )
+            return rows
+        finally:
+            result.close()
+
+    @_locked
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         """Set aliases for an entity (resolved by type+name)."""
         if not self._ensure_connected():
@@ -1080,6 +1128,32 @@ class GraphStore:
             },
         )
         self._invalidate_candidate_cache()
+
+    @_locked
+    def add_alias(self, node_type: str, name: str, alias: str) -> dict[str, Any]:
+        """Append ``alias`` as an alternate surface form for the entity (node_type, name).
+
+        Explicit, user-declared aliasing — the manual replacement for the
+        auto-alias layer removed in AA-59. The linker no longer guesses name
+        variants at link time; a human decides (e.g.) that "huyen" means
+        ``huyenntk`` and not ``huyenctk``. Resolve the entity by an
+        unambiguous existing name (usually its handle), then append. Returns a
+        small summary; ``ok=False`` when the entity can't be resolved.
+        """
+        if not self._ensure_connected():
+            return {"ok": False, "reason": "graph unavailable"}
+        eid = self._lookup_id(node_type, name)
+        if not eid:
+            return {"ok": False, "reason": f"no entity found for ({node_type!r}, {name!r})"}
+        added = self._append_alias(eid, alias)
+        row = self._fetch_entity_row(eid)
+        return {
+            "ok": True,
+            "entity_id": eid,
+            "primary_name": row["primary_name"] if row else "",
+            "aliases": row["aliases"] if row else [],
+            "added": added,
+        }
 
     @_locked
     def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:

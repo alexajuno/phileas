@@ -74,6 +74,22 @@ class GraphProxy:
     def set_aliases(self, node_type: str, name: str, aliases: list[str]) -> None:
         self._write("set_aliases", {"node_type": node_type, "name": name, "aliases": aliases})
 
+    def add_alias(self, node_type: str, name: str, alias: str) -> dict[str, Any]:
+        try:
+            from phileas.daemon import call
+
+            response = call(
+                "graph_write",
+                {"op": "add_alias", "node_type": node_type, "name": name, "alias": alias},
+            )
+            if response is not None and response.get("ok", False):
+                inner = response.get("result") or {}
+                if inner.get("ok", False):
+                    return inner.get("summary") or {}
+        except Exception:
+            pass
+        return {"ok": False, "reason": "daemon unavailable"}
+
     def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:
         try:
             from phileas.daemon import call
@@ -95,6 +111,9 @@ class GraphProxy:
 
     def search_nodes(self, name_query: str) -> list[dict[str, Any]]:
         return self._read("search_nodes", {"query": name_query}, default=[])
+
+    def find_similar_nodes(self, name_query: str) -> list[dict[str, Any]]:
+        return self._read("find_similar_nodes", {"query": name_query}, default=[])
 
     def lookup_nodes(self, name_query: str) -> list[dict[str, Any]]:
         return self._read("lookup_nodes", {"query": name_query}, default=[])

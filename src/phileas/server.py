@@ -659,6 +659,67 @@ def merge_entities(canonical_id: str, duplicate_ids: list[str]) -> str:
 
 
 @_instrumented_tool()
+def find_entities(query: str) -> str:
+    """Find candidate entities whose name or alias contains the query (diacritic-folded).
+
+    Disambiguation helper. When the user mentions a person by a bare or partial
+    name that could match more than one entity, call this to see every
+    candidate, then ask the user which one is meant and record their answer
+    with `alias`. Matches on the normalized (lowercased, diacritic-stripped)
+    form, so "huyen" surfaces "huyenntk", "huyenctk", and "Huyền" alike.
+    Results are ordered by memory mass. Pass a reasonably specific stem — very
+    short queries match broadly.
+
+    Args:
+        query: A name fragment to search for (e.g. "huyen").
+    """
+    rows = graph.find_similar_nodes(query)
+    if not rows:
+        return f"No entities matching '{query}'."
+    lines = [f"Entities matching '{query}' ({len(rows)} found):"]
+    for r in rows:
+        types = "/".join(r.get("types") or []) or "?"
+        aliases = r.get("aliases") or []
+        alias_str = f" aka {aliases}" if aliases else ""
+        desc = (r.get("description") or "").strip()
+        desc_str = f" — {desc[:80]}" if desc else ""
+        lines.append(f"  {r['name']} [{types}] ({r.get('memory_count', 0)} memories){alias_str}{desc_str}")
+    return "\n".join(lines)
+
+
+@_instrumented_tool()
+def alias(name: str, alias: str, entity_type: str | None = None) -> str:
+    """Record a user-declared alias for an existing entity.
+
+    The manual, authoritative way to teach Phileas that two surface forms name
+    the same person/thing — e.g. the user says "call Chu Thị Khánh Huyền
+    'huyen chu'". Phileas does NOT guess handle↔display-name pairings on its
+    own: stems collide across distinct people (`huyenntk` = Nguyễn… vs
+    `huyenctk` = Chu…), so a wrong auto-merge is worse than a miss. Resolve any
+    ambiguity with the user first (see `find_entities`), then persist their
+    choice here. Afterwards `about(<alias>)` and future mentions of the alias
+    resolve to this entity. For folding already-split duplicate nodes, use
+    `merge_entities` instead.
+
+    Args:
+        name: An existing, unambiguous name for the entity (usually its handle,
+            e.g. "huyenctk"). Used to locate the entity to alias.
+        alias: The alternate surface form to attach (e.g. "huyen chu").
+        entity_type: Optional type filter to disambiguate (e.g. "Person").
+    """
+    result = graph.add_alias(entity_type or "", name, alias)
+    if not result or not result.get("ok"):
+        reason = (result or {}).get("reason", "entity not found")
+        return f"No alias set — {reason}."
+    if not result.get("added"):
+        return f"'{alias}' is already an alias (or the primary name) of {result.get('primary_name', name)}; no change."
+    return (
+        f"Aliased '{alias}' → {result.get('primary_name', name)} "
+        f"[{result.get('entity_id')}]. Aliases now: {result.get('aliases')}."
+    )
+
+
+@_instrumented_tool()
 def status() -> str:
     """Get system health and memory statistics."""
     stats = engine.status()

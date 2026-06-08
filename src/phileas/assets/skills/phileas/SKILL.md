@@ -147,3 +147,16 @@ Identity in the graph is an opaque uuid; `name` and `type` are attributes. The l
 ```
 
 Skip `description` when the name is unambiguous in the user's world (their colleagues, their projects). For multi-type referents the same physical thing may carry — `Acme` is a place AND the company that owns it AND a project name — let the linker collapse them onto one uuid by tagging consistently and the migration script handles legacy splits.
+
+### Handle vs. display-name: user-declared aliases
+
+Phileas does **not** auto-pair a username-handle with a display name. Name bridges happen only three ways: diacritic/case folding (automatic and safe — `Ngân` ↔ `Ngan`), an explicit user-declared `alias`, or `merge_entities` to fold already-split nodes. The linker never guesses handle↔name pairings, because handle stems collide across *distinct* people — e.g. `huyenntk` (**N**guyễn Thị Khánh Huyền) and `huyenctk` (**C**hu Thị Khánh Huyền) share the stem `huyen`, so an auto-merge would silently fuse two real people. A miss is recoverable; a wrong merge is not.
+
+So when the user refers to someone by a bare or partial name that may be ambiguous (or when `about(name)` looks like it's returning only a fragment of a person):
+
+1. `find_entities(stem)` — lists every candidate (norm-aware, so `huyen` surfaces `huyenntk`, `huyenctk`, and `Huyền`), with memory counts and descriptions.
+2. If more than one plausible match, **ask the user which one** — do not pick for them.
+3. Persist their answer with `alias(name=<the unambiguous handle>, alias=<what they call them>)` — e.g. the user says "call Chu's one *huyen chu*" → `alias(name="huyenctk", alias="huyen chu")`. Afterwards `about("huyen chu")` and future mentions resolve to that entity.
+4. If a candidate is an orphaned fragment that genuinely belongs to another (e.g. a 1-memory `Huyền` node that is the same person as `huyenctk`), fold it with `merge_entities` rather than aliasing.
+
+The alias is the user's convention, set explicitly — never inferred.

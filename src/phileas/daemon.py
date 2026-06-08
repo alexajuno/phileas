@@ -705,6 +705,9 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         elif op == "merge_entities":
             summary = graph.merge_entities(params["canonical_id"], params["duplicate_ids"])
             return {"ok": True, "summary": summary}
+        elif op == "add_alias":
+            summary = graph.add_alias(params["node_type"], params["name"], params["alias"])
+            return {"ok": True, "summary": summary}
         else:
             raise ValueError(f"Unknown graph_write op: {op}")
     elif method == "graph_read":
@@ -716,6 +719,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_memories_about(params["entity_type"], params["entity_name"])
         elif op == "search_nodes":
             return graph.search_nodes(params["query"])
+        elif op == "find_similar_nodes":
+            return graph.find_similar_nodes(params["query"])
         elif op == "lookup_nodes":
             return graph.lookup_nodes(params["query"])
         elif op == "get_related_entities":
