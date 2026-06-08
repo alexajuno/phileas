@@ -135,6 +135,24 @@ class Database:
         return self._row_to_item(row)
 
     @_locked
+    def get_items_by_id_prefix(self, prefix: str, limit: int = 10) -> list[MemoryItem]:
+        """Resolve a memory by an id prefix (e.g. the 8-char pointer id).
+
+        Returns every active-or-archived match (capped at ``limit``) so the
+        caller can distinguish the no-match, unique-match, and ambiguous-prefix
+        cases. A full uuid resolves to at most one row. Used by `hydrate`
+        (AA-106) to turn a cheap pointer id8 back into a full record.
+        """
+        clean = (prefix or "").strip()
+        if not clean:
+            return []
+        rows = self.conn.execute(
+            "SELECT * FROM memory_items WHERE id LIKE ? ORDER BY created_at DESC LIMIT ?",
+            (f"{clean}%", limit),
+        ).fetchall()
+        return [self._row_to_item(row) for row in rows]
+
+    @_locked
     def get_active_items(self) -> list[MemoryItem]:
         rows = self.conn.execute(
             "SELECT * FROM memory_items WHERE status = 'active' ORDER BY created_at DESC"

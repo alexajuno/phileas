@@ -145,6 +145,9 @@ class GraphProxy:
     def get_entities_for_memory(self, memory_id: str) -> list[dict[str, str]]:
         return self._read("get_entities_for_memory", {"memory_id": memory_id}, default=[])
 
+    def get_entities_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
+        return self._read("get_entities_for_memories", {"memory_ids": list(memory_ids)}, default={})
+
     # -- Entity <-> Entity edges (REL) --
 
     def create_edge(self, from_type: str, from_name: str, edge_type: str, to_type: str, to_name: str) -> None:

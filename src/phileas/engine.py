@@ -149,6 +149,98 @@ class MemoryEngine:
             "memories": [_item_to_dict(m) for m in memories],
         }
 
+    def hydrate(self, memory_id: str) -> dict | None:
+        """Resolve a pointer id (full uuid or 8-char prefix) to a full record.
+
+        The inverse of the pointer trim: returns everything the cheap pointer
+        line drops — exact timestamps, importance/status/access counts, the
+        *full* source_event_id (the handle for `thread`), and linked entities.
+        Powers the "inspect this one memory" drill-in (AA-106).
+
+        Returns the record dict on a unique match, ``None`` for no match, or
+        ``{"error": ..., "candidates": [...]}`` when an id prefix is ambiguous.
+        """
+        clean = (memory_id or "").strip()
+        if not clean:
+            return None
+        matches = self.db.get_items_by_id_prefix(clean)
+        if not matches:
+            return None
+        if len(matches) > 1:
+            return {
+                "error": f"ambiguous id prefix '{clean}' matched {len(matches)} memories",
+                "candidates": [{"id": m.id, "summary": m.summary} for m in matches],
+            }
+        item = matches[0]
+        entities: list[dict] = []
+        try:
+            entities = self.graph.get_entities_for_memory(item.id)
+        except Exception as e:
+            log.debug("hydrate entity lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
+        return {
+            "id": item.id,
+            "summary": item.summary,
+            "type": item.memory_type,
+            "importance": item.importance,
+            "status": item.status,
+            "access_count": item.access_count,
+            "reinforcement_count": item.reinforcement_count,
+            "daily_ref": item.daily_ref,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+            "source_event_id": item.source_event_id,
+            "entities": entities,
+        }
+
+    def serendipity(self, n: int = 3, exclude_ids: list[str] | None = None) -> list[dict]:
+        """Pick N high-signal memories **not gated on query relevance** (AA-106).
+
+        The budgeted serendipity window: surfaces cross-topic context the current
+        task would never retrieve, producing the "oh, that connects" moments by
+        design rather than by accident. Selection = importance × graph-connection
+        (how many entities a memory touches), drawn from a high-signal band and
+        rotated by calendar day so the wildcard varies day to day but is stable
+        within a day. ``exclude_ids`` (full ids or id8 prefixes) drops memories
+        already in the caller's context.
+        """
+        import random
+        from datetime import date as _date
+
+        n = max(1, int(n))
+        exclude = [e for e in (exclude_ids or []) if e]
+
+        def _excluded(item: MemoryItem) -> bool:
+            return any(item.id == e or item.id.startswith(e) for e in exclude)
+
+        pool = [it for it in self.db.get_active_items() if not _excluded(it)]
+        if not pool:
+            return []
+
+        # Cheap pre-filter by importance, then score the band by graph-connection.
+        pool.sort(
+            key=lambda it: (
+                -(it.importance or 0),
+                -(it.created_at.timestamp() if it.created_at else 0),
+            )
+        )
+        pool = pool[:150]
+        try:
+            ents = self.graph.get_entities_for_memories([it.id for it in pool])
+        except Exception:
+            ents = {}
+
+        def _score(it: MemoryItem) -> float:
+            degree = len(ents.get(it.id, []))
+            return (it.importance or 0) * (1.0 + 0.5 * degree)
+
+        pool.sort(key=_score, reverse=True)
+        band = pool[: max(n * 5, 15)]
+
+        # Daily rotation: deterministic per-day pick from the high-signal band.
+        rng = random.Random(_date.today().toordinal())
+        rng.shuffle(band)
+        return [_item_to_dict(it) for it in band[:n]]
+
     # ------------------------------------------------------------------
     # memorize
     # ------------------------------------------------------------------

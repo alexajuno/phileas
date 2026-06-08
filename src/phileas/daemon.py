@@ -715,6 +715,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         graph = engine.graph
         if op == "get_entities_for_memory":
             return graph.get_entities_for_memory(params["memory_id"])
+        elif op == "get_entities_for_memories":
+            return graph.get_entities_for_memories(params["memory_ids"])
         elif op == "get_memories_about":
             return graph.get_memories_about(params["entity_type"], params["entity_name"])
         elif op == "search_nodes":

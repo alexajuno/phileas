@@ -11,6 +11,8 @@ Tools:
   - about: get memories connected to an entity
   - timeline: get memories in a date range
   - recall_recent: get recent memories (last N days) for temporal queries
+  - hydrate: full record of one memory by id/id8 — the drill-in for a pointer
+  - serendipity: N high-signal memories NOT gated on query relevance
   - recall with memory_type="profile": get profile-type memories (ranked)
   - ingest_session: parse a JSONL session for Claude Code to extract from
   - mark_session_done: mark a session as processed
@@ -29,6 +31,9 @@ from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph_proxy import GraphProxy
 from phileas.mcp_auth import build_auth_components, register_login_routes
+from phileas.recall_format import id8 as _id8
+from phileas.recall_format import pointer_line as _pointer_line
+from phileas.recall_format import render_pointers, select_recent
 from phileas.vector import VectorStore
 
 # OAuth + HTTP serving is opt-in (PHILEAS_MCP_TRANSPORT=http) so the phone can
@@ -41,7 +46,15 @@ mcp = FastMCP(
     "phileas",
     **_auth_kwargs,
     instructions=(
-        "Phileas is a long-term memory companion. Choose tools by query type:\n"
+        "Phileas is a long-term memory companion.\n"
+        "\n"
+        "POINTERS, NOT BODIES: recall-family tools return cheap POINTERS — "
+        "`[id8] [type] date · summary · entity tags`. The summary IS the fact (shown "
+        "whole); the metadata tail is trimmed and results are bounded. Treat pointers as "
+        "your working context. Only drill in when you genuinely need more, via the "
+        "hydrate ladder below — don't fan out recall() dozens of times hoping for depth.\n"
+        "\n"
+        "Choose tools by query type:\n"
         "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
         "  Pass FOCUSED TERM QUERIES (one concept, 1–4 words: 'tennis', '<person> preferences',\n"
         "  'memory layer design'). Avoid full sentences — every token must AND-match the memory\n"
@@ -50,14 +63,19 @@ mcp = FastMCP(
         "  term queries and merge results by id. Example: instead of\n"
         "  recall('what did the user say about <person> and tennis'), call\n"
         "  recall('<person>') and recall('tennis') in parallel.\n"
-        "- recall_recent(days): recent memories by date — use FIRST for time-relative questions "
-        "('recently', 'yesterday', 'last chat', 'last night', 'last session', 'last time we talked')\n"
+        "- recall_recent(days): recent memories by date (bounded) — use FIRST for time-relative "
+        "questions ('recently', 'yesterday', 'last chat', 'last night', 'last session', 'last time we talked')\n"
         "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
         "- timeline(start, end): memories across a date range\n"
-        "- about(name): all memories linked to a person/entity — for 'who is X' questions\n"
-        "- thread(event_id): FOLLOW-UP drill-down, not an entry point — when a recalled "
-        "memory's source_event_id looks worth expanding, fetch the verbatim originating "
-        "turn plus every sibling memory extracted from it\n"
+        "- about(name): memories linked to a person/entity (bounded; '+N more' when capped) — for 'who is X'\n"
+        "- serendipity(n): N high-signal memories NOT gated on relevance — a wildcard slot for "
+        "cross-topic context the task wouldn't retrieve. Opt-in; keep n small.\n"
+        "\n"
+        "Drill-in ladder (hydrate lazily — each step costs more):\n"
+        "- hydrate(id8): full record of ONE memory — exact timestamps, counts, the full "
+        "source_event_id, linked entities. The inverse of the pointer trim.\n"
+        "- thread(event_id): the verbatim originating conversation + sibling memories. Get the "
+        "event_id from hydrate first. The deepest, most expensive view.\n"
         "- memorize(): store new memories; prefer memorize_batch() for multiple at once"
     ),
 )
@@ -84,6 +102,34 @@ graph = GraphProxy()
 engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 
 
+# ---------------------------------------------------------------------------
+# Pointer formatting (AA-106)
+#
+# The main agent context sees cheap *pointers* — id8 + type + (date) + the full
+# summary + entity tags — never a metadata tail or an unbounded result dump.
+# The summary is shown whole; it IS the memory's content. What's dropped is the
+# uuid tail and importance/score/event/time-of-day. Full detail is one explicit
+# hydrate()/thread()/about() drill-in away. The pure formatting + recent-window
+# cap live in phileas.recall_format; the one graph round-trip that fetches entity
+# tags lives here (it needs the proxy).
+# ---------------------------------------------------------------------------
+
+
+def _entities_for(items: list[dict]) -> dict[str, list[dict]]:
+    """Batched entity tags keyed by full memory id; {} on any graph hiccup."""
+    ids = [it.get("id") for it in items if it.get("id")]
+    if not ids:
+        return {}
+    try:
+        return graph.get_entities_for_memories(ids) or {}
+    except Exception:
+        return {}
+
+
+def _pointer_lines(items: list[dict], *, show_date: bool = True) -> list[str]:
+    return render_pointers(items, _entities_for(items), show_date=show_date)
+
+
 def _instrumented_tool(*tool_args, **tool_kwargs):
     """Wrap ``@_instrumented_tool()`` with MCP-call telemetry.
 
@@ -103,8 +149,12 @@ def _instrumented_tool(*tool_args, **tool_kwargs):
             t0 = perf_counter()
             ok = True
             err: str | None = None
+            output_chars: int | None = None
             try:
-                return fn(*args, **kwargs)
+                result = fn(*args, **kwargs)
+                if isinstance(result, str):
+                    output_chars = len(result)
+                return result
             except Exception as e:
                 ok = False
                 err = type(e).__name__
@@ -116,6 +166,7 @@ def _instrumented_tool(*tool_args, **tool_kwargs):
                         latency_ms=(perf_counter() - t0) * 1000,
                         ok=ok,
                         error=err,
+                        output_chars=output_chars,
                     )
                 except Exception:
                     pass
@@ -243,8 +294,9 @@ def recall(
     """Retrieve memories relevant to a focused term query.
 
     Hybrid retrieval: keyword (AND-match across tokens) + semantic + graph
-    entity lookup + raw-text + event-thread fanout. Returns top_k most
-    relevant memories.
+    entity lookup + raw-text + event-thread fanout. Returns up to top_k POINTER
+    lines (`[id8] [type] date · summary · entity tags`) — the summary is whole,
+    metadata is trimmed. Call hydrate(id8) for a memory's full detail.
 
     Query shape (important):
         Pass focused noun-phrase queries — one concept, 1–4 words.
@@ -265,14 +317,7 @@ def recall(
         return "No relevant memories found."
 
     lines = [f"Found {len(items)} memories:"]
-    for item in items:
-        score_str = f"score={item['score']:.2f}" if item.get("score") else ""
-        imp_str = f"importance={item['importance']}"
-        created = item.get("created_at")
-        created_str = f"created={created[:19]}" if created else ""
-        event_str = f"event={item['source_event_id']}" if item.get("source_event_id") else ""
-        meta = ", ".join(filter(None, [imp_str, score_str, created_str, event_str]))
-        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']} ({meta})")
+    lines.extend(_pointer_lines(items, show_date=True))
     return "\n".join(lines)
 
 
@@ -300,6 +345,42 @@ def thread(event_id: str) -> str:
     for m in result["memories"]:
         lines.append(f"  [{m['id']}] [{m['type']}] {m['summary']}")
     return "\n".join(lines)
+
+
+@_instrumented_tool()
+def hydrate(memory_id: str) -> str:
+    """Inspect ONE memory in full — the drill-in for a cheap pointer.
+
+    Recall-family tools return *pointers* (`[id8] [type] date · summary · entities`)
+    to keep the main context cheap. When you need what a pointer trims off —
+    exact timestamps, importance/status/access counts, the full source_event_id
+    (then call `thread` on it for the originating conversation), and linked
+    entities — pass the pointer's id8 (or the full uuid) here.
+
+    Args:
+        memory_id: A memory id or its 8-char pointer prefix (e.g. "a1b2c3d4").
+    """
+    result = engine.hydrate(memory_id)
+    if result is None:
+        return f"No memory found for id '{memory_id}'."
+    if "error" in result:
+        lines = [result["error"] + " — disambiguate:"]
+        for c in result.get("candidates", []):
+            lines.append(f"  [{_id8(c['id'])}] {c['summary']}")
+        return "\n".join(lines)
+    ent_names = ", ".join(dict.fromkeys(e.get("name", "") for e in (result.get("entities") or []) if e.get("name")))
+    return "\n".join(
+        [
+            f"[{result['id']}] [{result['type']}]",
+            f"  {result['summary']}",
+            f"  importance={result['importance']}  status={result['status']}  "
+            f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
+            f"  created={result['created_at']}  updated={result['updated_at']}",
+            f"  daily_ref={result.get('daily_ref') or '—'}",
+            f"  source_event_id={result.get('source_event_id') or '—'}  (call thread() on this for the conversation)",
+            f"  entities: {ent_names or '—'}",
+        ]
+    )
 
 
 @_instrumented_tool()
@@ -389,6 +470,9 @@ def about(
 ) -> str:
     """Get memories connected to an entity in the knowledge graph.
 
+    Returns POINTER lines, bounded (hub entities show a "+N more" footer —
+    narrow with memory_type, or drill in via timeline / hydrate).
+
     Args:
         name: Name of the entity to look up (e.g., "<person>", "React").
         entity_type: Optional type filter (e.g., "Person", "Technology").
@@ -406,11 +490,12 @@ def about(
     if not items:
         return f"No memories found for '{name}'."
 
+    cap = _config.recall.about_max
+    shown = items[:cap]
     lines = [f"Memories about '{name}' ({len(items)} found):"]
-    for item in items:
-        event = item.get("source_event_id")
-        suffix = f" (event={event})" if event else ""
-        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}{suffix}")
+    lines.extend(_pointer_lines(shown, show_date=True))
+    if len(items) > cap:
+        lines.append(f"  … +{len(items) - cap} more (narrow with memory_type, or use timeline / hydrate to drill in)")
     return "\n".join(lines)
 
 
@@ -432,10 +517,7 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
 
     range_str = f"{start_date} to {end_date}" if end_date else start_date
     lines = [f"Memories for {range_str} ({len(items)} found):"]
-    for item in items:
-        event = item.get("source_event_id")
-        suffix = f" (event={event})" if event else ""
-        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}{suffix}")
+    lines.extend(_pointer_lines(items, show_date=True))
     return "\n".join(lines)
 
 
@@ -445,7 +527,9 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
 
     Use for time-relative queries: 'recently', 'yesterday', 'last chat',
     'last night', 'last session', 'last time we talked'. Call this before
-    recall() when the question has a temporal anchor.
+    recall() when the question has a temporal anchor. Output is POINTER lines
+    and hard-capped (recall.recent_max) so a heavy day can't overflow context;
+    widen `days` or use timeline() for a fuller window.
 
     Args:
         days: How many days back to look (default 7).
@@ -477,21 +561,27 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
         day = (item.get("created_at") or "")[:10]
         by_day[day].append(item)
 
-    selected: list[dict] = []
+    # Pass 1: pick each day's top, honoring a hard global cap (newest day first)
+    # so a heavy low-importance day can't overflow the context (AA-106 — this is
+    # the path that blew up at 81k chars).
+    recent_max = engine.config.recall.recent_max
+    per_day, selected, truncated = select_recent(
+        by_day,
+        top_per_day=top_per_day,
+        min_importance=min_importance,
+        recent_max=recent_max,
+    )
+
+    # Pass 2: render pointers (entity tags batched across the whole selection;
+    # no per-line date — the day header already carries it).
+    ents = _entities_for(selected)
     lines = [f"Recent memories (last {days} day(s)):"]
-    for day in sorted(by_day.keys(), reverse=True):
-        day_items = by_day[day]
-        filtered = [i for i in day_items if (i.get("importance") or 0) >= min_importance]
-        if not filtered:
-            filtered = day_items
-        top = sorted(filtered, key=lambda x: x.get("importance") or 0, reverse=True)[:top_per_day]
-        selected.extend(top)
-        lines.append(f"\n{day} ({len(day_items)} total, showing {len(top)}):")
+    for day, day_total, top in per_day:
+        lines.append(f"\n{day} ({day_total} total, showing {len(top)}):")
         for item in top:
-            imp = item.get("importance", "?")
-            event = item.get("source_event_id")
-            suffix = f" (event={event})" if event else ""
-            lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}{suffix}")
+            lines.append(_pointer_line(item, ents, show_date=False))
+    if truncated:
+        lines.append(f"\n… capped at {recent_max} memories — narrow with `days` or use timeline for a fuller window.")
 
     _trace_recent(
         items=selected,
@@ -500,6 +590,30 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
         min_importance=min_importance,
         latency_ms=(perf_counter() - _t0) * 1000,
     )
+    return "\n".join(lines)
+
+
+@_instrumented_tool()
+def serendipity(n: int = 3, exclude_ids: list | str | None = None) -> str:
+    """Pull N high-signal memories deliberately NOT gated on query relevance.
+
+    The budgeted serendipity window (AA-106): a small wildcard slot chosen by
+    importance × graph-connection and rotated daily. Reach for it to surface
+    cross-topic context the current task wouldn't retrieve — the "the *you* that
+    moves between projects" moments. Keep n small (it's a designed, capped cost,
+    not a search). Pass the pointer ids already in your context as exclude_ids so
+    it doesn't echo what you've already seen.
+
+    Args:
+        n: How many wildcard pointers to return (default 3).
+        exclude_ids: List or JSON string of memory ids (full or id8) to skip.
+    """
+    parsed = json.loads(exclude_ids) if isinstance(exclude_ids, str) else exclude_ids
+    items = engine.serendipity(n=n, exclude_ids=parsed)
+    if not items:
+        return "No memories available for serendipity."
+    lines = [f"Serendipity — {len(items)} high-signal memories (NOT query-matched):"]
+    lines.extend(_pointer_lines(items, show_date=True))
     return "\n".join(lines)
 
 

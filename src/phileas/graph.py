@@ -1515,6 +1515,38 @@ class GraphStore:
         finally:
             result.close()
 
+    @_locked
+    def get_entities_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
+        """Batched ``get_entities_for_memory`` — one daemon round-trip for many ids.
+
+        Returns ``{memory_id: [{"name", "type", "types"}]}``; memories with no
+        ABOUT edges are simply absent from the map. The recall pointer formatter
+        uses this to tag each line with what it is *about* without firing one
+        graph RPC per result (AA-106). Runs N cheap indexed lookups in-process;
+        the win is collapsing N proxy→daemon hops into one.
+        """
+        out: dict[str, list[dict[str, str]]] = {}
+        if not memory_ids or not self._ensure_connected():
+            return out
+        for mid in memory_ids:
+            if mid in out:
+                continue
+            result = self._conn.execute(
+                "MATCH (m:Memory {id: $mid})-[:ABOUT]->(e:Entity) RETURN e.primary_name, e.types",
+                parameters={"mid": mid},
+            )
+            try:
+                entities: list[dict[str, str]] = []
+                while result.has_next():
+                    row = result.get_next()
+                    types = _parse_list(row[1])
+                    entities.append({"name": row[0], "type": types[0] if types else "", "types": types})
+                if entities:
+                    out[mid] = entities
+            finally:
+                result.close()
+        return out
+
     # ------------------------------------------------------------------
     # Entity ↔ Entity edges (REL)
     # ------------------------------------------------------------------

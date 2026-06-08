@@ -128,6 +128,61 @@ def recall_summary(metrics_db: Path, since: datetime | None) -> dict:
     }
 
 
+def tool_calls_summary(metrics_db: Path, since: datetime | None) -> dict:
+    """Per-tool MCP-call cost + the drill-in rate.
+
+    ``output_chars`` (p50/p95) is the realized context cost a tool dumps into
+    the agent — the before/after surface for the recall pointer split. The
+    drill-in rate (hydrate+thread over recall+recall_recent) is the cheap
+    "are pointers self-sufficient?" gauge: near-zero means the cheap layer
+    answers on its own; high means it's too thin and forces hydration.
+    """
+    where, params = _since_clause(since)
+    with _connect(metrics_db) as conn:
+        rows = conn.execute(
+            f"SELECT tool, output_chars, latency_ms, ok FROM tool_calls{where}",
+            params,
+        ).fetchall()
+
+    by_tool: dict[str, dict] = {}
+    for r in rows:
+        agg = by_tool.setdefault(r["tool"], {"tool": r["tool"], "calls": 0, "errors": 0, "_chars": [], "_lat": []})
+        agg["calls"] += 1
+        if not r["ok"]:
+            agg["errors"] += 1
+        if r["output_chars"] is not None:
+            agg["_chars"].append(int(r["output_chars"]))
+        if r["latency_ms"] is not None:
+            agg["_lat"].append(float(r["latency_ms"]))
+
+    def _pct(values: list[float], q: float) -> int:
+        if not values:
+            return 0
+        ordered = sorted(values)
+        idx = min(len(ordered) - 1, int(q * len(ordered)))
+        return int(ordered[idx])
+
+    out: list[dict] = []
+    for agg in by_tool.values():
+        chars = agg.pop("_chars")
+        lat = agg.pop("_lat")
+        agg["p50_chars"] = _pct(chars, 0.5)
+        agg["p95_chars"] = _pct(chars, 0.95)
+        agg["avg_chars"] = round(sum(chars) / len(chars)) if chars else 0
+        agg["avg_latency_ms"] = round(sum(lat) / len(lat)) if lat else 0
+        out.append(agg)
+    out.sort(key=lambda a: -a["calls"])
+
+    counts = {a["tool"]: a["calls"] for a in out}
+    recall_entry = counts.get("recall", 0) + counts.get("recall_recent", 0)
+    drill_in = counts.get("hydrate", 0) + counts.get("thread", 0)
+    return {
+        "total_calls": sum(counts.values()),
+        "drill_in_rate": (drill_in / recall_entry) if recall_entry else 0.0,
+        "by_tool": out,
+    }
+
+
 def ingest_summary(metrics_db: Path, since: datetime | None) -> dict:
     where, params = _since_clause(since)
     with _connect(metrics_db) as conn:

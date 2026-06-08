@@ -70,6 +70,12 @@ class RecallConfig:
     format: str = "pointer"  # inline | pointer
     pipeline: str = "rerank"  # rerank | direct
 
+    # Pointer/hydrate split caps (AA-106) — bound the two unbounded-by-count
+    # paths so a hub entity or a heavy day can't overflow the main context.
+    # Full detail for any trimmed item is one hydrate()/timeline() call away.
+    recent_max: int = 40  # hard cap on total memories recall_recent returns
+    about_max: int = 25  # cap on memories about() returns before a "+N more" footer
+
 
 @dataclass
 class ReinforcementConfig:

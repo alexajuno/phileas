@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     tool TEXT NOT NULL,
     latency_ms REAL,
     ok INTEGER NOT NULL,
-    error TEXT
+    error TEXT,
+    output_chars INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created ON tool_calls(created_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool);
@@ -87,9 +88,22 @@ class MetricsWriter:
             self._conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
+            self._migrate()
         except Exception as e:
             log.debug("metrics writer init failed", extra={"err": str(e)})
             self._conn = None
+
+    def _migrate(self) -> None:
+        """Backfill columns added after a DB was first created.
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so a
+        column added to SCHEMA only lands on fresh DBs. Add it here too.
+        """
+        if self._conn is None:
+            return
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(tool_calls)")}
+        if "output_chars" not in cols:
+            self._conn.execute("ALTER TABLE tool_calls ADD COLUMN output_chars INTEGER")
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -195,21 +209,25 @@ class MetricsWriter:
         latency_ms: float | None,
         ok: bool,
         error: str | None = None,
+        output_chars: int | None = None,
     ) -> None:
         """Append one MCP-tool-call row. Best-effort — never raises.
 
-        Captures the MCP boundary: tool name, latency, success flag, and
-        exception class name on failure. Deliberately does NOT capture
-        arguments — queries and summaries can contain PII, and recall
+        Captures the MCP boundary: tool name, latency, success flag,
+        exception class name on failure, and ``output_chars`` — the length of
+        the string the tool returned into the agent's context. That last field
+        is the realized context cost of a call, the before/after surface for
+        the recall pointer/hydrate split (AA-106). Deliberately does NOT
+        capture arguments — queries and summaries can contain PII, and recall
         already has a richer per-call trace in `recall_traces`.
         """
         if self._conn is None:
             return
         try:
             self._conn.execute(
-                """INSERT INTO tool_calls (created_at, tool, latency_ms, ok, error)
-                   VALUES (?,?,?,?,?)""",
-                (self._now(), tool, latency_ms, int(ok), error),
+                """INSERT INTO tool_calls (created_at, tool, latency_ms, ok, error, output_chars)
+                   VALUES (?,?,?,?,?,?)""",
+                (self._now(), tool, latency_ms, int(ok), error, output_chars),
             )
         except Exception as e:
             log.debug("record_tool_call failed", extra={"err": str(e)})

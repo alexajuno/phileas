@@ -53,6 +53,7 @@ In `mode = "auto"` and `mode = "always"`, a `phileas-hook recall` UserPromptSubm
   - **Time-relative** ("yesterday", "recently", "last week", "last session") → `mcp__phileas__recall_recent(days=N)`. Top memories per day, newest first.
   - **Topic / concept** with no entity or date anchor → `mcp__phileas__recall(query=<focused term, 1–4 words>)`. Full gather + cross-encoder rerank, ~30 best.
   - **Date range** spanning multiple days → `mcp__phileas__timeline(start=..., end=...)`.
+  - **Wildcard / cross-topic nudge** (no anchor; you want what the task *wouldn't* surface) → `mcp__phileas__serendipity(n=3)`. Opt-in, not relevance-gated. Pass ids already in context as `exclude_ids`.
 
 ### Step 4: Format output
 
@@ -69,6 +70,24 @@ In `mode = "auto"` and `mode = "always"`, a `phileas-hook recall` UserPromptSubm
 ### Step 5: Use the context
 
 Treat recalled memories as background context, not as content to recite. Reference them when answering only if directly relevant. Never lead a response with "Based on my memory…" — work the context in naturally.
+
+### Step 6: Pointers in, hydrate on demand
+
+Recall-family tools (`recall`, `recall_recent`, `about`, `timeline`) return cheap **pointers**, not full bodies:
+
+```
+[a1b2c3d4] [event] 2026-06-07 · trungld bought a cake in Shanghai last night · trungld, Shanghai
+```
+
+That line is `[id8] [type] date · summary · entity tags`. The summary is the whole fact — for most prompts the pointers already answer the question, so **don't fan out `recall()` a dozen times hoping for depth**, and don't dump everything. `recall_recent` and `about` are bounded (a heavy day or hub entity shows a cap/`+N more` note) so they can't overflow the context.
+
+When you genuinely need more than a pointer, drill in — cheapest to most expensive:
+
+- `mcp__phileas__hydrate(id8)` — the full record of **one** memory: exact timestamps, importance/status/counts, the full `source_event_id`, and linked entities. The inverse of the pointer trim.
+- `mcp__phileas__thread(event_id)` — the verbatim originating conversation + every sibling memory from that turn. Get `event_id` from `hydrate` first. The deepest, most expensive view.
+- `mcp__phileas__about(name)` — everything tied to an entity (also bounded).
+
+Rule of thumb: scan pointers → hydrate the one or two that matter → thread only if you need the raw conversation. Each hop up the ladder costs more context, so climb it deliberately.
 
 ## Memorize — store new facts
 

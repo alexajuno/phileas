@@ -195,6 +195,46 @@ def stats_recall(since: str, bucket: str, as_json: bool):
     )
 
 
+@stats.command("tools")
+@_shared_flags
+def stats_tools(since: str, bucket: str, as_json: bool):
+    """MCP tool-call cost — per-tool output size (context cost) + drill-in rate."""
+    cfg = load_config()
+    since_dt, _, _ = _resolve_window(since)
+    metrics_db = cfg.home / "metrics.db"
+    if not metrics_db.exists():
+        click.echo("No tool-call data yet.", err=True)
+        raise SystemExit(1)
+    data = queries.tool_calls_summary(metrics_db, since_dt)
+    if as_json:
+        click.echo(json_mod.dumps(data, default=str))
+        return
+    render.console.print(
+        render.headline(
+            f"Tool Calls ({since})",
+            [
+                ("Total calls", str(data["total_calls"])),
+                ("Drill-in rate", f"{data['drill_in_rate']:.1%}"),
+            ],
+        )
+    )
+    if data["by_tool"]:
+        t = Table(title="By Tool — output chars = realized context cost")
+        for col in ("Tool", "Calls", "p50 chars", "p95 chars", "~p50 tok", "Avg ms", "Errs"):
+            t.add_column(col)
+        for r in data["by_tool"]:
+            t.add_row(
+                r["tool"],
+                str(r["calls"]),
+                f"{r['p50_chars']:,}",
+                f"{r['p95_chars']:,}",
+                f"{r['p50_chars'] // 4:,}",
+                f"{r['avg_latency_ms']:.0f}",
+                str(r["errors"]) if r["errors"] else "",
+            )
+        render.console.print(t)
+
+
 @stats.command("ingest")
 @_shared_flags
 def stats_ingest(since: str, bucket: str, as_json: bool):
@@ -272,6 +312,7 @@ def stats_overview(ctx, since: str, bucket: str, as_json: bool):
     ctx.invoke(stats_graph, as_json=as_json)
     if (cfg.home / "metrics.db").exists():
         ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json)
+        ctx.invoke(stats_tools, since=since, bucket=bucket, as_json=as_json)
         ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json)
         ctx.invoke(stats_daemon, since=since, bucket=bucket, as_json=as_json)
 
@@ -284,6 +325,7 @@ _WATCHABLE = {
     "memory": lambda ctx, since, bucket, as_json: ctx.invoke(stats_memory, since=since, bucket=bucket, as_json=as_json),
     "graph": lambda ctx, since, bucket, as_json: ctx.invoke(stats_graph, as_json=as_json),
     "recall": lambda ctx, since, bucket, as_json: ctx.invoke(stats_recall, since=since, bucket=bucket, as_json=as_json),
+    "tools": lambda ctx, since, bucket, as_json: ctx.invoke(stats_tools, since=since, bucket=bucket, as_json=as_json),
     "ingest": lambda ctx, since, bucket, as_json: ctx.invoke(stats_ingest, since=since, bucket=bucket, as_json=as_json),
     "daemon": lambda ctx, since, bucket, as_json: ctx.invoke(stats_daemon, since=since, bucket=bucket, as_json=as_json),
 }
