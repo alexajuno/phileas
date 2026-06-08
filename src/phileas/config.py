@@ -120,6 +120,22 @@ class SyncConfig:
     push_command: str | None = None
     push_timeout_seconds: float = 300.0
 
+    # -- Pull side: the SSE doorbell (box → laptop) --
+    # When set, the daemon subscribes to the peer's read-only /sync/stream and
+    # runs `pull_command` on every "changed" event and on each (re)connect
+    # (catch-up). The doorbell carries no memory content — just a signal — so
+    # the actual data still moves over the existing (ssh) `pull_command`.
+    # The bearer secret is read from the PHILEAS_SYNC_TOKEN env var on both
+    # sides (kept out of config so it never lands in a committed config.toml).
+    subscribe: bool = False
+    peer_url: str | None = None  # base URL of the peer hosting /sync/stream
+    pull_command: str | None = None
+    pull_timeout_seconds: float = 300.0
+    # Backoff between SSE reconnect attempts.
+    reconnect_seconds: float = 5.0
+    # Treat the stream as dead if no event/keepalive arrives within this window.
+    read_timeout_seconds: float = 30.0
+
 
 # ------------------------------------------------------------------
 # Top-level config

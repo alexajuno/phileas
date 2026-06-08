@@ -68,6 +68,14 @@ if _oauth_provider is not None:
 
 _config = load_config()
 
+# In HTTP mode, expose the read-only SSE doorbell so a peer (laptop) learns of
+# this box's writes and pulls. Gated internally by PHILEAS_SYNC_TOKEN (404 when
+# unset), so registering it is harmless when sync isn't configured.
+if _oauth_provider is not None:
+    from phileas.sync_stream import register_sync_stream
+
+    register_sync_stream(mcp, _config.db_path)
+
 db = Database(path=_config.db_path)
 vector = VectorStore(path=_config.chroma_path)
 # Graph operations always proxy through the daemon (systemd service).

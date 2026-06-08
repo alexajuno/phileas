@@ -95,6 +95,49 @@ def stop(config: PhileasConfig | None = None) -> bool:
     return True
 
 
+def _run_sync_command(cmd: str | None, timeout: float, label: str, metrics=None) -> None:
+    """Run a configured sync transport command (push or pull). Best-effort.
+
+    Logs a non-zero exit and records a metric; never raises into the caller so a
+    flaky transport can't take down the scheduler thread. A None/empty command
+    is a no-op (the trigger is wired but transport isn't configured yet).
+    """
+    if not cmd:
+        log.debug(f"{label} fired but no command configured", extra={"op": "sync"})
+        return
+    import subprocess
+
+    # shell=True is intentional: `cmd` is the operator's own config value, meant
+    # to be a shell line (an ssh pipeline / redirect). It is a static setting,
+    # never interpolated with network or memory data, so there is no injection
+    # surface beyond "the user runs their own configured command" — same trust
+    # model as a cron entry or a git hook.
+    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)  # noqa: S602
+    if proc.returncode != 0:
+        log.warning(
+            f"{label} command failed",
+            extra={"op": "sync", "data": {"rc": proc.returncode, "stderr": proc.stderr[-500:]}},
+        )
+    if metrics is not None:
+        try:
+            metrics.record_daemon(label, payload={"rc": proc.returncode})
+        except Exception:
+            pass
+
+
+def _parse_sse_data(line: str) -> dict | None:
+    """Decode one SSE line: the JSON of a ``data:`` line, else None.
+
+    Comments (``: keepalive``), blank lines, and malformed frames return None.
+    """
+    if not line.startswith("data:"):
+        return None
+    try:
+        return json.loads(line[5:].strip())
+    except ValueError:
+        return None
+
+
 class SyncPusher:
     """Debounced, fire-and-forget push-on-write trigger.
 
@@ -164,6 +207,37 @@ class SyncPusher:
 
             # Throttle: floor the gap between pushes regardless of write rate.
             time.sleep(self._min_interval_s)
+
+
+def _sse_subscriber_loop(config: PhileasConfig, pull_pusher: SyncPusher) -> None:
+    """Hold a long-lived SSE connection to the peer; arm a pull on each change.
+
+    Reconnects forever with backoff. Every (re)connect arms a pull *first*, so
+    writes missed while disconnected are caught up — the doorbell only ever
+    makes convergence faster, it is never the source of truth (the safety poll
+    and this catch-up are). The bearer secret comes from PHILEAS_SYNC_TOKEN.
+    """
+    import time
+    import urllib.request
+
+    token = os.environ.get("PHILEAS_SYNC_TOKEN")
+    url = config.sync.peer_url.rstrip("/") + "/sync/stream"
+
+    while True:
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
+            )
+            with urllib.request.urlopen(req, timeout=config.sync.read_timeout_seconds) as resp:
+                pull_pusher.notify()  # catch-up on (re)connect
+                for raw in resp:
+                    payload = _parse_sse_data(raw.decode("utf-8", "replace").strip())
+                    if payload and payload.get("type") == "changed":
+                        pull_pusher.notify()
+        except Exception as e:
+            log.debug("sse subscriber disconnected", extra={"op": "sync", "data": {"error": str(e)}})
+        time.sleep(config.sync.reconnect_seconds)
 
 
 def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
@@ -429,54 +503,47 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     rss_thread = threading.Thread(target=_rss_watchdog_loop, daemon=True, name="phileas-rss-watchdog")
     rss_thread.start()
 
-    # -- Push-on-write (event-driven sync) ---------------------------------
-    # A write arms a debounced push instead of waiting for a poll. The push
-    # itself is a configured command for now; the AA-104 HTTP/SSE transport
-    # slots in here without changing the trigger.
+    # -- Push-on-write (event-driven sync, laptop → box) -------------------
+    # A write arms a debounced push instead of waiting for a poll. The push is
+    # a configured (ssh) command; the trigger never blocks the write.
     global _sync_pusher
     _sync_pusher = None
     if config.sync.push_on_write:
-
-        def _do_push():
-            import subprocess
-
-            cmd = config.sync.push_command
-            if not cmd:
-                log.debug("push-on-write fired but no push_command configured", extra={"op": "sync"})
-                return
-            proc = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=config.sync.push_timeout_seconds,
-            )
-            if proc.returncode != 0:
-                log.warning(
-                    "push_command failed",
-                    extra={"op": "sync", "data": {"rc": proc.returncode, "stderr": proc.stderr[-500:]}},
-                )
-            try:
-                engine._metrics.record_daemon("sync_push", payload={"rc": proc.returncode})
-            except Exception:
-                pass
-
         _sync_pusher = SyncPusher(
-            push_fn=_do_push,
+            push_fn=lambda: _run_sync_command(
+                config.sync.push_command, config.sync.push_timeout_seconds, "sync_push", engine._metrics
+            ),
             debounce_s=config.sync.debounce_seconds,
             min_interval_s=config.sync.min_interval_seconds,
         )
         _sync_pusher.start()
         log.info(
             "push-on-write enabled",
-            extra={
-                "op": "sync",
-                "data": {
-                    "debounce_s": config.sync.debounce_seconds,
-                    "has_command": bool(config.sync.push_command),
-                },
-            },
+            extra={"op": "sync", "data": {"has_command": bool(config.sync.push_command)}},
         )
+
+    # -- Pull doorbell (SSE subscriber, box → laptop) ----------------------
+    # Subscribe to the peer's read-only /sync/stream and pull on each "changed"
+    # event — and on every (re)connect, for catch-up. Reuses SyncPusher's
+    # debounce/throttle so a burst of peer writes collapses into one pull.
+    if config.sync.subscribe and config.sync.peer_url and os.environ.get("PHILEAS_SYNC_TOKEN"):
+        pull_pusher = SyncPusher(
+            push_fn=lambda: _run_sync_command(
+                config.sync.pull_command, config.sync.pull_timeout_seconds, "sync_pull", engine._metrics
+            ),
+            debounce_s=config.sync.debounce_seconds,
+            min_interval_s=config.sync.min_interval_seconds,
+        )
+        pull_pusher.start()
+        threading.Thread(
+            target=_sse_subscriber_loop,
+            args=(config, pull_pusher),
+            daemon=True,
+            name="phileas-sync-sub",
+        ).start()
+        log.info("sync doorbell subscribed", extra={"op": "sync", "data": {"peer": config.sync.peer_url}})
+    elif config.sync.subscribe and not os.environ.get("PHILEAS_SYNC_TOKEN"):
+        log.warning("sync.subscribe set but PHILEAS_SYNC_TOKEN missing — doorbell disabled", extra={"op": "sync"})
 
     # Daemon-side LLM extraction was removed during the agent-driven
     # migration. Events land in the `events` table; memories are extracted
