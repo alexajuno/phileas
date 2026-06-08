@@ -115,17 +115,17 @@ def _types_lower(types: list[str]) -> set[str]:
 
 
 def _normalize_name(name: str | None) -> str:
-    """Strip diacritics, leading ``@``, and casing for matching purposes.
+    """Strip diacritics and casing for matching purposes.
 
-    NFD-decomposes Unicode, drops combining marks, lowercases, strips a
-    leading ``@``. Intent: bring "Ngân", "Ngan", "@Ngan" all to the same
-    form so ``_candidate_rows`` finds them on first encounter (AA-58).
+    NFD-decomposes Unicode, drops combining marks, lowercases. Intent:
+    bring "Ngân", "Ngan" to the same form so ``_candidate_rows`` finds
+    them on first encounter (AA-58). Names arrive clean from the LLM
+    extraction/query path, so the legacy leading-``@`` strip (a leftover
+    from the hand-written ``@mention`` note convention) was removed.
     """
     if not name:
         return ""
     s = name.strip()
-    if s.startswith("@"):
-        s = s[1:]
     s = unicodedata.normalize("NFD", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     return s.lower()

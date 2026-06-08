@@ -48,7 +48,7 @@ In `mode = "auto"` and `mode = "always"`, a `phileas-hook recall` UserPromptSubm
 
 - **`pipeline = "rerank"`** (default) → the hook has already fired with the verbatim prompt and surfaced its result. Use that result as background. If the prompt has clear concepts the hook didn't cover, supplement with focused-term `recall()` / `about()` / `recall_recent()` calls per the contract above.
 - **`pipeline = "direct"`** → main agent calls phileas tools directly using a cognitive routing ladder. Pick the tool by query shape; call several in parallel when shapes overlap, then merge results by `id`:
-  - **Named entity** in prompt (person, project, @handle) → `mcp__phileas__about(name=...)`. Returns all memories linked to that entity in the graph. Cheapest, most precise lookup for "who is X / what about Y".
+  - **Named entity** in prompt (person, project) → `mcp__phileas__about(name=...)`. Pass the bare name without a leading `@`. Returns all memories linked to that entity in the graph. Cheapest, most precise lookup for "who is X / what about Y".
   - **Explicit date** ("2026-04-14", "Apr 14") → `mcp__phileas__list_day_memories(date="YYYY-MM-DD")`. Every active memory anchored to that day.
   - **Time-relative** ("yesterday", "recently", "last week", "last session") → `mcp__phileas__recall_recent(days=N)`. Top memories per day, newest first.
   - **Topic / concept** with no entity or date anchor → `mcp__phileas__recall(query=<focused term, 1–4 words>)`. Full gather + cross-encoder rerank, ~30 best.
