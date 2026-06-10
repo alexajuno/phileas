@@ -7,7 +7,13 @@ __pycache__/
 simulation_results.json
 research/
 
-# tests kept LOCAL only, never tracked — they carry fixtures sampled from real
-# Claude Code sessions with private personal conversation context (issue #39).
-# Regenerate synthetic fixtures before re-tracking any of this.
-tests/
+# tests/: the unit-test code IS tracked. What stays LOCAL-only is anything that
+# carries fixtures sampled from real Claude Code sessions — private personal
+# conversation context (issue #39). Never track these:
+#   - real-session run outputs (e2e_runs/, path3_runs/)
+#   - the eval/probe sampling harness, which reads real session snapshots
+# Any test file added here must contain ONLY synthetic data: no real names,
+# places, events, or handles.
+tests/e2e_runs/
+tests/path3_runs/
+tests/eval/
