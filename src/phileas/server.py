@@ -31,9 +31,9 @@ from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph_proxy import GraphProxy
 from phileas.mcp_auth import build_auth_components, register_login_routes
+from phileas.recall_format import cap_day_blocks, render_pointers, select_recent
 from phileas.recall_format import id8 as _id8
 from phileas.recall_format import pointer_line as _pointer_line
-from phileas.recall_format import render_pointers, select_recent
 from phileas.vector import VectorStore
 
 # OAuth + HTTP serving is opt-in (PHILEAS_MCP_TRANSPORT=http) so the phone can
@@ -49,10 +49,11 @@ mcp = FastMCP(
         "Phileas is a long-term memory companion.\n"
         "\n"
         "POINTERS, NOT BODIES: recall-family tools return cheap POINTERS — "
-        "`[id8] [type] date · summary · entity tags`. The summary IS the fact (shown "
-        "whole); the metadata tail is trimmed and results are bounded. Treat pointers as "
-        "your working context. Only drill in when you genuinely need more, via the "
-        "hydrate ladder below — don't fan out recall() dozens of times hoping for depth.\n"
+        "`[id8] [type] date · summary · entity tags`. Long summaries are clipped with an "
+        "ellipsis (hydrate(id8) returns the full body); the metadata tail is trimmed and "
+        "results are bounded by count AND output size. Treat pointers as your working "
+        "context. Only drill in when you genuinely need more, via the hydrate ladder "
+        "below — don't fan out recall() dozens of times hoping for depth.\n"
         "\n"
         "Choose tools by query type:\n"
         "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
@@ -63,8 +64,10 @@ mcp = FastMCP(
         "  term queries and merge results by id. Example: instead of\n"
         "  recall('what did the user say about <person> and tennis'), call\n"
         "  recall('<person>') and recall('tennis') in parallel.\n"
-        "- recall_recent(days): recent memories by date (bounded) — use FIRST for time-relative "
-        "questions ('recently', 'yesterday', 'last chat', 'last night', 'last session', 'last time we talked')\n"
+        "- recall_recent(days): recent memories by date (bounded by count and size) — for "
+        "topic-less time questions ('recently', 'yesterday', 'last chat', 'last night', "
+        "'last session', 'last time we talked'). If the question carries a topic, prefer "
+        "focused recall() — it already folds recency into its score.\n"
         "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
         "- timeline(start, end): memories across a date range\n"
         "- about(name): memories linked to a person/entity (bounded; '+N more' when capped) — for 'who is X'\n"
@@ -103,15 +106,16 @@ engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 
 
 # ---------------------------------------------------------------------------
-# Pointer formatting (AA-106)
+# Pointer formatting (AA-106, AA-112)
 #
-# The main agent context sees cheap *pointers* — id8 + type + (date) + the full
-# summary + entity tags — never a metadata tail or an unbounded result dump.
-# The summary is shown whole; it IS the memory's content. What's dropped is the
-# uuid tail and importance/score/event/time-of-day. Full detail is one explicit
-# hydrate()/thread()/about() drill-in away. The pure formatting + recent-window
-# cap live in phileas.recall_format; the one graph round-trip that fetches entity
-# tags lives here (it needs the proxy).
+# The main agent context sees cheap *pointers* — id8 + type + (date) + summary
+# + entity tags — never a metadata tail or an unbounded result dump. What's
+# dropped is the uuid tail and importance/score/event/time-of-day; summaries
+# longer than recall.pointer_summary_chars are clipped with an ellipsis
+# (AA-112 layer 1; 0 = show whole). Full detail is one explicit
+# hydrate()/thread()/about() drill-in away. The pure formatting + output
+# bounds live in phileas.recall_format; the one graph round-trip that fetches
+# entity tags lives here (it needs the proxy).
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +131,12 @@ def _entities_for(items: list[dict]) -> dict[str, list[dict]]:
 
 
 def _pointer_lines(items: list[dict], *, show_date: bool = True) -> list[str]:
-    return render_pointers(items, _entities_for(items), show_date=show_date)
+    return render_pointers(
+        items,
+        _entities_for(items),
+        show_date=show_date,
+        max_summary_chars=_config.recall.pointer_summary_chars,
+    )
 
 
 def _instrumented_tool(*tool_args, **tool_kwargs):
@@ -295,8 +304,8 @@ def recall(
 
     Hybrid retrieval: keyword (AND-match across tokens) + semantic + graph
     entity lookup + raw-text + event-thread fanout. Returns up to top_k POINTER
-    lines (`[id8] [type] date · summary · entity tags`) — the summary is whole,
-    metadata is trimmed. Call hydrate(id8) for a memory's full detail.
+    lines (`[id8] [type] date · summary · entity tags`) — long summaries are
+    clipped, metadata is trimmed. Call hydrate(id8) for a memory's full detail.
 
     Query shape (important):
         Pass focused noun-phrase queries — one concept, 1–4 words.
@@ -525,11 +534,14 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
 def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5) -> str:
     """Return top memories per day for the last N days, grouped newest-day first.
 
-    Use for time-relative queries: 'recently', 'yesterday', 'last chat',
-    'last night', 'last session', 'last time we talked'. Call this before
-    recall() when the question has a temporal anchor. Output is POINTER lines
-    and hard-capped (recall.recent_max) so a heavy day can't overflow context;
-    widen `days` or use timeline() for a fuller window.
+    Use for genuinely topic-less time queries: 'recently', 'yesterday',
+    'last chat', 'last night', 'last session', 'last time we talked'. If the
+    prompt already carries a topic, prefer a focused recall(query) — recall
+    folds recency into its score, so it's recency-aware without enumerating
+    the whole window. Output is POINTER lines (summaries clipped; hydrate(id8)
+    for the full body) and hard-bounded both by count (recall.recent_max) and
+    by output size (recall.recent_max_chars), so a heavy day can't overflow
+    context; widen `days` or use timeline() for a fuller window.
 
     Args:
         days: How many days back to look (default 7).
@@ -564,7 +576,8 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
     # Pass 1: pick each day's top, honoring a hard global cap (newest day first)
     # so a heavy low-importance day can't overflow the context (AA-106 — this is
     # the path that blew up at 81k chars).
-    recent_max = engine.config.recall.recent_max
+    recall_cfg = engine.config.recall
+    recent_max = recall_cfg.recent_max
     per_day, selected, truncated = select_recent(
         by_day,
         top_per_day=top_per_day,
@@ -573,24 +586,54 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
     )
 
     # Pass 2: render pointers (entity tags batched across the whole selection;
-    # no per-line date — the day header already carries it).
+    # no per-line date — the day header already carries it), with AA-112
+    # layer 1 — per-summary clipping (pointer_summary_chars, 0 = off).
+    clip = recall_cfg.pointer_summary_chars
     ents = _entities_for(selected)
-    lines = [f"Recent memories (last {days} day(s)):"]
-    for day, day_total, top in per_day:
-        lines.append(f"\n{day} ({day_total} total, showing {len(top)}):")
-        for item in top:
-            lines.append(_pointer_line(item, ents, show_date=False))
+    blocks = [
+        (day, day_total, [_pointer_line(it, ents, show_date=False, max_summary_chars=clip) for it in top])
+        for day, day_total, top in per_day
+    ]
+
+    # Pass 3: AA-112 layer 2 — hard budget on the rendered output
+    # (recent_max_chars, 0 = off). The count cap bounds the wrong axis when
+    # summaries run long (40 × ~1k chars ≈ 60k chars > the MCP token ceiling);
+    # this bounds what actually lands in context.
+    head = f"Recent memories (last {days} day(s)):"
+    budget = recall_cfg.recent_max_chars
+    footer_reserve = 200  # headroom for the head line + one footer line
+    body_budget = max(1, budget - len(head) - footer_reserve) if budget > 0 else 0
+    body_lines, budget_dropped, size_capped = cap_day_blocks(blocks, max_chars=body_budget)
+    lines = [head, *body_lines]
+    if size_capped:
+        lines.append(
+            f"\n… size-capped at {budget} chars — +{budget_dropped} more in window "
+            "(narrow `days`, or drill in with timeline / list_day_memories)."
+        )
     if truncated:
         lines.append(f"\n… capped at {recent_max} memories — narrow with `days` or use timeline for a fuller window.")
+    output = "\n".join(lines)
 
+    # Per-layer effectiveness counters (AA-112) — surfaced by `phileas stats
+    # bounds` so each layer proves itself (or gets turned off).
+    summary_lens = [len((it.get("summary") or "").strip()) for it in selected]
+    bounds = {
+        "pointer_summary_chars": clip,
+        "recent_max_chars": budget,
+        "summaries_truncated": sum(1 for n in summary_lens if clip > 0 and n > clip),
+        "trim_saved_chars": sum(n - clip for n in summary_lens if clip > 0 and n > clip),
+        "budget_dropped": budget_dropped,
+        "output_chars": len(output),
+    }
     _trace_recent(
         items=selected,
         days=days,
         top_per_day=top_per_day,
         min_importance=min_importance,
         latency_ms=(perf_counter() - _t0) * 1000,
+        bounds=bounds,
     )
-    return "\n".join(lines)
+    return output
 
 
 @_instrumented_tool()
@@ -617,8 +660,19 @@ def serendipity(n: int = 3, exclude_ids: list | str | None = None) -> str:
     return "\n".join(lines)
 
 
-def _trace_recent(items: list[dict], days: int, top_per_day: int, min_importance: int, latency_ms: float) -> None:
-    """Best-effort trace write for the recall_recent MCP tool."""
+def _trace_recent(
+    items: list[dict],
+    days: int,
+    top_per_day: int,
+    min_importance: int,
+    latency_ms: float,
+    bounds: dict | None = None,
+) -> None:
+    """Best-effort trace write for the recall_recent MCP tool.
+
+    ``bounds`` carries the AA-112 per-layer counters (truncation hits/savings,
+    budget drops, final output chars) into recall_traces.extra.
+    """
     try:
         from phileas.engine import _trace_recall
 
@@ -632,6 +686,7 @@ def _trace_recent(items: list[dict], days: int, top_per_day: int, min_importance
                 "days": days,
                 "top_per_day": top_per_day,
                 "min_importance": min_importance,
+                **(bounds or {}),
             },
         )
     except Exception:
