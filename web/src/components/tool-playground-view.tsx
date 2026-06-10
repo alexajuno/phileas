@@ -95,7 +95,13 @@ const TOOLS: ToolSpec[] = [
 ];
 
 type Values = Record<string, string | boolean>;
-type ToolResult = { text: string; cards: MemoryItem[]; count: number; elapsed_ms: number };
+type ToolResult = {
+  text: string;
+  cards: MemoryItem[];
+  count: number;
+  tokens: number;
+  elapsed_ms: number;
+};
 
 function initialValues(spec: ToolSpec): Values {
   const v: Values = {};
@@ -179,6 +185,7 @@ export function ToolPlaygroundView() {
         text: data.text ?? "",
         cards: data.cards ?? [],
         count: data.count ?? 0,
+        tokens: data.tokens ?? 0,
         elapsed_ms: data.elapsed_ms ?? 0,
       };
       setResult(next);
@@ -276,7 +283,7 @@ export function ToolPlaygroundView() {
           {loading
             ? `running ${spec.name}…`
             : result
-              ? `${result.count} item${result.count === 1 ? "" : "s"} · ${result.elapsed_ms}ms`
+              ? `${result.count} item${result.count === 1 ? "" : "s"} · ~${result.tokens.toLocaleString()} tok · ${result.elapsed_ms}ms`
               : "Pick a tool, fill the args, and Run to see exactly what the model receives."}
         </span>
         {result && (

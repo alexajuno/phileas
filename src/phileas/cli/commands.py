@@ -189,23 +189,29 @@ def _run_tool(method: str, params: dict) -> None:
     try:
         resp = _daemon_call(method, params)
         if resp and resp.get("ok"):
-            click.echo(resp["result"]["text"])
-            return
+            result = resp["result"]
+        else:
+            from phileas import tool_runner
 
-        from phileas import tool_runner
+            engine = _get_engine()
 
-        engine = _get_engine()
+            def _entities_for(items: list[dict]) -> dict:
+                ids = [it.get("id") for it in items if it.get("id")]
+                if not ids:
+                    return {}
+                try:
+                    return engine.graph.get_entities_for_memories(ids) or {}
+                except Exception:
+                    return {}
 
-        def _entities_for(items: list[dict]) -> dict:
-            ids = [it.get("id") for it in items if it.get("id")]
-            if not ids:
-                return {}
-            try:
-                return engine.graph.get_entities_for_memories(ids) or {}
-            except Exception:
-                return {}
+            result = tool_runner.run(engine, _entities_for, method, params)
 
-        click.echo(tool_runner.run(engine, _entities_for, method, params)["text"])
+        click.echo(result["text"])
+        # The text becomes LLM input context — surface its estimated token cost
+        # on stderr so stdout stays the verbatim model-facing string.
+        tokens = result.get("tokens")
+        if tokens:
+            click.secho(f"~{tokens:,} input tokens (est.)", err=True, dim=True)
     except Exception as exc:
         print_error(str(exc))
         raise SystemExit(1)

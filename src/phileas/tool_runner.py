@@ -26,12 +26,23 @@ from typing import Callable
 from phileas.recall_format import id8, pointer_line, render_pointers, select_recent
 
 EntitiesFn = Callable[[list[dict]], dict[str, list[dict]]]
-ToolResult = dict  # {"items": list[dict], "text": str}
+ToolResult = dict  # {"items": list[dict], "text": str, "tokens": int}
 
 
 def no_entities(items: list[dict]) -> dict[str, list[dict]]:
     """An ``entities_fn`` that skips entity tags — for callers without a graph."""
     return {}
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough input-token estimate for tool output (~4 chars/token).
+
+    These strings are fed back into an LLM as context, so the playground and
+    CLI surface this so you can eyeball the input-token cost of a tool call.
+    Deliberately a cheap heuristic — no tokenizer load, no model dependency —
+    so it's an estimate, not an exact count.
+    """
+    return (len(text) + 3) // 4 if text else 0
 
 
 def recall_recent(
@@ -220,8 +231,15 @@ TOOL_NAMES = frozenset(TOOLS)
 
 
 def run(engine, entities_fn: EntitiesFn, name: str, params: dict | None = None) -> ToolResult:
-    """Dispatch one recall-family tool by name. Raises ValueError on unknown name."""
+    """Dispatch one recall-family tool by name. Raises ValueError on unknown name.
+
+    Annotates the result with an estimated input-token count for the text — the
+    one place every non-MCP caller (daemon, web, CLI) funnels through, so they
+    all get it without each tool function repeating itself.
+    """
     fn = TOOLS.get(name)
     if fn is None:
         raise ValueError(f"Unknown tool: {name}")
-    return fn(engine, entities_fn, **(params or {}))
+    result = fn(engine, entities_fn, **(params or {}))
+    result["tokens"] = estimate_tokens(result.get("text", ""))
+    return result

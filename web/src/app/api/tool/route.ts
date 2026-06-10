@@ -27,6 +27,7 @@ const TOOLS = new Set([
 type DaemonToolResult = {
   items: Array<Record<string, unknown>>;
   text: string;
+  tokens: number;
 };
 
 type Body = {
@@ -91,7 +92,13 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json(
-    { text: result.text ?? "", cards, count: rawItems.length, elapsed_ms },
+    {
+      text: result.text ?? "",
+      cards,
+      count: rawItems.length,
+      tokens: result.tokens ?? 0,
+      elapsed_ms,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
