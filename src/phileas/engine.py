@@ -43,6 +43,17 @@ MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
 PATH3B_MAX_SEEDS = 30
 PATH4_MAX_SEEDS = 30
 
+# Context-aware recall (see docs/contextual-knowledge-design.md). Additive deltas
+# applied to a candidate's stage-2 relevance once an active ``context=`` is
+# resolved and its SCOPED_TO edges are read. The whole block is inert unless a
+# context is passed — ``recall(query)`` with no context never reads scopes, so
+# these cannot change the no-context path. Set any to 0 to neutralise a signal.
+CONTEXT_BOOST = 0.25  # in-context (self or PART_OF ancestor) — lifted memory holds here
+CONTEXT_DEMOTE = 0.15  # disjoint scope — visible but ranked down (never dropped)
+CONTEXT_EXCLUDED_DEMOTE = 0.5  # polarity='excluded' covering the active context — hard demote
+CONTEXT_HISTORICAL_DEMOTE = 0.2  # valid_to in the past — demote as historical
+CONTEXT_HOP_CAP = 3  # max PART_OF hops walked for lifting (ancestors) and descendants
+
 
 def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     """Days since a given datetime, with optional fallback (e.g. created_at)."""
@@ -97,6 +108,85 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "source_event_id": item.source_event_id,
     }
+
+
+def _scope_is_expired(scope: dict, now: datetime) -> bool:
+    """True when a scope's validity window has closed in the past.
+
+    ``valid_to`` normally arrives as a tz-naive UTC ISO string (graph stores
+    naive UTC). A null ``valid_to`` is open-ended and never expires. Total by
+    construction — an unparseable value is treated as not-expired, and an
+    offset-aware value is coerced to naive UTC before the comparison so it can
+    never raise a naive-vs-aware ``TypeError`` into the recall path.
+    """
+    vt = scope.get("valid_to")
+    if not vt:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(vt))
+    except ValueError, TypeError:
+        return False
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed < now
+
+
+def _context_score_delta(
+    scopes: list[dict],
+    in_context_ids: set[str],
+    descendant_ids: set[str],
+    now: datetime,
+) -> tuple[float, str | None]:
+    """Relevance adjustment for one memory under an active recall context (AA-119).
+
+    ``scopes`` are the memory's SCOPED_TO edges. ``in_context_ids`` is the active
+    context plus its PART_OF ancestors (the lifting set): a memory scoped to any
+    of them holds for this query. ``descendant_ids`` are contexts *narrower* than
+    the active one — related, so neither boosted nor demoted.
+
+    Precedence (design doc semantics table):
+      1. An ``excluded`` edge covering the active context wins — the memory
+         explicitly does not hold here → hard demote. This is deliberate even
+         when a concurrent ``holds`` edge also matches (e.g. holds@child +
+         excluded@parent, queried at child): an explicit exclusion is a
+         deliberate negation we honor over a competing scope. Such double
+         scoping is pathological; the safe demote (not drop) bounds the damage.
+      2. Otherwise an in-context ``holds`` edge boosts; a fully disjoint scope
+         demotes (visible, ranked down, never dropped); a narrower-context scope
+         is neutral.
+      3. An expired validity window demotes as *historical*, on top of (2).
+
+    Returns ``(delta, label)``. The label is observability-only. An unscoped
+    memory (empty ``scopes``) returns ``(0.0, None)`` — globally valid, today's
+    behaviour.
+    """
+    if not scopes:
+        return 0.0, None
+
+    # (1) Exclusion is the strongest signal: "holds everywhere except here".
+    if any((s.get("polarity") or "holds") == "excluded" and s.get("context_id") in in_context_ids for s in scopes):
+        return -float(CONTEXT_EXCLUDED_DEMOTE), "excluded"
+
+    holds = [s for s in scopes if (s.get("polarity") or "holds") != "excluded"]
+    in_ctx = any(s.get("context_id") in in_context_ids for s in holds)
+    in_desc = any(s.get("context_id") in descendant_ids for s in holds)
+
+    delta = 0.0
+    label: str | None = None
+    if in_ctx:
+        delta += float(CONTEXT_BOOST)
+        label = "in_context"
+    elif in_desc:
+        label = "related"  # narrower than the query context — neutral
+    elif holds:
+        delta -= float(CONTEXT_DEMOTE)
+        label = "disjoint"
+
+    # (3) Temporal validity, independent of the context match above.
+    if any(_scope_is_expired(s, now) for s in holds):
+        delta -= float(CONTEXT_HISTORICAL_DEMOTE)
+        label = "historical"
+    return delta, label
 
 
 class MemoryEngine:
@@ -191,6 +281,18 @@ class MemoryEngine:
             entities = self.graph.get_entities_for_memory(item.id)
         except Exception as e:
             log.debug("hydrate entity lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
+        # Scoping (AA-119): contexts the memory holds/excludes in, plus validity
+        # windows. Empty ⇒ globally valid. `historical` flags a closed past
+        # window so the drill-in can label an expired temporal scope distinctly
+        # from an archived memory (never auto-superseded).
+        scopes: list[dict] = []
+        try:
+            scopes = self.graph.get_scopes_for_memory(item.id)
+        except Exception as e:
+            log.debug("hydrate scope lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        for s in scopes:
+            s["historical"] = _scope_is_expired(s, now_utc)
         return {
             "id": item.id,
             "summary": item.summary,
@@ -204,6 +306,7 @@ class MemoryEngine:
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
             "source_event_id": item.source_event_id,
             "entities": entities,
+            "scopes": scopes,
         }
 
     def serendipity(self, n: int = 3, exclude_ids: list[str] | None = None) -> list[dict]:
@@ -424,12 +527,19 @@ class MemoryEngine:
         top_k: int | None = None,
         memory_type: str | None = None,
         min_importance: int | None = None,
+        context: str | None = None,
     ) -> list[dict]:
         """Three-stage retrieval: gather → rerank → MMR select.
 
         Stage 1: Bucketed vector search + keyword + graph (gather candidates)
         Stage 2: Cross-encoder reranking (semantic relevance)
         Stage 3: MMR diversity selection + final scoring
+
+        ``context`` (AA-119) is an optional active-context name. When given, it
+        is resolved to a Context entity, expanded over the PART_OF hierarchy
+        (lifting), and used to boost in-context memories / demote disjoint,
+        excluded, or expired-validity ones in stage 2. When omitted, no scope
+        edges are read and the result is byte-identical to the pre-context path.
 
         Returns list of dicts with id, summary, type, importance, score.
         """
@@ -455,6 +565,7 @@ class MemoryEngine:
             top_k=_effective_top_k,
             memory_type=memory_type,
             min_importance=min_importance,
+            context=context,
         )
 
         # Query rewriting (alternate phrasings, pronoun referent resolution)
@@ -474,6 +585,8 @@ class MemoryEngine:
         path4_ids: set[str] = set()  # Path 4: semantic-to-graph bridge
         raw_text_ids: set[str] = set()  # track raw-text matched candidates
         event_thread_ids: set[str] = set()  # track event-text sibling fanout
+        context_ids: set[str] = set()  # AA-119: candidates boosted by active context
+        context_info: dict | None = None  # AA-119: resolved/expanded active context
 
         # ----------------------------------------------------------
         # Stage 1: Gather candidates from multiple paths
@@ -924,6 +1037,50 @@ class MemoryEngine:
             return []
 
         # ----------------------------------------------------------
+        # Stage 2c: active-context scoping (AA-119)
+        #
+        # Resolve `context` to a Context entity, expand its PART_OF hierarchy
+        # (lifting set + descendants), then nudge each candidate's relevance by
+        # its SCOPED_TO edges: boost in-context, demote disjoint/excluded/expired.
+        # Applied *after* the relevance_floor filter so a demotion can lower rank
+        # but never drop a memory ("demote, don't drop"). Skipped entirely when
+        # no context is passed — that path stays byte-identical to today.
+        # ----------------------------------------------------------
+        ctx_name = (context or "").strip()
+        if ctx_name:
+            try:
+                context_info = self.graph.expand_context(ctx_name, hop_cap=CONTEXT_HOP_CAP)
+            except Exception as e:
+                log.debug("context expand failed", extra={"op": "recall", "data": {"error": str(e)}})
+                context_info = None
+            if context_info:
+                in_set = set(context_info.get("in_context") or [])
+                desc_set = set(context_info.get("descendants") or [])
+                try:
+                    scope_map = self.graph.get_scopes_for_memories(list(filtered.keys()))
+                except Exception as e:
+                    log.debug("context scope fetch failed", extra={"op": "recall", "data": {"error": str(e)}})
+                    scope_map = {}
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                for mem_id in filtered:
+                    scopes = scope_map.get(mem_id)
+                    if not scopes:
+                        continue
+                    # A malformed scope edge nudges nothing rather than failing
+                    # the whole recall — context scoring is an additive soft signal.
+                    try:
+                        delta, label = _context_score_delta(scopes, in_set, desc_set, now_utc)
+                    except Exception as e:
+                        log.debug("context score delta failed", extra={"op": "recall", "data": {"error": str(e)}})
+                        continue
+                    if delta:
+                        relevance_map[mem_id] = max(0.0, relevance_map.get(mem_id, 0.0) + delta)
+                    if label == "in_context":
+                        context_ids.add(mem_id)
+            op_extra(context_resolved=context_info["name"] if context_info else None)
+        _mark("context_score")
+
+        # ----------------------------------------------------------
         # Stage 3: MMR diversity selection + final scoring
         # ----------------------------------------------------------
 
@@ -1069,6 +1226,8 @@ class MemoryEngine:
                 s.append("raw_text")
             if mid in event_thread_ids:
                 s.append("event_thread")
+            if mid in context_ids:
+                s.append("context")
             return s
 
         result_sources: dict[str, list[str]] = {r["id"]: _sources_for(r["id"]) for r in results}
@@ -1103,6 +1262,9 @@ class MemoryEngine:
                 "path3_count": len(path3_ids),
                 "path3b_count": len(path3b_ids),
                 "path4_count": len(path4_ids),
+                "context": ctx_name or None,
+                "context_resolved": context_info["name"] if context_info else None,
+                "context_ids": sorted(context_ids),
                 "stage_timings": {k: round(v, 2) for k, v in _stage_timings.items()},
             },
         )

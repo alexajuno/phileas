@@ -1917,6 +1917,120 @@ class GraphStore:
         finally:
             result.close()
 
+    @_locked
+    def get_scopes_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Batched ``get_scopes_for_memory`` for the recall candidate set (AA-119).
+
+        One Cypher round-trip for every candidate's SCOPED_TO edges, keyed by
+        memory id. Ids with no edges are simply absent — the caller reads that
+        as "globally valid". Empty input short-circuits.
+        """
+        ids = [m for m in (memory_ids or []) if m]
+        if not ids or not self._ensure_connected():
+            return {}
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[r:SCOPED_TO]->(e:Entity) WHERE m.id IN $ids "
+            "RETURN m.id, e.id, e.primary_name, e.types, r.polarity, r.valid_from, r.valid_to, "
+            "r.confidence, r.created_at",
+            parameters={"ids": ids},
+        )
+        try:
+            out: dict[str, list[dict[str, Any]]] = {}
+            while result.has_next():
+                r = result.get_next()
+                out.setdefault(r[0], []).append(
+                    {
+                        "context_id": r[1],
+                        "context_name": r[2],
+                        "context_types": _parse_list(r[3]),
+                        "polarity": r[4] or "holds",
+                        "valid_from": _iso_or_none(r[5]),
+                        "valid_to": _iso_or_none(r[6]),
+                        "confidence": r[7],
+                        "created_at": _iso_or_none(r[8]),
+                    }
+                )
+            return out
+        finally:
+            result.close()
+
+    @_locked
+    def resolve_context(self, name: str) -> dict[str, Any] | None:
+        """Resolve an active-recall context name to an entity, without minting.
+
+        The read-path twin of ``_resolve_context_entity``: same alias/diacritic
+        normalization (via ``_candidate_rows``) and the same "prefer a
+        Context-typed candidate, else highest ABOUT-mass" tie-break — but it
+        never creates a node and never mutates types. An unknown context simply
+        resolves to ``None`` (recall then carries no context signal), because a
+        miss is recoverable while a minted junk Context would not be.
+        """
+        if not self._ensure_connected():
+            return None
+        return self._resolve_context_read(name)
+
+    def _resolve_context_read(self, name: str) -> dict[str, Any] | None:
+        """Lock-free core of ``resolve_context`` (callers hold the lock)."""
+        candidates = self._candidate_rows(name)
+        if not candidates:
+            return None
+        typed = [c for c in candidates if "context" in _types_lower(c["types"])]
+        row = typed[0] if typed else max(candidates, key=lambda c: c["memory_count"])
+        return {"id": row["id"], "name": row["primary_name"], "types": row["types"]}
+
+    @_locked
+    def expand_context(self, name: str, hop_cap: int = 3) -> dict[str, Any] | None:
+        """Resolve a context and walk its PART_OF hierarchy for recall (AA-119).
+
+        Returns ``None`` for an unresolvable context. Otherwise:
+
+        - ``in_context``: the resolved context plus its PART_OF *ancestors*
+          (``-[:REL*0..N {edge_type:'PART_OF'}]->``). This is McCarthy's lifting
+          set — a memory scoped to any of these holds when the active context is
+          the resolved (more specific) one.
+        - ``descendants``: strictly more-specific contexts
+          (``<-[:REL*1..N {edge_type:'PART_OF'}]-``). Related to the query but
+          narrower; recall treats them as neutral, not disjoint.
+
+        ``hop_cap`` bounds both walks (design caps lifting at depth 3).
+        """
+        if not self._ensure_connected():
+            return None
+        resolved = self._resolve_context_read(name)
+        if not resolved:
+            return None
+        eid = resolved["id"]
+        cap = max(0, int(hop_cap))
+
+        def _walk(cypher: str) -> list[str]:
+            result = self._conn.execute(cypher, parameters={"id": eid})
+            try:
+                ids: list[str] = []
+                while result.has_next():
+                    ids.append(result.get_next()[0])
+                return ids
+            finally:
+                result.close()
+
+        part_of = "{edge_type: 'PART_OF'}"
+        # Self + ancestors (0..cap hops outward along PART_OF). The 0-hop arm
+        # includes the resolved context itself, so an exact-context scope counts.
+        in_context = _walk(f"MATCH (a:Entity {{id: $id}})-[:REL*0..{cap} {part_of}]->(b:Entity) RETURN DISTINCT b.id")
+        # Strict descendants (1..cap hops inward). Exclude any that also appear
+        # as ancestors (a PART_OF cycle) so the two sets stay disjoint.
+        in_set = set(in_context)
+        descendants = [
+            d
+            for d in _walk(f"MATCH (b:Entity)-[:REL*1..{cap} {part_of}]->(a:Entity {{id: $id}}) RETURN DISTINCT b.id")
+            if d not in in_set
+        ]
+        return {
+            "id": eid,
+            "name": resolved["name"],
+            "in_context": in_context,
+            "descendants": descendants,
+        }
+
     # ------------------------------------------------------------------
     # Neighborhood (general traversal)
     # ------------------------------------------------------------------
