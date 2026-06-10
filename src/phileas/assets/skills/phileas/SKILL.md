@@ -149,10 +149,3 @@ So when the user refers to someone by a bare or partial name that may be ambiguo
 
 The alias is the user's convention, set explicitly — never inferred.
 
----
-
-## Claude Code only (optional accelerator)
-
-This applies to local Claude Code, not claude.ai web (which has no hooks or local config — there, just route manually with the menu above).
-
-If `recall.mode` in `~/.phileas/config.toml` is `auto` or `always`, the installer can wire a `phileas-hook recall` UserPromptSubmit hook that pre-fires recall before you read the prompt, plus a Stop hook for memorize. When that hook's `<phileas-recall>` output is present, treat it as background and only supplement with focused-term calls from the menu when it missed a concept. With no hook installed, the menu above is the whole path.
