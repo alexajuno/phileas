@@ -269,300 +269,6 @@ def _find_phileas_command() -> str | None:
     return shutil.which("phileas")
 
 
-# -- Claude Code hooks --------------------------------------------------
-
-# Each hook entry uses `phileas-hook <name>` so settings.json doesn't depend on
-# any absolute path inside the user's machine. The matching console script is
-# declared in pyproject.toml under [project.scripts].
-HOOK_COMMANDS = {
-    "UserPromptSubmit": "phileas-hook recall",
-    "Stop": "phileas-hook memorize",
-}
-
-
-def _hook_already_present(entries: list, command: str) -> bool:
-    """Return True if any hook in `entries` already runs `command` (any matcher)."""
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        for hook in entry.get("hooks", []) or []:
-            if isinstance(hook, dict) and hook.get("command", "").strip() == command:
-                return True
-    return False
-
-
-def _settings_path() -> Path:
-    return Path.home() / ".claude" / "settings.json"
-
-
-def _read_settings(path: Path) -> tuple[dict | None, str | None]:
-    """Return (settings_dict, error_message). settings_dict is None when read failed."""
-    if not path.exists():
-        return {}, None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        return None, f"could not read {path}: {exc}"
-    if not isinstance(data, dict):
-        return None, f"{path} is not a JSON object -- refusing to overwrite"
-    return data, None
-
-
-def _write_settings(path: Path, data: dict) -> str | None:
-    """Write settings dict to path. Returns an error message on failure, else None."""
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
-        return f"could not write {path}: {exc}"
-    return None
-
-
-def _install_hook_entries(settings: dict) -> bool:
-    """Add Phileas hook entries to settings dict (in place). Returns True if modified."""
-    hooks = settings.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise ValueError("settings.json `hooks` field is not an object")
-
-    changed = False
-    for event, command in HOOK_COMMANDS.items():
-        entries = hooks.setdefault(event, [])
-        if not isinstance(entries, list):
-            raise ValueError(f"settings.json `hooks.{event}` is not a list")
-        if _hook_already_present(entries, command):
-            continue
-        entries.append({"hooks": [{"type": "command", "command": command}]})
-        changed = True
-    return changed
-
-
-def _remove_hook_entries(settings: dict) -> bool:
-    """Remove Phileas hook entries from settings dict (in place). Returns True if modified."""
-    hooks = settings.get("hooks")
-    if not isinstance(hooks, dict):
-        return False
-
-    changed = False
-    for event, command in HOOK_COMMANDS.items():
-        entries = hooks.get(event)
-        if not isinstance(entries, list):
-            continue
-        kept: list = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                kept.append(entry)
-                continue
-            inner = entry.get("hooks", []) or []
-            filtered = [h for h in inner if not (isinstance(h, dict) and h.get("command", "").strip() == command)]
-            if not filtered:
-                # The entire entry only carried the phileas hook; drop it.
-                changed = True
-                continue
-            if filtered != inner:
-                entry = {**entry, "hooks": filtered}
-                changed = True
-            kept.append(entry)
-        if kept:
-            hooks[event] = kept
-        else:
-            hooks.pop(event, None)
-            changed = True
-    return changed
-
-
-def _sync_hook_state(mode: str) -> tuple[bool, str]:
-    """Reconcile ~/.claude/settings.json hook entries against `recall.mode`.
-
-    mode == "never"  -> remove any phileas-hook entry.
-    Otherwise        -> install the phileas-hook entry (idempotent).
-
-    The hook script itself reads `recall.mode` and `recall.pipeline` at runtime
-    to decide whether to fire and which pipeline to use, so installing it for
-    both "auto" and "always" is correct -- the hook handles the auto-vs-always
-    branching internally.
-
-    Returns (changed, message) for display.
-    """
-    settings_path = _settings_path()
-    settings, err = _read_settings(settings_path)
-    if err is not None:
-        return False, err
-    assert settings is not None  # narrow for type-checker
-
-    try:
-        if mode == "never":
-            changed = _remove_hook_entries(settings)
-            verb = "removed"
-        else:
-            changed = _install_hook_entries(settings)
-            verb = "installed"
-    except ValueError as exc:
-        return False, str(exc)
-
-    if not changed:
-        return False, f"hook entries already in desired state ({mode})"
-
-    write_err = _write_settings(settings_path, settings)
-    if write_err is not None:
-        return False, write_err
-
-    return True, f"{verb} hook entries in {settings_path}"
-
-
-def _sync_hook_state_antigravity(mode: str) -> tuple[bool, str]:
-    """Reconcile ~/.gemini/config/hooks.json entries against recall mode."""
-    hooks_path = Path.home() / ".gemini" / "config" / "hooks.json"
-
-    hooks_config = {}
-    if hooks_path.exists() and hooks_path.stat().st_size > 0:
-        try:
-            hooks_config = json.loads(hooks_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-
-    changed = False
-
-    if mode == "never":
-        if "phileas-recall" in hooks_config:
-            del hooks_config["phileas-recall"]
-            changed = True
-        if "phileas-memorize" in hooks_config:
-            del hooks_config["phileas-memorize"]
-            changed = True
-        verb = "removed"
-    else:
-        recall_entry = {
-            "PreInvocation": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "phileas-hook recall --client antigravity",
-                        }
-                    ]
-                }
-            ]
-        }
-        memorize_entry = {
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "phileas-hook memorize --client antigravity",
-                        }
-                    ]
-                }
-            ]
-        }
-
-        if hooks_config.get("phileas-recall") != recall_entry:
-            hooks_config["phileas-recall"] = recall_entry
-            changed = True
-        if hooks_config.get("phileas-memorize") != memorize_entry:
-            hooks_config["phileas-memorize"] = memorize_entry
-            changed = True
-        verb = "installed"
-
-    if changed:
-        try:
-            hooks_path.parent.mkdir(parents=True, exist_ok=True)
-            hooks_path.write_text(json.dumps(hooks_config, indent=2) + "\n", encoding="utf-8")
-            return True, f"{verb} hooks in {hooks_path}"
-        except OSError as exc:
-            return False, f"failed to write hooks.json: {exc}"
-    else:
-        return False, f"hooks already in desired state ({mode})"
-
-
-CODEX_HOOK_COMMANDS = {
-    "UserPromptSubmit": "phileas-hook recall --client codex",
-    "Stop": "phileas-hook memorize --client codex",
-}
-
-
-def _codex_hooks_path() -> Path:
-    return _codex_home() / "hooks.json"
-
-
-def _read_codex_hooks(path: Path) -> tuple[dict | None, str | None]:
-    if not path.exists():
-        return {"hooks": {}}, None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        return None, f"could not read {path}: {exc}"
-    if not isinstance(data, dict):
-        return None, f"{path} is not a JSON object -- refusing to overwrite"
-    data.setdefault("hooks", {})
-    if not isinstance(data["hooks"], dict):
-        return None, f"{path} `hooks` field is not an object -- refusing to overwrite"
-    return data, None
-
-
-def _sync_hook_state_codex(mode: str) -> tuple[bool, str]:
-    hooks_path = _codex_hooks_path()
-    data, err = _read_codex_hooks(hooks_path)
-    if err is not None:
-        return False, err
-    assert data is not None
-
-    hooks = data["hooks"]
-    changed = False
-
-    if mode == "never":
-        for event, command in CODEX_HOOK_COMMANDS.items():
-            entries = hooks.get(event)
-            if not isinstance(entries, list):
-                continue
-            kept: list = []
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    kept.append(entry)
-                    continue
-                inner = entry.get("hooks", []) or []
-                filtered = [h for h in inner if not (isinstance(h, dict) and h.get("command", "").strip() == command)]
-                if not filtered:
-                    changed = True
-                    continue
-                if filtered != inner:
-                    entry = {**entry, "hooks": filtered}
-                    changed = True
-                kept.append(entry)
-            if kept:
-                hooks[event] = kept
-            else:
-                hooks.pop(event, None)
-                changed = True
-        verb = "removed"
-    else:
-        for event, command in CODEX_HOOK_COMMANDS.items():
-            entries = hooks.setdefault(event, [])
-            if not isinstance(entries, list):
-                return False, f"{hooks_path} `hooks.{event}` field is not a list"
-            if _hook_already_present(entries, command):
-                continue
-            entry = {"hooks": [{"type": "command", "command": command, "timeout": 30}]}
-            if event == "UserPromptSubmit":
-                entry["hooks"][0]["statusMessage"] = "Recalling Phileas memories"
-            else:
-                entry["hooks"][0]["statusMessage"] = "Checking Phileas memory"
-            entries.append(entry)
-            changed = True
-        verb = "installed"
-
-    if not changed:
-        return False, f"hooks already in desired state ({mode})"
-
-    try:
-        hooks_path.parent.mkdir(parents=True, exist_ok=True)
-        hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
-        return False, f"failed to write hooks.json: {exc}"
-
-    return True, f"{verb} hooks in {hooks_path}"
-
-
 # -- Skill installation ------------------------------------------------
 
 # Source asset ships with the package and never depends on HOME.
@@ -786,20 +492,10 @@ def run_wizard() -> None:
             console.print("        Add this to ~/.claude/.mcp.json manually:")
             console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
 
-        # Recall delivery is via skill by default; hook only when mode == "always".
-        # Read the just-written config to find the resolved recall mode.
-        from phileas.config import load_config
-
-        recall_mode = load_config(home=home).recall.mode
-
         changed, msg = _install_skill()
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
         console.print(f"  Skill {marker} -- {msg}")
-
-        changed, msg = _sync_hook_state(recall_mode)
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Hooks {marker} -- {msg}")
-        console.print("  [dim]Restart Claude Code to pick up MCP + skill + hook changes.[/dim]")
+        console.print("  [dim]Restart Claude Code to pick up MCP + skill changes.[/dim]")
 
     if use_antigravity:
         console.print()
@@ -811,18 +507,10 @@ def run_wizard() -> None:
             console.print("        Add this to ~/.gemini/config/mcp_config.json manually:")
             console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
 
-        from phileas.config import load_config
-
-        recall_mode = load_config(home=home).recall.mode
-
         changed, msg = _install_skill_antigravity()
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
         console.print(f"  Skill {marker} -- {msg}")
-
-        changed, msg = _sync_hook_state_antigravity(recall_mode)
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Hooks {marker} -- {msg}")
-        console.print("  [dim]Restart Antigravity/agy to pick up hook + skill changes.[/dim]")
+        console.print("  [dim]Restart Antigravity/agy to pick up MCP + skill changes.[/dim]")
 
     if use_codex:
         console.print()
@@ -837,18 +525,10 @@ def run_wizard() -> None:
                 '        [cyan][mcp_servers.phileas]\n        command = "phileas"\n        args = ["serve"][/cyan]'
             )
 
-        from phileas.config import load_config
-
-        recall_mode = load_config(home=home).recall.mode
-
         changed, msg = _install_skill_codex()
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
         console.print(f"  Skill {marker} -- {msg}")
-
-        changed, msg = _sync_hook_state_codex(recall_mode)
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Hooks {marker} -- {msg}")
-        console.print("  [dim]Restart Codex CLI and review/trust hooks with /hooks.[/dim]")
+        console.print("  [dim]Restart Codex CLI to pick up MCP + skill changes.[/dim]")
 
     # 6. Download models
     console.print()
