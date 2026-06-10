@@ -25,6 +25,8 @@ from phileas.cli.commands import (
     reflect,
     remember,
     retry_events,
+    scope_cmd,
+    scopes,
     serendipity,
     serve,
     show,
@@ -59,6 +61,8 @@ app.add_command(serendipity)
 app.add_command(hydrate)
 app.add_command(thread)
 app.add_command(find_entities)
+app.add_command(scope_cmd)
+app.add_command(scopes)
 app.add_command(forget)
 app.add_command(update_cmd)
 app.add_command(list_cmd)

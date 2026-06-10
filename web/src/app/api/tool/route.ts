@@ -22,6 +22,7 @@ const TOOLS = new Set([
   "hydrate",
   "thread",
   "find_entities",
+  "scopes",
 ]);
 
 type DaemonToolResult = {

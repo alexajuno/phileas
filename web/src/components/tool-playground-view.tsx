@@ -92,6 +92,12 @@ const TOOLS: ToolSpec[] = [
     hint: "Candidate entities whose name/alias contains the query.",
     fields: [{ key: "query", label: "query", type: "text", required: true, placeholder: "name fragment, e.g. huyen" }],
   },
+  {
+    name: "scopes",
+    label: "scopes",
+    hint: "SCOPED_TO contexts of one memory — none means globally valid.",
+    fields: [{ key: "memory_id", label: "memory_id", type: "text", required: true, placeholder: "id or id8 prefix" }],
+  },
 ];
 
 type Values = Record<string, string | boolean>;

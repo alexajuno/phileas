@@ -591,6 +591,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return engine.recall(**params)
     elif method == "forget":
         return engine.forget(**params)
+    elif method == "scope":
+        return engine.scope(**params)
     elif method == "update":
         # Ensure backward compat: old callers pass only memory_id + summary
         return engine.update(**params)
@@ -709,6 +711,16 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         elif op == "add_alias":
             summary = graph.add_alias(params["node_type"], params["name"], params["alias"])
             return {"ok": True, "summary": summary}
+        elif op == "add_scope":
+            summary = graph.add_scope(
+                params["memory_id"],
+                params["context"],
+                polarity=params.get("polarity", "holds"),
+                valid_from=params.get("valid_from"),
+                valid_to=params.get("valid_to"),
+                confidence=params.get("confidence"),
+            )
+            return {"ok": True, "summary": summary}
         else:
             raise ValueError(f"Unknown graph_write op: {op}")
     elif method == "graph_read":
@@ -720,6 +732,10 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_entities_for_memories(params["memory_ids"])
         elif op == "get_memories_about":
             return graph.get_memories_about(params["entity_type"], params["entity_name"])
+        elif op == "get_scopes_for_memory":
+            return graph.get_scopes_for_memory(params["memory_id"])
+        elif op == "get_memories_in_context":
+            return graph.get_memories_in_context(params["context"])
         elif op == "search_nodes":
             return graph.search_nodes(params["query"])
         elif op == "find_similar_nodes":

@@ -239,6 +239,43 @@ def thread(engine, entities_fn: EntitiesFn, *, event_id: str) -> ToolResult:
     return {"items": result["memories"], "text": "\n".join(lines)}
 
 
+def scopes(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
+    """SCOPED_TO contexts of one memory — the read side of `scope()` (AA-118).
+
+    No scopes ⇒ the memory is globally valid (today's semantics for every
+    pre-existing memory).
+    """
+    clean = (memory_id or "").strip()
+    matches = engine.db.get_items_by_id_prefix(clean) if clean else []
+    if not matches:
+        return {"items": [], "text": f"No memory found for id '{memory_id}'."}
+    if len(matches) > 1:
+        lines = [f"Ambiguous id prefix '{clean}' matched {len(matches)} memories — disambiguate:"]
+        lines.extend(f"  [{id8(m.id)}] {m.summary}" for m in matches)
+        return {"items": [{"id": m.id, "summary": m.summary} for m in matches], "text": "\n".join(lines)}
+    item = matches[0]
+
+    rows = engine.graph.get_scopes_for_memory(item.id)
+    if not rows:
+        return {
+            "items": [],
+            "text": f"[{id8(item.id)}] has no SCOPED_TO contexts — globally valid.\n  {item.summary}",
+        }
+
+    lines = [f"[{id8(item.id)}] {item.summary}", f"Scoped to {len(rows)} context(s):"]
+    for r in rows:
+        quals = [r.get("polarity") or "holds"]
+        if r.get("valid_from"):
+            quals.append(f"from {r['valid_from']}")
+        if r.get("valid_to"):
+            quals.append(f"to {r['valid_to']}")
+        if r.get("confidence") is not None:
+            quals.append(f"confidence={r['confidence']}")
+        types = "/".join(r.get("context_types") or []) or "?"
+        lines.append(f"  {r['context_name']} [{types}] ({', '.join(quals)})")
+    return {"items": rows, "text": "\n".join(lines)}
+
+
 def find_entities(engine, entities_fn: EntitiesFn, *, query: str) -> ToolResult:
     rows = engine.graph.find_similar_nodes(query)
     if not rows:
@@ -266,6 +303,7 @@ TOOLS: dict[str, Callable[..., ToolResult]] = {
     "hydrate": hydrate,
     "thread": thread,
     "find_entities": find_entities,
+    "scopes": scopes,
 }
 TOOL_NAMES = frozenset(TOOLS)
 

@@ -1,12 +1,16 @@
 """KuzuDB graph store — opaque-uuid entity model with extraction-time linking.
 
-Schema (3 edge tables, 2 node tables):
+Schema (4 edge tables, 2 node tables):
   Node: Entity(id STRING PK uuid4, primary_name STRING, aliases STRING /JSON list/,
                types STRING /JSON list/, description STRING, props STRING)
   Node: Memory(id STRING PK)
   Edge: ABOUT(Memory → Entity)
   Edge: REL(Entity → Entity, edge_type)
   Edge: MEM_REL(Memory → Memory, edge_type)
+  Edge: SCOPED_TO(Memory → Entity, polarity, valid_from, valid_to, confidence)
+        — McCarthy's ist(c, p): the memory holds (or is excluded) in the
+        context entity it points at. A memory with no SCOPED_TO edges is
+        globally valid (docs/contextual-knowledge-design.md, AA-118).
 
 Identity is a uuid; names and types are attributes. Multi-type referents
 (Ownego = Place + Company + Project) collapse onto one row. Name collisions
@@ -23,6 +27,7 @@ migrated 1:1 (each old row → one uuid row); cluster merging is done
 out-of-band.
 """
 
+import datetime as _dt
 import functools
 import json
 import logging
@@ -99,6 +104,26 @@ def _dump_list(items: list[str]) -> str:
     like "\\u1ecb" never match a query of "ị".
     """
     return json.dumps(items, ensure_ascii=False)
+
+
+def _parse_ts(value: Any) -> _dt.datetime | None:
+    """Coerce an ISO string / datetime / None into a tz-naive UTC datetime.
+
+    Kuzu TIMESTAMP columns take naive datetimes; scope qualifiers arrive as
+    ISO strings over the daemon's JSON RPC, so the conversion lives here at
+    the Cypher boundary.
+    """
+    if value is None or value == "":
+        return None
+    dt = value if isinstance(value, _dt.datetime) else _dt.datetime.fromisoformat(str(value))
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_dt.UTC).replace(tzinfo=None)
+    return dt
+
+
+def _iso_or_none(value: Any) -> str | None:
+    """Render a Kuzu TIMESTAMP result cell as an ISO string (None stays None)."""
+    return value.isoformat() if isinstance(value, _dt.datetime) else None
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -308,6 +333,12 @@ class GraphStore:
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
         self._conn.execute(
             "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+        )
+        self._conn.execute(
+            "CREATE REL TABLE IF NOT EXISTS SCOPED_TO ("
+            "FROM Memory TO Entity, polarity STRING DEFAULT 'holds', "
+            "valid_from TIMESTAMP, valid_to TIMESTAMP, confidence DOUBLE, "
+            "created_at TIMESTAMP)"
         )
         self._ensure_merge_log_table()
 
@@ -1196,11 +1227,13 @@ class GraphStore:
 
             about_edges = self._collect_about_edges(dup_id)
             rel_edges = self._collect_rel_edges(dup_id)
+            scope_edges = self._collect_scope_edges(dup_id)
 
-            self._write_merge_log(canonical_id, dup_id, dup, about_edges, rel_edges)
+            self._write_merge_log(canonical_id, dup_id, dup, about_edges, rel_edges, scope_edges)
 
             edges_moved += self._move_about_edges(dup_id, canonical_id, about_edges)
             edges_moved += self._move_rel_edges(dup_id, canonical_id, rel_edges)
+            edges_moved += self._move_scope_edges(dup_id, canonical_id, scope_edges)
 
             for candidate in (dup["primary_name"], *dup["aliases"]):
                 if candidate and candidate not in new_aliases and candidate != canonical["primary_name"]:
@@ -1222,6 +1255,10 @@ class GraphStore:
             )
             self._conn.execute(
                 "MATCH (a:Entity)-[r:REL]->(b:Entity {id: $did}) DELETE r",
+                parameters={"did": dup_id},
+            )
+            self._conn.execute(
+                "MATCH (m:Memory)-[r:SCOPED_TO]->(d:Entity {id: $did}) DELETE r",
                 parameters={"did": dup_id},
             )
             self._conn.execute(
@@ -1294,6 +1331,63 @@ class GraphStore:
             row = result.get_next()
             edges.append({"direction": "in", "peer_id": row[0], "edge_type": row[1] or ""})
         return edges
+
+    def _collect_scope_edges(self, entity_id: str) -> list[dict[str, Any]]:
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[r:SCOPED_TO]->(e:Entity {id: $eid}) "
+            "RETURN m.id, r.polarity, r.valid_from, r.valid_to, r.confidence, r.created_at",
+            parameters={"eid": entity_id},
+        )
+        edges: list[dict[str, Any]] = []
+        while result.has_next():
+            row = result.get_next()
+            edges.append(
+                {
+                    "memory_id": row[0],
+                    "polarity": row[1] or "holds",
+                    "valid_from": row[2],
+                    "valid_to": row[3],
+                    "confidence": row[4],
+                    "created_at": row[5],
+                }
+            )
+        return edges
+
+    def _move_scope_edges(self, dup_id: str, canonical_id: str, edges: list[dict[str, Any]]) -> int:
+        """Re-point SCOPED_TO edges from a duplicate context onto canonical.
+
+        If the memory is already scoped to canonical, the canonical edge's
+        qualifiers win and the duplicate edge is just dropped.
+        """
+        moved = 0
+        for e in edges:
+            mid = e["memory_id"]
+            count_result = self._conn.execute(
+                "MATCH (m:Memory {id: $mid})-[r:SCOPED_TO]->(c:Entity {id: $cid}) RETURN COUNT(*) AS cnt",
+                parameters={"mid": mid, "cid": canonical_id},
+            )
+            already = count_result.get_next()[0] > 0
+            if not already:
+                self._conn.execute(
+                    "MATCH (m:Memory {id: $mid}), (c:Entity {id: $cid}) "
+                    "CREATE (m)-[:SCOPED_TO {polarity: $pol, valid_from: $vf, valid_to: $vt, "
+                    "confidence: $conf, created_at: $ts}]->(c)",
+                    parameters={
+                        "mid": mid,
+                        "cid": canonical_id,
+                        "pol": e["polarity"],
+                        "vf": _parse_ts(e["valid_from"]),
+                        "vt": _parse_ts(e["valid_to"]),
+                        "conf": e["confidence"],
+                        "ts": _parse_ts(e["created_at"]),
+                    },
+                )
+                moved += 1
+            self._conn.execute(
+                "MATCH (m:Memory {id: $mid})-[r:SCOPED_TO]->(d:Entity {id: $did}) DELETE r",
+                parameters={"mid": mid, "did": dup_id},
+            )
+        return moved
 
     def _move_about_edges(self, dup_id: str, canonical_id: str, mem_ids: list[str]) -> int:
         moved = 0
@@ -1371,9 +1465,8 @@ class GraphStore:
         snapshot: dict[str, Any],
         about_edges: list[str],
         rel_edges: list[dict[str, str]],
+        scope_edges: list[dict[str, Any]] | None = None,
     ) -> None:
-        import datetime as _dt
-
         log_id = _uuid.uuid4().hex
         dup_blob = json.dumps(
             {
@@ -1389,6 +1482,17 @@ class GraphStore:
             {
                 "about": about_edges,
                 "rel": rel_edges,
+                "scoped_to": [
+                    {
+                        "memory_id": e["memory_id"],
+                        "polarity": e["polarity"],
+                        "valid_from": _iso_or_none(e["valid_from"]),
+                        "valid_to": _iso_or_none(e["valid_to"]),
+                        "confidence": e["confidence"],
+                        "created_at": _iso_or_none(e["created_at"]),
+                    }
+                    for e in (scope_edges or [])
+                ],
             },
             ensure_ascii=False,
         )
@@ -1648,6 +1752,172 @@ class GraphStore:
         )
 
     # ------------------------------------------------------------------
+    # Memory → Entity scoping edges (SCOPED_TO) — AA-118
+    # ------------------------------------------------------------------
+
+    def _resolve_context_entity(self, context: str) -> str:
+        """Resolve a context name to an entity uuid, minting if needed.
+
+        Contexts are ordinary entities whose ``types`` include "Context" —
+        the same node can be an ABOUT target and a scope. Resolution
+        deliberately bypasses the type-scored linker: an explicit scope to
+        "phileas" must reuse the existing project entity, and the linker
+        would mint a parallel Context-only twin (type Jaccard = 0) and
+        split the cluster. Prefer a candidate already typed Context, else
+        the highest-memory-mass name match, and union "Context" into its
+        types.
+        """
+        candidates = self._candidate_rows(context)
+        if candidates:
+            typed = [c for c in candidates if "context" in _types_lower(c["types"])]
+            row = typed[0] if typed else max(candidates, key=lambda c: c["memory_count"])
+            self._merge_into_existing(row["id"], [_norm_type("Context")], "")
+            return row["id"]
+        return self.entity_lookup(context, hint_types=["Context"])
+
+    @_locked
+    def add_scope(
+        self,
+        memory_id: str,
+        context: str,
+        polarity: str = "holds",
+        valid_from: Any = None,
+        valid_to: Any = None,
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        """Create (or update) the SCOPED_TO edge from a memory to a context entity.
+
+        This is McCarthy's ``ist(c, p)``: the memory holds (``polarity='holds'``)
+        or is excluded (``polarity='excluded'``) in the named context.
+        ``valid_from``/``valid_to`` accept ISO strings or datetimes. Idempotent:
+        one edge per (memory, context) — a repeat call updates the qualifiers in
+        place and keeps the original ``created_at``.
+        """
+        if not self._ensure_connected():
+            return {"ok": False, "reason": "graph unavailable"}
+        name = (context or "").strip()
+        if not (memory_id and name):
+            return {"ok": False, "reason": "memory_id and context are required"}
+        polarity = (polarity or "holds").strip().lower()
+        if polarity not in ("holds", "excluded"):
+            return {"ok": False, "reason": f"invalid polarity {polarity!r} (use 'holds' or 'excluded')"}
+        try:
+            qualifiers = {
+                "pol": polarity,
+                "vf": _parse_ts(valid_from),
+                "vt": _parse_ts(valid_to),
+                "conf": float(confidence) if confidence is not None else None,
+            }
+        except ValueError as exc:
+            return {"ok": False, "reason": f"invalid qualifier: {exc}"}
+
+        eid = self._resolve_context_entity(name)
+        if not eid:
+            return {"ok": False, "reason": f"could not resolve context {name!r}"}
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": memory_id})
+
+        endpoints = {"mid": memory_id, "eid": eid}
+        count_result = self._conn.execute(
+            "MATCH (m:Memory {id: $mid})-[r:SCOPED_TO]->(e:Entity {id: $eid}) RETURN COUNT(*) AS cnt",
+            parameters=endpoints,
+        )
+        created = count_result.get_next()[0] == 0
+        if created:
+            self._conn.execute(
+                "MATCH (m:Memory {id: $mid}), (e:Entity {id: $eid}) "
+                "CREATE (m)-[:SCOPED_TO {polarity: $pol, valid_from: $vf, valid_to: $vt, "
+                "confidence: $conf, created_at: $now}]->(e)",
+                parameters={
+                    **endpoints,
+                    **qualifiers,
+                    "now": _dt.datetime.now(_dt.UTC).replace(tzinfo=None),
+                },
+            )
+        else:
+            self._conn.execute(
+                "MATCH (m:Memory {id: $mid})-[r:SCOPED_TO]->(e:Entity {id: $eid}) "
+                "SET r.polarity = $pol, r.valid_from = $vf, r.valid_to = $vt, r.confidence = $conf",
+                parameters={**endpoints, **qualifiers},
+            )
+        row = self._fetch_entity_row(eid)
+        return {
+            "ok": True,
+            "memory_id": memory_id,
+            "context_id": eid,
+            "context_name": row["primary_name"] if row else name,
+            "polarity": polarity,
+            "created": created,
+        }
+
+    @_locked
+    def get_scopes_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
+        """Return the SCOPED_TO contexts of a memory (empty ⇒ globally valid).
+
+        Timestamps come back as ISO strings so the rows survive the daemon's
+        JSON RPC unchanged.
+        """
+        if not self._ensure_connected():
+            return []
+        result = self._conn.execute(
+            "MATCH (m:Memory {id: $mid})-[r:SCOPED_TO]->(e:Entity) "
+            "RETURN e.id, e.primary_name, e.types, r.polarity, r.valid_from, r.valid_to, "
+            "r.confidence, r.created_at",
+            parameters={"mid": memory_id},
+        )
+        try:
+            rows: list[dict[str, Any]] = []
+            while result.has_next():
+                r = result.get_next()
+                rows.append(
+                    {
+                        "context_id": r[0],
+                        "context_name": r[1],
+                        "context_types": _parse_list(r[2]),
+                        "polarity": r[3] or "holds",
+                        "valid_from": _iso_or_none(r[4]),
+                        "valid_to": _iso_or_none(r[5]),
+                        "confidence": r[6],
+                        "created_at": _iso_or_none(r[7]),
+                    }
+                )
+            return rows
+        finally:
+            result.close()
+
+    @_locked
+    def get_memories_in_context(self, context: str) -> list[dict[str, Any]]:
+        """Return memories directly scoped to the named context.
+
+        Direct edges only — PART_OF lifting is the read path's job (AA-119).
+        """
+        if not self._ensure_connected():
+            return []
+        eid = self._lookup_id("Context", context)
+        if not eid:
+            return []
+        result = self._conn.execute(
+            "MATCH (m:Memory)-[r:SCOPED_TO]->(e:Entity {id: $eid}) "
+            "RETURN m.id, r.polarity, r.valid_from, r.valid_to, r.confidence",
+            parameters={"eid": eid},
+        )
+        try:
+            rows: list[dict[str, Any]] = []
+            while result.has_next():
+                r = result.get_next()
+                rows.append(
+                    {
+                        "memory_id": r[0],
+                        "polarity": r[1] or "holds",
+                        "valid_from": _iso_or_none(r[2]),
+                        "valid_to": _iso_or_none(r[3]),
+                        "confidence": r[4],
+                    }
+                )
+            return rows
+        finally:
+            result.close()
+
+    # ------------------------------------------------------------------
     # Neighborhood (general traversal)
     # ------------------------------------------------------------------
 
@@ -1790,6 +2060,7 @@ class GraphStore:
             ("ABOUT", "Memory", "Entity"),
             ("REL", "Entity", "Entity"),
             ("MEM_REL", "Memory", "Memory"),
+            ("SCOPED_TO", "Memory", "Entity"),
         ]
         for edge_table, from_t, to_t in edge_tables:
             result = self._conn.execute(f"MATCH (a:{from_t})-[:{edge_table}]->(b:{to_t}) RETURN COUNT(*) AS cnt")
@@ -1823,6 +2094,7 @@ class GraphStore:
         about_count = self._conn.execute("MATCH ()-[:ABOUT]->() RETURN COUNT(*) AS cnt").get_next()[0]
         rel_count = self._conn.execute("MATCH ()-[:REL]->() RETURN COUNT(*) AS cnt").get_next()[0]
         mem_rel_count = self._conn.execute("MATCH ()-[:MEM_REL]->() RETURN COUNT(*) AS cnt").get_next()[0]
+        scoped_to_count = self._conn.execute("MATCH ()-[:SCOPED_TO]->() RETURN COUNT(*) AS cnt").get_next()[0]
 
         return {
             "entity_types": entity_types,
@@ -1830,6 +2102,7 @@ class GraphStore:
             "about_edges": about_count,
             "rel_edges": rel_count,
             "mem_rel_edges": mem_rel_count,
+            "scoped_to_edges": scoped_to_count,
             "nodes": entity_count + memory_count,
-            "edges": about_count + rel_count + mem_rel_count,
+            "edges": about_count + rel_count + mem_rel_count + scoped_to_count,
         }
