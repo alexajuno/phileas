@@ -207,19 +207,34 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
         return {"items": candidates, "text": "\n".join(lines)}
 
     ent_names = ", ".join(dict.fromkeys(e.get("name", "") for e in (result.get("entities") or []) if e.get("name")))
-    text = "\n".join(
-        [
-            f"[{result['id']}] [{result['type']}]",
-            f"  {result['summary']}",
-            f"  importance={result['importance']}  status={result['status']}  "
-            f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
-            f"  created={result['created_at']}  updated={result['updated_at']}",
-            f"  daily_ref={result.get('daily_ref') or '—'}",
-            f"  source_event_id={result.get('source_event_id') or '—'}  (call thread() on this for the conversation)",
-            f"  entities: {ent_names or '—'}",
-        ]
-    )
-    return {"items": [result], "text": text}
+    lines = [
+        f"[{result['id']}] [{result['type']}]",
+        f"  {result['summary']}",
+        f"  importance={result['importance']}  status={result['status']}  "
+        f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
+        f"  created={result['created_at']}  updated={result['updated_at']}",
+        f"  daily_ref={result.get('daily_ref') or '—'}",
+        f"  source_event_id={result.get('source_event_id') or '—'}  (call thread() on this for the conversation)",
+        f"  entities: {ent_names or '—'}",
+    ]
+    # Scoping (AA-119): only render when present — an unscoped memory is
+    # globally valid and the line would be noise on the vast majority.
+    scopes = result.get("scopes") or []
+    if scopes:
+        lines.append(f"  scoped to {len(scopes)} context(s):")
+        for r in scopes:
+            quals = [r.get("polarity") or "holds"]
+            if r.get("valid_from"):
+                quals.append(f"from {r['valid_from']}")
+            if r.get("valid_to"):
+                quals.append(f"to {r['valid_to']}")
+            if r.get("confidence") is not None:
+                quals.append(f"confidence={r['confidence']}")
+            if r.get("historical"):
+                quals.append("historical")
+            types = "/".join(r.get("context_types") or []) or "?"
+            lines.append(f"    {r['context_name']} [{types}] ({', '.join(quals)})")
+    return {"items": [result], "text": "\n".join(lines)}
 
 
 def thread(engine, entities_fn: EntitiesFn, *, event_id: str) -> ToolResult:

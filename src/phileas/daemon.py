@@ -734,8 +734,14 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_memories_about(params["entity_type"], params["entity_name"])
         elif op == "get_scopes_for_memory":
             return graph.get_scopes_for_memory(params["memory_id"])
+        elif op == "get_scopes_for_memories":
+            return graph.get_scopes_for_memories(params["memory_ids"])
         elif op == "get_memories_in_context":
             return graph.get_memories_in_context(params["context"])
+        elif op == "resolve_context":
+            return graph.resolve_context(params["name"])
+        elif op == "expand_context":
+            return graph.expand_context(params["name"], hop_cap=params.get("hop_cap", 3))
         elif op == "search_nodes":
             return graph.search_nodes(params["query"])
         elif op == "find_similar_nodes":

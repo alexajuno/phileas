@@ -65,6 +65,17 @@ class RecallConfig:
     path3b_max_seeds: int = 30
     path4_max_seeds: int = 30
 
+    # Context-aware recall (AA-119). Additive deltas applied to a candidate's
+    # stage-2 relevance once an active `context=` is resolved and its SCOPED_TO
+    # edges are read. The whole block is inert unless a context is passed —
+    # `recall(query)` with no context never reads scopes, so these knobs cannot
+    # change today's behaviour. Tunable to 0 to neutralise any single signal.
+    context_boost: float = 0.25  # in-context (self or PART_OF ancestor) — lifted memory holds here
+    context_demote: float = 0.15  # disjoint scope — visible but ranked down (never dropped)
+    context_excluded_demote: float = 0.5  # polarity='excluded' covering the active context — hard demote
+    context_historical_demote: float = 0.2  # valid_to in the past — demote as historical
+    context_hop_cap: int = 3  # max PART_OF hops walked for lifting (ancestors) and descendants
+
     # Skill-driven recall delivery (PHI-39).
     mode: str = "auto"  # always | never | auto
     format: str = "pointer"  # inline | pointer
