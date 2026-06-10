@@ -10,16 +10,22 @@ import click
 
 from phileas import __version__
 from phileas.cli.commands import (
+    about,
     contradictions,
     export_cmd,
+    find_entities,
     forget,
+    hydrate,
     ingest,
     init_cmd,
     list_cmd,
+    list_day,
     recall,
+    recall_recent,
     reflect,
     remember,
     retry_events,
+    serendipity,
     serve,
     show,
     start,
@@ -28,6 +34,8 @@ from phileas.cli.commands import (
     sync_export_cmd,
     sync_import_cmd,
     sync_plan_cmd,
+    thread,
+    timeline,
     update_cmd,
     usage,
 )
@@ -43,6 +51,14 @@ def app():
 app.add_command(status)
 app.add_command(remember)
 app.add_command(recall)
+app.add_command(recall_recent)
+app.add_command(timeline)
+app.add_command(about)
+app.add_command(list_day)
+app.add_command(serendipity)
+app.add_command(hydrate)
+app.add_command(thread)
+app.add_command(find_entities)
 app.add_command(forget)
 app.add_command(update_cmd)
 app.add_command(list_cmd)

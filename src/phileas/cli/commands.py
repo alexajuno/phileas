@@ -175,6 +175,108 @@ def recall(query: str, top_k: int, memory_type: str | None):
 
 
 # ------------------------------------------------------------------
+# recall-family read tools (recall-recent, timeline, about, list-day,
+# serendipity, hydrate, thread, find-entities)
+#
+# Thin wrappers over the shared phileas.tool_runner so the CLI, the MCP
+# server, and the daemon all emit byte-identical strings. Daemon first
+# (models stay warm, no KuzuDB lock contention); fall back to an in-process
+# engine when it's down.
+# ------------------------------------------------------------------
+
+
+def _run_tool(method: str, params: dict) -> None:
+    try:
+        resp = _daemon_call(method, params)
+        if resp and resp.get("ok"):
+            click.echo(resp["result"]["text"])
+            return
+
+        from phileas import tool_runner
+
+        engine = _get_engine()
+
+        def _entities_for(items: list[dict]) -> dict:
+            ids = [it.get("id") for it in items if it.get("id")]
+            if not ids:
+                return {}
+            try:
+                return engine.graph.get_entities_for_memories(ids) or {}
+            except Exception:
+                return {}
+
+        click.echo(tool_runner.run(engine, _entities_for, method, params)["text"])
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+@click.command("recall-recent")
+@click.option("--days", default=7, type=int, help="How many days back to look.")
+@click.option("--top-per-day", default=10, type=int, help="Max memories to show per day.")
+@click.option("--min-importance", default=5, type=int, help="Only include memories at or above this importance.")
+def recall_recent(days: int, top_per_day: int, min_importance: int):
+    """Top memories per day for the last N days (time-relative queries)."""
+    _run_tool("recall_recent", {"days": days, "top_per_day": top_per_day, "min_importance": min_importance})
+
+
+@click.command("timeline")
+@click.argument("start_date")
+@click.option("--end", "end_date", default=None, help="End date YYYY-MM-DD (optional).")
+@click.option("--window", default=1, type=int, help="Days to expand search in both directions.")
+def timeline(start_date: str, end_date: str | None, window: int):
+    """Memories anchored to a date or date range (YYYY-MM-DD)."""
+    _run_tool("timeline", {"start_date": start_date, "end_date": end_date, "window": window})
+
+
+@click.command("about")
+@click.argument("name")
+@click.option("--type", "entity_type", default=None, help="Entity type filter (e.g. Person).")
+@click.option("--expand", is_flag=True, default=False, help="Include memories about 1-hop neighbor entities.")
+@click.option("--memory-type", default=None, help="Memory type filter (e.g. profile).")
+def about(name: str, entity_type: str | None, expand: bool, memory_type: str | None):
+    """Memories connected to an entity in the knowledge graph."""
+    _run_tool("about", {"name": name, "entity_type": entity_type, "expand": expand, "memory_type": memory_type})
+
+
+@click.command("list-day")
+@click.argument("date", required=False, default=None)
+def list_day(date: str | None):
+    """List a day's active memories (YYYY-MM-DD; defaults to today)."""
+    _run_tool("list_day_memories", {"date": date})
+
+
+@click.command("serendipity")
+@click.option("--n", default=3, type=int, help="How many wildcard memories to return.")
+@click.option("--exclude", "exclude_ids", default=None, help="Comma-separated ids (full or id8) to skip.")
+def serendipity(n: int, exclude_ids: str | None):
+    """N high-signal memories deliberately NOT gated on query relevance."""
+    ids = [x.strip() for x in exclude_ids.split(",") if x.strip()] if exclude_ids else None
+    _run_tool("serendipity", {"n": n, "exclude_ids": ids})
+
+
+@click.command("hydrate")
+@click.argument("memory_id")
+def hydrate(memory_id: str):
+    """Full record of one memory by id or 8-char prefix."""
+    _run_tool("hydrate", {"memory_id": memory_id})
+
+
+@click.command("thread")
+@click.argument("event_id")
+def thread(event_id: str):
+    """Verbatim source event plus every memory extracted from it."""
+    _run_tool("thread", {"event_id": event_id})
+
+
+@click.command("find-entities")
+@click.argument("query")
+def find_entities(query: str):
+    """Find candidate entities whose name or alias contains the query."""
+    _run_tool("find_entities", {"query": query})
+
+
+# ------------------------------------------------------------------
 # forget
 # ------------------------------------------------------------------
 
