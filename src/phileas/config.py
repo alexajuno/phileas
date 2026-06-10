@@ -76,6 +76,18 @@ class RecallConfig:
     recent_max: int = 40  # hard cap on total memories recall_recent returns
     about_max: int = 25  # cap on memories about() returns before a "+N more" footer
 
+    # Output-size bounds (AA-112) — the count caps above assume short pointer
+    # lines; with ~1k-char summaries 40 pointers still blew past the MCP
+    # 25k-token ceiling (observed 61.5k chars). Two independent layers, each
+    # togglable with 0 and monitored via `phileas stats bounds`:
+    #   layer 1: clip each pointer summary (all pointer tools; body is one
+    #            hydrate() away).
+    #   layer 2: hard budget on recall_recent's total rendered chars — the
+    #            guarantee, sized for worst-case ~2.4 chars/token (10k chars
+    #            ≈ 4.2k tokens, well under the 25k-token ceiling).
+    pointer_summary_chars: int = 200  # layer 1: clip pointer summaries (0 = show whole)
+    recent_max_chars: int = 10_000  # layer 2: recall_recent output budget (0 = off)
+
 
 @dataclass
 class ReinforcementConfig:
