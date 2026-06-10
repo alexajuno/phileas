@@ -1376,10 +1376,10 @@ class GraphStore:
                         "mid": mid,
                         "cid": canonical_id,
                         "pol": e["polarity"],
-                        "vf": e["valid_from"],
-                        "vt": e["valid_to"],
+                        "vf": _parse_ts(e["valid_from"]),
+                        "vt": _parse_ts(e["valid_to"]),
                         "conf": e["confidence"],
-                        "ts": e["created_at"],
+                        "ts": _parse_ts(e["created_at"]),
                     },
                 )
                 moved += 1

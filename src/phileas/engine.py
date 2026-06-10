@@ -332,7 +332,17 @@ class MemoryEngine:
                 if not (ctx and ctx.strip()):
                     continue
                 try:
-                    self.graph.add_scope(item.id, ctx.strip())
+                    scope_result = self.graph.add_scope(item.id, ctx.strip())
+                    # GraphProxy reports failure via the result dict (daemon
+                    # down, bad qualifier) instead of raising — surface both.
+                    if not scope_result.get("ok"):
+                        log.debug(
+                            "scope edge failed",
+                            extra={
+                                "op": "memorize",
+                                "data": {"context": ctx, "reason": scope_result.get("reason", "unknown")},
+                            },
+                        )
                 except Exception as e:
                     log.debug("scope edge failed", extra={"op": "memorize", "data": {"context": ctx, "error": str(e)}})
 
