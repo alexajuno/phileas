@@ -26,14 +26,13 @@ from time import perf_counter
 
 from mcp.server.fastmcp import FastMCP
 
+from phileas import tool_runner
 from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph_proxy import GraphProxy
 from phileas.mcp_auth import build_auth_components, register_login_routes
-from phileas.recall_format import id8 as _id8
-from phileas.recall_format import pointer_line as _pointer_line
-from phileas.recall_format import render_pointers, select_recent
+from phileas.recall_format import render_pointers
 from phileas.vector import VectorStore
 
 # OAuth + HTTP serving is opt-in (PHILEAS_MCP_TRANSPORT=http) so the phone can
@@ -331,20 +330,7 @@ def thread(event_id: str) -> str:
     Args:
         event_id: The event UUID (from a memory's source_event_id field).
     """
-    result = engine.thread(event_id)
-    if result is None:
-        return f"Event {event_id} not found."
-
-    lines = [
-        f"Event {result['event_id']} (received {result['received_at']}):",
-        "",
-        result["text"],
-        "",
-        f"Extracted memories ({len(result['memories'])}):",
-    ]
-    for m in result["memories"]:
-        lines.append(f"  [{m['id']}] [{m['type']}] {m['summary']}")
-    return "\n".join(lines)
+    return tool_runner.thread(engine, _entities_for, event_id=event_id)["text"]
 
 
 @_instrumented_tool()
@@ -360,27 +346,7 @@ def hydrate(memory_id: str) -> str:
     Args:
         memory_id: A memory id or its 8-char pointer prefix (e.g. "a1b2c3d4").
     """
-    result = engine.hydrate(memory_id)
-    if result is None:
-        return f"No memory found for id '{memory_id}'."
-    if "error" in result:
-        lines = [result["error"] + " — disambiguate:"]
-        for c in result.get("candidates", []):
-            lines.append(f"  [{_id8(c['id'])}] {c['summary']}")
-        return "\n".join(lines)
-    ent_names = ", ".join(dict.fromkeys(e.get("name", "") for e in (result.get("entities") or []) if e.get("name")))
-    return "\n".join(
-        [
-            f"[{result['id']}] [{result['type']}]",
-            f"  {result['summary']}",
-            f"  importance={result['importance']}  status={result['status']}  "
-            f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
-            f"  created={result['created_at']}  updated={result['updated_at']}",
-            f"  daily_ref={result.get('daily_ref') or '—'}",
-            f"  source_event_id={result.get('source_event_id') or '—'}  (call thread() on this for the conversation)",
-            f"  entities: {ent_names or '—'}",
-        ]
-    )
+    return tool_runner.hydrate(engine, _entities_for, memory_id=memory_id)["text"]
 
 
 @_instrumented_tool()
@@ -486,17 +452,9 @@ def about(
             behavior, reflection) answers "who are they"
             rather than returning the full first-person activity log.
     """
-    items = engine.about(name, entity_type=entity_type, expand=expand, memory_type=memory_type)
-    if not items:
-        return f"No memories found for '{name}'."
-
-    cap = _config.recall.about_max
-    shown = items[:cap]
-    lines = [f"Memories about '{name}' ({len(items)} found):"]
-    lines.extend(_pointer_lines(shown, show_date=True))
-    if len(items) > cap:
-        lines.append(f"  … +{len(items) - cap} more (narrow with memory_type, or use timeline / hydrate to drill in)")
-    return "\n".join(lines)
+    return tool_runner.about(
+        engine, _entities_for, name=name, entity_type=entity_type, expand=expand, memory_type=memory_type
+    )["text"]
 
 
 @_instrumented_tool()
@@ -509,16 +467,7 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
         window: Days to expand search in both directions (default 1).
             Helps catch events that span midnight or were tagged to adjacent days.
     """
-    items = engine.timeline(start_date, end_date=end_date, window=window)
-    if not items:
-        if end_date:
-            return f"No memories found between {start_date} and {end_date}."
-        return f"No memories found for {start_date}."
-
-    range_str = f"{start_date} to {end_date}" if end_date else start_date
-    lines = [f"Memories for {range_str} ({len(items)} found):"]
-    lines.extend(_pointer_lines(items, show_date=True))
-    return "\n".join(lines)
+    return tool_runner.timeline(engine, _entities_for, start_date=start_date, end_date=end_date, window=window)["text"]
 
 
 @_instrumented_tool()
@@ -537,60 +486,18 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
         min_importance: Only include memories at or above this importance (default 5).
                         If no memories pass the threshold for a day, all are shown.
     """
-    from collections import defaultdict
-    from datetime import date as _date
-    from datetime import timedelta
-    from time import perf_counter
-
     _t0 = perf_counter()
-    end = _date.today()
-    start = end - timedelta(days=days)
-    items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
-    if not items:
-        _trace_recent(
-            items=[],
-            days=days,
-            top_per_day=top_per_day,
-            min_importance=min_importance,
-            latency_ms=(perf_counter() - _t0) * 1000,
-        )
-        return f"No memories found in the last {days} day(s)."
-
-    by_day: dict[str, list[dict]] = defaultdict(list)
-    for item in items:
-        day = (item.get("created_at") or "")[:10]
-        by_day[day].append(item)
-
-    # Pass 1: pick each day's top, honoring a hard global cap (newest day first)
-    # so a heavy low-importance day can't overflow the context (AA-106 — this is
-    # the path that blew up at 81k chars).
-    recent_max = engine.config.recall.recent_max
-    per_day, selected, truncated = select_recent(
-        by_day,
-        top_per_day=top_per_day,
-        min_importance=min_importance,
-        recent_max=recent_max,
+    result = tool_runner.recall_recent(
+        engine, _entities_for, days=days, top_per_day=top_per_day, min_importance=min_importance
     )
-
-    # Pass 2: render pointers (entity tags batched across the whole selection;
-    # no per-line date — the day header already carries it).
-    ents = _entities_for(selected)
-    lines = [f"Recent memories (last {days} day(s)):"]
-    for day, day_total, top in per_day:
-        lines.append(f"\n{day} ({day_total} total, showing {len(top)}):")
-        for item in top:
-            lines.append(_pointer_line(item, ents, show_date=False))
-    if truncated:
-        lines.append(f"\n… capped at {recent_max} memories — narrow with `days` or use timeline for a fuller window.")
-
     _trace_recent(
-        items=selected,
+        items=result["items"],
         days=days,
         top_per_day=top_per_day,
         min_importance=min_importance,
         latency_ms=(perf_counter() - _t0) * 1000,
     )
-    return "\n".join(lines)
+    return result["text"]
 
 
 @_instrumented_tool()
@@ -608,13 +515,7 @@ def serendipity(n: int = 3, exclude_ids: list | str | None = None) -> str:
         n: How many wildcard pointers to return (default 3).
         exclude_ids: List or JSON string of memory ids (full or id8) to skip.
     """
-    parsed = json.loads(exclude_ids) if isinstance(exclude_ids, str) else exclude_ids
-    items = engine.serendipity(n=n, exclude_ids=parsed)
-    if not items:
-        return "No memories available for serendipity."
-    lines = [f"Serendipity — {len(items)} high-signal memories (NOT query-matched):"]
-    lines.extend(_pointer_lines(items, show_date=True))
-    return "\n".join(lines)
+    return tool_runner.serendipity(engine, _entities_for, n=n, exclude_ids=exclude_ids)["text"]
 
 
 def _trace_recent(items: list[dict], days: int, top_per_day: int, min_importance: int, latency_ms: float) -> None:
@@ -665,18 +566,7 @@ def list_day_memories(date: str | None = None) -> str:
     Args:
         date: Date to list (YYYY-MM-DD). Defaults to today.
     """
-    from datetime import date as _date
-
-    target = date or _date.today().isoformat()
-    items = engine.timeline(target, window=0)
-    if not items:
-        return f"No memories for {target}."
-
-    lines = [f"Memories for {target} ({len(items)} found):"]
-    for item in items:
-        imp = item.get("importance", "?")
-        lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}")
-    return "\n".join(lines)
+    return tool_runner.list_day_memories(engine, _entities_for, date=date)["text"]
 
 
 @_instrumented_tool()
@@ -787,18 +677,7 @@ def find_entities(query: str) -> str:
     Args:
         query: A name fragment to search for (e.g. "huyen").
     """
-    rows = graph.find_similar_nodes(query)
-    if not rows:
-        return f"No entities matching '{query}'."
-    lines = [f"Entities matching '{query}' ({len(rows)} found):"]
-    for r in rows:
-        types = "/".join(r.get("types") or []) or "?"
-        aliases = r.get("aliases") or []
-        alias_str = f" aka {aliases}" if aliases else ""
-        desc = (r.get("description") or "").strip()
-        desc_str = f" — {desc[:80]}" if desc else ""
-        lines.append(f"  {r['name']} [{types}] ({r.get('memory_count', 0)} memories){alias_str}{desc_str}")
-    return "\n".join(lines)
+    return tool_runner.find_entities(engine, _entities_for, query=query)["text"]
 
 
 @_instrumented_tool()

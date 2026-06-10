@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
 
+from phileas import tool_runner
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
@@ -746,6 +747,24 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.status()
         else:
             raise ValueError(f"Unknown graph_read op: {op}")
+    # -- Recall-family read tools ------------------------------------------
+    # Shared with the stdio MCP server and the CLI via tool_runner, so all
+    # three emit byte-identical strings. Returns {"items", "text"}: the web
+    # playground renders cards from items and shows the verbatim text. The
+    # daemon owns the graph, so it resolves entity tags directly rather than
+    # proxying back through itself.
+    elif method in tool_runner.TOOL_NAMES:
+
+        def _entities_for(items: list[dict]) -> dict[str, list[dict]]:
+            ids = [it.get("id") for it in items if it.get("id")]
+            if not ids:
+                return {}
+            try:
+                return engine.graph.get_entities_for_memories(ids) or {}
+            except Exception:
+                return {}
+
+        return tool_runner.run(engine, _entities_for, method, params)
     else:
         raise ValueError(f"Unknown method: {method}")
 
