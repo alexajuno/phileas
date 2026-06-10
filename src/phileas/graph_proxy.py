@@ -148,6 +148,46 @@ class GraphProxy:
     def get_entities_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict[str, str]]]:
         return self._read("get_entities_for_memories", {"memory_ids": list(memory_ids)}, default={})
 
+    # -- Memory -> Entity scoping edges (SCOPED_TO) --
+
+    def add_scope(
+        self,
+        memory_id: str,
+        context: str,
+        polarity: str = "holds",
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        try:
+            from phileas.daemon import call
+
+            response = call(
+                "graph_write",
+                {
+                    "op": "add_scope",
+                    "memory_id": memory_id,
+                    "context": context,
+                    "polarity": polarity,
+                    "valid_from": valid_from,
+                    "valid_to": valid_to,
+                    "confidence": confidence,
+                },
+            )
+            if response is not None and response.get("ok", False):
+                inner = response.get("result") or {}
+                if inner.get("ok", False):
+                    return inner.get("summary") or {}
+        except Exception:
+            pass
+        return {"ok": False, "reason": "daemon unavailable"}
+
+    def get_scopes_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
+        return self._read("get_scopes_for_memory", {"memory_id": memory_id}, default=[])
+
+    def get_memories_in_context(self, context: str) -> list[dict[str, Any]]:
+        return self._read("get_memories_in_context", {"context": context}, default=[])
+
     # -- Entity <-> Entity edges (REL) --
 
     def create_edge(self, from_type: str, from_name: str, edge_type: str, to_type: str, to_name: str) -> None:

@@ -275,6 +275,13 @@ def thread(event_id: str):
     _run_tool("thread", {"event_id": event_id})
 
 
+@click.command("scopes")
+@click.argument("memory_id")
+def scopes(memory_id: str):
+    """SCOPED_TO contexts of a memory (none = globally valid)."""
+    _run_tool("scopes", {"memory_id": memory_id})
+
+
 @click.command("find-entities")
 @click.argument("query")
 def find_entities(query: str):
@@ -304,6 +311,52 @@ def forget(memory_id: str, reason: str | None):
             raise SystemExit(1)
         msg = engine.forget(resolved, reason=reason)
         print_success(msg)
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+# ------------------------------------------------------------------
+# scope (AA-118)
+# ------------------------------------------------------------------
+
+
+@click.command("scope")
+@click.argument("memory_id")
+@click.argument("context")
+@click.option("--polarity", default="holds", help="'holds' (default) or 'excluded'.")
+@click.option("--valid-from", "valid_from", default=None, help="ISO date/timestamp the scoping starts.")
+@click.option("--valid-to", "valid_to", default=None, help="ISO date/timestamp it ends (open-ended if omitted).")
+@click.option("--confidence", default=None, type=float, help="0-1 weight for competing interpretations.")
+def scope_cmd(
+    memory_id: str,
+    context: str,
+    polarity: str,
+    valid_from: str | None,
+    valid_to: str | None,
+    confidence: float | None,
+):
+    """Scope a memory to a context ("this holds only in context c").
+
+    Creates a SCOPED_TO edge to a Context-typed entity, resolved or minted
+    by name. MEMORY_ID accepts a full uuid or an 8-char prefix. Idempotent:
+    re-running updates the qualifiers in place. Inspect with `phileas scopes`.
+    """
+    params = {
+        "memory_id": memory_id,
+        "context": context,
+        "polarity": polarity,
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "confidence": confidence,
+    }
+    try:
+        resp = _daemon_call("scope", params)
+        if resp and resp.get("ok"):
+            click.echo(resp["result"])
+            return
+        engine = _get_engine()
+        click.echo(engine.scope(**params))
     except Exception as exc:
         print_error(str(exc))
         raise SystemExit(1)

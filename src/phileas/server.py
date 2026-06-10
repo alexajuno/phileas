@@ -193,6 +193,7 @@ def memorize(
     entities: list | str | None = None,
     relationships: list | str | None = None,
     source_event_id: str | None = None,
+    contexts: list | str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -221,9 +222,15 @@ def memorize(
             <phileas-memorize-hint> block surfaces it as `event_id=...`;
             pass it through so recall can hydrate this memory with its
             originating conversation thread.
+        contexts: List or JSON string of context names this memory is
+            scoped to (e.g. ["phileas", "when sick"]). Use when the fact
+            holds only in a context, not globally — each name resolves
+            (or mints) a Context-typed entity and gets a SCOPED_TO edge.
+            Omit for globally valid facts. Post-hoc scoping: `scope()`.
     """
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
+    parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
 
     result = engine.memorize(
         summary=summary,
@@ -233,6 +240,7 @@ def memorize(
         entities=parsed_entities,
         relationships=parsed_relationships,
         source_event_id=source_event_id,
+        contexts=parsed_contexts,
     )
 
     return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
@@ -258,6 +266,8 @@ def memorize_batch(memories: list | str) -> str:
             - source_event_id: Event id this memory came from (optional). The
               <phileas-memorize-hint> surfaces it as `event_id=...`; pass it
               through so recall can hydrate the originating thread.
+            - contexts: List of context names the memory is scoped to
+              (optional — omit for globally valid facts).
     """
     items = json.loads(memories) if isinstance(memories, str) else memories
     if not items:
@@ -276,6 +286,9 @@ def memorize_batch(memories: list | str) -> str:
         parsed_relationships = mem.get("relationships")
         if isinstance(parsed_relationships, str):
             parsed_relationships = json.loads(parsed_relationships)
+        parsed_contexts = mem.get("contexts")
+        if isinstance(parsed_contexts, str):
+            parsed_contexts = json.loads(parsed_contexts)
 
         result = engine.memorize(
             summary=summary,
@@ -285,6 +298,7 @@ def memorize_batch(memories: list | str) -> str:
             entities=parsed_entities,
             relationships=parsed_relationships,
             source_event_id=mem.get("source_event_id"),
+            contexts=parsed_contexts,
         )
 
         results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
@@ -433,6 +447,44 @@ def relate(
         to_name=to_name,
         to_type=to_type,
         memory_id=memory_id,
+    )
+
+
+@_instrumented_tool()
+def scope(
+    memory_id: str,
+    context: str,
+    polarity: str = "holds",
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    confidence: float | None = None,
+) -> str:
+    """Scope a memory to a context — "this holds only in context c".
+
+    Creates a SCOPED_TO edge from the memory to a Context-typed entity
+    (resolved or minted by name). Use post-hoc, e.g. when two memories
+    turn out to be contextual variants rather than contradictions, or when
+    a fact expired (set valid_to) instead of being superseded. A memory
+    with no scopes stays globally valid. Idempotent: re-scoping the same
+    (memory, context) pair updates the qualifiers in place.
+
+    Args:
+        memory_id: Memory uuid or its 8-char pointer prefix.
+        context: Context name (e.g. "phileas", "Ownego era", "when sick").
+            Reuses an existing entity of the same name if there is one.
+        polarity: "holds" (valid in this context — default) or "excluded"
+            (valid everywhere *except* this context).
+        valid_from: Optional ISO date/timestamp the scoping starts.
+        valid_to: Optional ISO date/timestamp it ends (open-ended if omitted).
+        confidence: Optional 0-1 weight for competing interpretations.
+    """
+    return engine.scope(
+        memory_id=memory_id,
+        context=context,
+        polarity=polarity,
+        valid_from=valid_from,
+        valid_to=valid_to,
+        confidence=confidence,
     )
 
 

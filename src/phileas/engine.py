@@ -255,12 +255,17 @@ class MemoryEngine:
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         source_event_id: str | None = None,
+        contexts: list[str] | None = None,
     ) -> dict:
         """Store a memory across all three backends.
 
         `summary` is the canonical, AI-written fact. The raw source turn lives in
         the `events` table; pass `source_event_id` to reference it. Memories
         MUST NOT contain raw verbatim text — that's what events are for.
+
+        `contexts` scopes the memory: each name resolves (or mints) a
+        Context-typed entity and gets a SCOPED_TO edge. No contexts ⇒ the
+        memory is globally valid, exactly as before (AA-118).
 
         Returns a dict with keys: id, summary.
         """
@@ -269,6 +274,7 @@ class MemoryEngine:
             importance=importance,
             entity_count=len(entities or []),
             relationship_count=len(relationships or []),
+            context_count=len(contexts or []),
         )
 
         # 1. Default daily_ref to today
@@ -320,6 +326,15 @@ class MemoryEngine:
                         log.debug(
                             "graph edge failed", extra={"op": "memorize", "data": {"edge": edge, "error": str(e)}}
                         )
+
+        if contexts:
+            for ctx in contexts:
+                if not (ctx and ctx.strip()):
+                    continue
+                try:
+                    self.graph.add_scope(item.id, ctx.strip())
+                except Exception as e:
+                    log.debug("scope edge failed", extra={"op": "memorize", "data": {"context": ctx, "error": str(e)}})
 
         # 6. Link memory to Day entity in graph
         self._link_day_entity(item.id, daily_ref)
@@ -1207,6 +1222,60 @@ class MemoryEngine:
         if memory_id:
             self.graph.link_memory(memory_id, from_type, from_name)
         return f"Edge {from_name} -[{edge_type}]-> {to_name} created."
+
+    # ------------------------------------------------------------------
+    # scope (AA-118)
+    # ------------------------------------------------------------------
+
+    @timed_op("scope")
+    def scope(
+        self,
+        memory_id: str,
+        context: str,
+        polarity: str = "holds",
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        confidence: float | None = None,
+    ) -> str:
+        """Scope a memory to a context: SCOPED_TO edge, post-hoc.
+
+        Accepts a full memory uuid or an 8-char pointer prefix (same
+        resolution as ``hydrate``). Idempotent — repeat calls update the
+        edge's qualifiers in place.
+        """
+        op_extra(memory_id=memory_id, context=context, polarity=polarity)
+        clean = (memory_id or "").strip()
+        if not clean:
+            return "memory_id is required."
+        matches = self.db.get_items_by_id_prefix(clean)
+        if not matches:
+            return f"No memory found for id '{clean}'."
+        if len(matches) > 1:
+            lines = [f"Ambiguous id prefix '{clean}' matched {len(matches)} memories — disambiguate:"]
+            lines.extend(f"  [{m.id[:8]}] {m.summary}" for m in matches)
+            return "\n".join(lines)
+        item = matches[0]
+
+        result = self.graph.add_scope(
+            item.id,
+            context,
+            polarity=polarity,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            confidence=confidence,
+        )
+        if not result.get("ok"):
+            return f"Scope failed: {result.get('reason', 'graph unavailable')}"
+
+        verb = "Scoped" if result.get("created") else "Re-scoped (qualifiers updated)"
+        quals = [f"polarity={result.get('polarity', polarity)}"]
+        if valid_from:
+            quals.append(f"valid_from={valid_from}")
+        if valid_to:
+            quals.append(f"valid_to={valid_to}")
+        if confidence is not None:
+            quals.append(f"confidence={confidence}")
+        return f"{verb} [{item.id[:8]}] to context '{result.get('context_name', context)}' ({', '.join(quals)})."
 
     # ------------------------------------------------------------------
     # about
