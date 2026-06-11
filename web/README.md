@@ -2,7 +2,7 @@
 
 Local monitoring dashboard for your Phileas long-term memory.
 
-Stack: Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · Tailwind v4 · shadcn/ui (base-nova) · better-sqlite3 · motion.
+Stack: Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · Tailwind v4 · shadcn/ui (base-nova) · motion.
 
 ## Run
 
@@ -12,20 +12,28 @@ pnpm install
 pnpm dev           # http://127.0.0.1:3000
 ```
 
-`pnpm dev` reads `~/.phileas/memory.db` directly, read-only. Override with:
+The dashboard talks to the **Phileas daemon** over its JSON-RPC read API — it
+does not open `memory.db` / `metrics.db` itself. Start the daemon first
+(`phileas start`). By default the web discovers the daemon from
+`~/.phileas/daemon.port`; override the target with:
 
 ```bash
-PHILEAS_HOME=/elsewhere/.phileas pnpm dev
+PHILEAS_HOME=/elsewhere/.phileas pnpm dev    # different local home
+PHILEAS_API_URL=https://box.example/         # a remote daemon (the box)
 ```
 
 ## How it works
 
-- **Read path.** `src/lib/phileas-db.ts` opens a cached `better-sqlite3` handle with `readonly: true` and `query_only = ON`. The Phileas daemon keeps the DB in WAL mode, so committed writes are visible immediately with zero lock contention.
-- **Day boundaries.** `src/lib/day.ts` converts the user's *local* day (YYYY-MM-DD) into a UTC ISO range. Stored `created_at` is UTC, so the UI stays correct across midnight in any timezone.
-- **API.**
+- **Read path.** All reads go through `callDaemon()` in `src/lib/daemon.ts`,
+  which POSTs `{ method, params }` to the daemon. The daemon owns the databases
+  and serves dashboard-shaped rows (see `docs/observability/api.md` for the
+  method contract). `PHILEAS_API_URL` repoints the client at a remote daemon;
+  otherwise it uses `http://127.0.0.1:<daemon.port>`.
+- **Day boundaries.** `src/lib/day.ts` converts the user's *local* day (YYYY-MM-DD) into a UTC ISO range, which the route passes to the daemon. Stored `created_at` is UTC, so the UI stays correct across midnight in any timezone.
+- **API (a sample).**
   - `GET /api/memories?date=YYYY-MM-DD` → `MemoryItem[]`, newest first.
   - `GET /api/days` → `{ day, count }[]` bucketed by local day.
-  Both are `force-dynamic`, `Cache-Control: no-store`.
+  Routes are `force-dynamic`, `Cache-Control: no-store`, and proxy a daemon method.
 - **Live.** When viewing today, the client polls every 20 s and also refreshes on window focus. New IDs since the previous fetch get a fading highlight ring.
 
 ## Design notes
@@ -37,8 +45,8 @@ PHILEAS_HOME=/elsewhere/.phileas pnpm dev
 
 ## Gotchas
 
-- `better-sqlite3` is a native module. pnpm's `onlyBuiltDependencies` is set in `package.json` so the install script runs. If you see `Could not locate the bindings file`, run `pnpm rebuild better-sqlite3`.
-- Any schema change to `memory_items` in Phileas needs mirrored updates in `src/lib/types.ts` and `src/lib/queries.ts`.
+- The daemon must be running, or reads fail with `503` (daemon down) / `502` (daemon-side error). `callDaemon` throws `DaemonUnavailableError` / `DaemonError`; `daemonErrorStatus()` maps them.
+- Response shapes are owned by the daemon (`docs/observability/api.md`) and mirrored as types in `src/lib/types.ts`. A `memory_items` schema change is now absorbed daemon-side — the web only changes if the *response* shape changes.
 - Next 16 defaults to Turbopack for both `dev` and `build`. The scaffolded `AGENTS.md` notes this repo's Next version has breaking changes from older tutorials — authoritative docs live under `node_modules/next/dist/docs/`.
 
 ## Build / verify
