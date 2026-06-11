@@ -33,7 +33,7 @@ Route by the shape of the question. Call several in parallel when shapes overlap
 Recall-family tools (`recall`, `recall_recent`, `about`, `timeline`) return cheap **pointers**, not full bodies:
 
 ```
-[a1b2c3d4] [event] 2026-06-07 · trungld bought a cake in Shanghai last night · trungld, Shanghai
+[a1b2c3d4] [event] 2026-06-07 · Mara bought a cake in Lisbon last night · Mara, Lisbon
 ```
 
 That line is `[id8] [type] date · summary · entity tags`. The summary is the whole fact — for most prompts the pointers already answer the question, so **don't fan out `recall()` a dozen times hoping for depth**, and don't dump everything. `recall_recent` and `about` are bounded (a heavy day or hub entity shows a cap / `+N more` note) so they can't overflow the context.
@@ -138,14 +138,14 @@ Skip `description` when the name is unambiguous in the user's world (their colle
 
 ### Handle vs. display-name: user-declared aliases
 
-Phileas does **not** auto-pair a username-handle with a display name. Name bridges happen only three ways: diacritic/case folding (automatic and safe — `Ngân` ↔ `Ngan`), an explicit user-declared `alias`, or `merge_entities` to fold already-split nodes. The linker never guesses handle↔name pairings, because handle stems collide across *distinct* people — e.g. `huyenntk` (**N**guyễn Thị Khánh Huyền) and `huyenctk` (**C**hu Thị Khánh Huyền) share the stem `huyen`, so an auto-merge would silently fuse two real people. A miss is recoverable; a wrong merge is not.
+Phileas does **not** auto-pair a username-handle with a display name. Name bridges happen only three ways: diacritic/case folding (automatic and safe — `José` ↔ `Jose`), an explicit user-declared `alias`, or `merge_entities` to fold already-split nodes. The linker never guesses handle↔name pairings, because handle stems collide across *distinct* people — e.g. `samwk` (**W**ong, Sam K.) and `samrk` (**R**oss, Sam K.) share the stem `sam`, so an auto-merge would silently fuse two real people. A miss is recoverable; a wrong merge is not.
 
 So when the user refers to someone by a bare or partial name that may be ambiguous (or when `about(name)` looks like it's returning only a fragment of a person):
 
-1. `find_entities(stem)` — lists every candidate (norm-aware, so `huyen` surfaces `huyenntk`, `huyenctk`, and `Huyền`), with memory counts and descriptions.
+1. `find_entities(stem)` — lists every candidate (norm-aware, so `sam` surfaces `samwk`, `samrk`, and `Sam`), with memory counts and descriptions.
 2. If more than one plausible match, **ask the user which one** — do not pick for them.
-3. Persist their answer with `alias(name=<the unambiguous handle>, alias=<what they call them>)` — e.g. the user says "call Chu's one *huyen chu*" → `alias(name="huyenctk", alias="huyen chu")`. Afterwards `about("huyen chu")` and future mentions resolve to that entity.
-4. If a candidate is an orphaned fragment that genuinely belongs to another (e.g. a 1-memory `Huyền` node that is the same person as `huyenctk`), fold it with `merge_entities` rather than aliasing.
+3. Persist their answer with `alias(name=<the unambiguous handle>, alias=<what they call them>)` — e.g. the user says "call Wong's one *sam wong*" → `alias(name="samwk", alias="sam wong")`. Afterwards `about("sam wong")` and future mentions resolve to that entity.
+4. If a candidate is an orphaned fragment that genuinely belongs to another (e.g. a 1-memory `Sam` node that is the same person as `samwk`), fold it with `merge_entities` rather than aliasing.
 
 The alias is the user's convention, set explicitly — never inferred.
 
