@@ -5,7 +5,6 @@ that can be rebuilt from this database.
 """
 
 import functools
-import json
 import re
 import sqlite3
 import threading
@@ -24,17 +23,6 @@ def _locked(method):
             return method(self, *args, **kwargs)
 
     return wrapper
-
-
-def _parse_tags(raw: str | None) -> list[str]:
-    """Mirror web/src/lib/queries.ts:parseTags — a JSON array of strings, else []."""
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except TypeError, ValueError:
-        return []
-    return [str(x) for x in parsed] if isinstance(parsed, list) else []
 
 
 _PREVIEW_CHARS = 240
@@ -325,17 +313,18 @@ class Database:
     # --- Web dashboard reads ---
     #
     # Rows shaped for web/src/lib/types.ts:MemoryItem — the daemon's read
-    # contract for the dashboard (observability Phase 1). These serialize from
-    # the raw sqlite row, NOT from MemoryItem, because the web shape carries two
-    # columns the model doesn't: `tags` (a JSON-array string) and the legacy
-    # `source_session_id` (now always NULL, kept for shape parity). The SQL
-    # mirrors queries.ts exactly so the eventual web cutover is behaviour-neutral.
+    # contract for the dashboard. We serialize straight from the raw sqlite row
+    # (not via MemoryItem) so created_at/updated_at stay the exact stored ISO
+    # strings the day-window comparison relies on, and the exposed column set is
+    # owned here rather than inherited from the model. Only columns the base
+    # schema actually creates are listed — the legacy `tags` / `source_session_id`
+    # columns exist on older DBs but not on a freshly built one, so reading them
+    # here would raise `no such column` on a rebuilt store.
 
     _WEB_COLS = (
         "id, summary, memory_type, importance, status, "
         "access_count, reinforcement_count, last_reinforced, "
-        "raw_text, tags, daily_ref, source_session_id, "
-        "created_at, updated_at"
+        "raw_text, daily_ref, created_at, updated_at"
     )
 
     @staticmethod
@@ -350,9 +339,7 @@ class Database:
             "reinforcement_count": row["reinforcement_count"],
             "last_reinforced": row["last_reinforced"],
             "raw_text": row["raw_text"],
-            "tags": _parse_tags(row["tags"]),
             "daily_ref": row["daily_ref"],
-            "source_session_id": row["source_session_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -376,17 +363,17 @@ class Database:
 
     @_locked
     def web_search(self, query: str, limit: int = 100) -> list[dict]:
-        """Keyword search over summary/raw_text/tags — mirrors queries.ts:searchMemories
-        (up to 8 whitespace terms, LIKE-AND, backslash-escaped)."""
+        """Keyword search over summary/raw_text — up to 8 whitespace terms,
+        LIKE-AND, backslash-escaped."""
         terms = (query or "").split()[:8]
         if not terms:
             return []
         clauses: list[str] = []
         params: list[str | int] = []
         for term in terms:
-            clauses.append("(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')")
+            clauses.append("(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\')")
             like = "%" + re.sub(r"([\\%_])", r"\\\1", term) + "%"
-            params.extend([like, like, like])
+            params.extend([like, like])
         params.append(limit)
         rows = self.conn.execute(
             f"""SELECT {self._WEB_COLS} FROM memory_items
