@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { searchMemories } from "@/lib/queries";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { MemoryItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -28,13 +29,18 @@ export async function GET(request: NextRequest) {
       : 100;
 
   try {
-    const items = searchMemories(q, limit);
+    const items = await callDaemon<MemoryItem[]>("memories_search", {
+      query: q,
+      limit,
+    });
     return NextResponse.json(items, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

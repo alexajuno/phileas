@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { TraceRow } from "@/lib/metrics-db";
+import type { TraceRow } from "@/lib/types";
 
 import {
   type DetailPayload,

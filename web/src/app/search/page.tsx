@@ -1,6 +1,7 @@
 import { SearchView } from "@/components/search-view";
 import { SiteHeader } from "@/components/site-header";
-import { searchMemories } from "@/lib/queries";
+import { callDaemon } from "@/lib/daemon";
+import type { MemoryItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,11 +19,14 @@ export default async function Page({
   const sp = await searchParams;
   const q = (firstString(sp.q) ?? "").trim();
 
-  let initialItems: Awaited<ReturnType<typeof searchMemories>> = [];
+  let initialItems: MemoryItem[] = [];
   let error: string | null = null;
   if (q) {
     try {
-      initialItems = searchMemories(q, 100);
+      initialItems = await callDaemon<MemoryItem[]>("memories_search", {
+        query: q,
+        limit: 100,
+      });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }

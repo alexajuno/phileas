@@ -1,7 +1,8 @@
 import { MemoryList } from "@/components/memory-list";
 import { SiteHeader } from "@/components/site-header";
-import { isValidDay, todayLocal } from "@/lib/day";
-import { fetchMemoriesForDay } from "@/lib/queries";
+import { isValidDay, localDayBoundsAsUtcIso, todayLocal } from "@/lib/day";
+import { callDaemon } from "@/lib/daemon";
+import type { MemoryItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -40,10 +41,14 @@ export default async function Page({
       ? parsedMin
       : 1;
 
-  let items: Awaited<ReturnType<typeof fetchMemoriesForDay>> = [];
+  let items: MemoryItem[] = [];
   let error: string | null = null;
   try {
-    items = fetchMemoriesForDay(day);
+    const { startIso, endIso } = localDayBoundsAsUtcIso(day);
+    items = await callDaemon<MemoryItem[]>("memories_for_day", {
+      start: startIso,
+      end: endIso,
+    });
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   }

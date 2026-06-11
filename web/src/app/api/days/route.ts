@@ -1,18 +1,24 @@
 import { NextResponse } from "next/server";
 
-import { fetchDaysWithCounts } from "@/lib/queries";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { DayCount } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const days = fetchDaysWithCounts(60);
+    const days = await callDaemon<DayCount[]>("memories_days", {
+      limit: 60,
+      tz_offset_minutes: -new Date().getTimezoneOffset(),
+    });
     return NextResponse.json(days, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

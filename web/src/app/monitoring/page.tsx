@@ -6,19 +6,14 @@ import { MonitoringView } from "@/components/monitoring-view";
 import { SiteHeader } from "@/components/site-header";
 import { todayLocal } from "@/lib/day";
 import { cn } from "@/lib/utils";
-import {
-  aggregateRecent,
-  compareTraces,
-  listTraces,
-  type CompareResult,
-  type TraceRow,
-} from "@/lib/metrics-db";
-import {
-  fetchIngestionHealth,
-  listIngestionEvents,
-  type IngestionEventListItem,
-  type IngestionHealth,
-} from "@/lib/phileas-db";
+import { callDaemon, DaemonUnavailableError } from "@/lib/daemon";
+import type {
+  AggregateResult,
+  CompareResult,
+  IngestionEventListItem,
+  IngestionHealth,
+  TraceRow,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -105,7 +100,7 @@ export default async function Page({
       : defaultCutoffIso();
 
   let recallRows: TraceRow[] = [];
-  let recallAggregate: Awaited<ReturnType<typeof aggregateRecent>> | null = null;
+  let recallAggregate: AggregateResult | null = null;
   let recallCompare: CompareResult | null = null;
   let ingestionHealth: IngestionHealth | null = null;
   let ingestionEvents: IngestionEventListItem[] = [];
@@ -114,23 +109,31 @@ export default async function Page({
 
   try {
     if (tab === "recall") {
-      recallRows = listTraces({ date, source: source || undefined, limit: 200 });
-      recallAggregate = aggregateRecent(7);
-      recallCompare = compareTraces({
-        cutoffIso: initialCutoff,
+      recallRows = await callDaemon<TraceRow[]>("metrics_traces", {
+        date,
+        source: source || undefined,
+        limit: 200,
+      });
+      recallAggregate = await callDaemon<AggregateResult>("metrics_aggregate", {
+        days: 7,
+      });
+      recallCompare = await callDaemon<CompareResult>("metrics_compare", {
+        cutoff: initialCutoff,
         source: "engine.recall_raw",
-        windowDays: 7,
+        window_days: 7,
       });
     } else {
-      ingestionHealth = fetchIngestionHealth();
-      ingestionEvents = listIngestionEvents({ limit: 50 });
+      ingestionHealth = await callDaemon<IngestionHealth>("ingestion_health");
+      ingestionEvents = await callDaemon<IngestionEventListItem[]>(
+        "ingestion_events",
+        { limit: 50 },
+      );
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("unable to open") || msg.includes("does not exist")) {
+    if (err instanceof DaemonUnavailableError) {
       unavailable = true;
     } else {
-      error = msg;
+      error = err instanceof Error ? err.message : String(err);
     }
   }
 

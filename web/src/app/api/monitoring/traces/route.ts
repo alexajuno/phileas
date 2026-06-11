@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isValidDay } from "@/lib/day";
-import { listTraces } from "@/lib/metrics-db";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { TraceRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +21,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const rows = listTraces({ date, source, limit });
+    const rows = await callDaemon<TraceRow[]>("metrics_traces", {
+      date,
+      source,
+      limit,
+    });
     return NextResponse.json(rows, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

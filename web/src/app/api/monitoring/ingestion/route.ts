@@ -1,9 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import {
-  fetchIngestionHealth,
-  listIngestionEvents,
-} from "@/lib/phileas-db";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { IngestionEventListItem, IngestionHealth } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -21,15 +19,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const health = fetchIngestionHealth();
-    const events = listIngestionEvents({ limit });
+    const health = await callDaemon<IngestionHealth>("ingestion_health");
+    const events = await callDaemon<IngestionEventListItem[]>(
+      "ingestion_events",
+      limit != null ? { limit } : {},
+    );
     return NextResponse.json(
       { health, events },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const code = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status: code });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

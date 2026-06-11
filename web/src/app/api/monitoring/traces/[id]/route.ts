@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getTrace } from "@/lib/metrics-db";
-import { getDb } from "@/lib/phileas-db";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { TraceRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -13,34 +13,26 @@ interface ResolvedMemory {
   created_at: string | null;
 }
 
-function resolveMemories(ids: string[]): ResolvedMemory[] {
+async function resolveMemories(ids: string[]): Promise<ResolvedMemory[]> {
   if (!ids.length) return [];
-  const placeholders = ids.map(() => "?").join(",");
-  const sql = `SELECT id, summary, memory_type, importance, created_at
-               FROM memory_items
-               WHERE id IN (${placeholders})`;
+  let rows: ResolvedMemory[] = [];
   try {
-    const rows = getDb().prepare(sql).all(...ids) as ResolvedMemory[];
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    return ids.map(
-      (id) =>
-        byId.get(id) ?? {
-          id,
-          summary: null,
-          memory_type: null,
-          importance: null,
-          created_at: null,
-        },
-    );
+    rows = await callDaemon<ResolvedMemory[]>("memories_brief", { ids });
   } catch {
-    return ids.map((id) => ({
-      id,
-      summary: null,
-      memory_type: null,
-      importance: null,
-      created_at: null,
-    }));
+    // A brief-resolve failure shouldn't blank the trace — fall back to placeholders.
+    rows = [];
   }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.map(
+    (id) =>
+      byId.get(id) ?? {
+        id,
+        summary: null,
+        memory_type: null,
+        importance: null,
+        created_at: null,
+      },
+  );
 }
 
 export async function GET(
@@ -53,18 +45,20 @@ export async function GET(
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
   try {
-    const trace = getTrace(id);
+    const trace = await callDaemon<TraceRow | null>("metrics_trace", { id });
     if (!trace) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    const memories = resolveMemories(trace.returned_ids ?? []);
+    const memories = await resolveMemories(trace.returned_ids ?? []);
     return NextResponse.json(
       { trace, memories },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

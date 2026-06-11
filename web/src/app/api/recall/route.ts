@@ -5,7 +5,6 @@ import {
   DaemonError,
   DaemonUnavailableError,
 } from "@/lib/daemon";
-import { fetchMemoriesByIds } from "@/lib/queries";
 import type { MemoryItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -91,7 +90,10 @@ export async function POST(request: NextRequest) {
   const elapsed_ms = Math.round(performance.now() - t0);
 
   const ids = hits.map((h) => h.id);
-  const rows = ids.length > 0 ? fetchMemoriesByIds(ids) : [];
+  const rows =
+    ids.length > 0
+      ? await callDaemon<MemoryItem[]>("memories_by_ids", { ids })
+      : [];
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   const items: RecallResult[] = [];

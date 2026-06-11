@@ -9,7 +9,7 @@ import type {
   BucketStats,
   CompareResult,
   TraceRow,
-} from "@/lib/metrics-db";
+} from "@/lib/types";
 
 import {
   type DetailPayload,

@@ -14,7 +14,7 @@ import type {
   IngestionEventRow,
   IngestionHealth,
   LinkedMemoryRow,
-} from "@/lib/phileas-db";
+} from "@/lib/types";
 
 const POLL_MS = 30_000;
 

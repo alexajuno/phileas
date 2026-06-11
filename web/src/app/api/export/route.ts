@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { isValidDay, localDayOf } from "@/lib/day";
-import { fetchMemoriesForExport } from "@/lib/queries";
+import { isValidDay, localDayBoundsAsUtcIso, localDayOf } from "@/lib/day";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
 import type { MemoryItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -80,11 +80,18 @@ export async function GET(request: NextRequest) {
 
   let items: MemoryItem[];
   try {
-    items = fetchMemoriesForExport({ from, to, type, minImportance });
+    const params: Record<string, unknown> = {};
+    if (from) params.start = localDayBoundsAsUtcIso(from).startIso;
+    if (to) params.end = localDayBoundsAsUtcIso(to).endIso;
+    if (type) params.type = type;
+    if (minImportance !== undefined) params.min_importance = minImportance;
+    items = await callDaemon<MemoryItem[]>("memories_export", params);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 
   const stamp = new Date().toISOString().slice(0, 10);

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { aggregateRecent } from "@/lib/metrics-db";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { AggregateResult } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -11,13 +12,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "invalid days" }, { status: 400 });
   }
   try {
-    const data = aggregateRecent(days);
+    const data = await callDaemon<AggregateResult>("metrics_aggregate", {
+      days,
+    });
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

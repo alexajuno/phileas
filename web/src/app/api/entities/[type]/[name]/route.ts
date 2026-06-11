@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  callDaemon,
   DaemonError,
   DaemonUnavailableError,
 } from "@/lib/daemon";
@@ -9,7 +10,6 @@ import {
   getEntityMemoryIds,
   getEntityRelations,
 } from "@/lib/graph";
-import { fetchMemoriesByIds } from "@/lib/queries";
 import type { EntityDetail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +36,11 @@ export async function GET(
     ]);
     let memories: EntityDetail["memories"] = [];
     try {
-      memories = fetchMemoriesByIds(memoryIds);
+      memories = await callDaemon<EntityDetail["memories"]>("memories_by_ids", {
+        ids: memoryIds,
+      });
     } catch {
-      // SQLite read failure shouldn't blank the whole detail page.
+      // A daemon read failure shouldn't blank the whole detail page.
       memories = [];
     }
     const detail: EntityDetail = {

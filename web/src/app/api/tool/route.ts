@@ -5,7 +5,6 @@ import {
   DaemonError,
   DaemonUnavailableError,
 } from "@/lib/daemon";
-import { fetchMemoriesByIds } from "@/lib/queries";
 import type { MemoryItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -76,12 +75,15 @@ export async function POST(request: NextRequest) {
   // Enrich memory-bearing items into full cards (mirrors /api/recall). Tools that
   // return non-memory rows (find_entities) or no ids resolve to an empty card
   // set, and the UI falls back to the verbatim model-output string. Re-map by id
-  // so the tool's own ordering is preserved (fetchMemoriesByIds sorts by date).
+  // so the tool's own ordering is preserved (memories_by_ids sorts by date).
   const rawItems = Array.isArray(result.items) ? result.items : [];
   const ids = rawItems
     .map((it) => (typeof it?.id === "string" ? it.id : null))
     .filter((id): id is string => id !== null);
-  const rows = ids.length > 0 ? fetchMemoriesByIds(ids) : [];
+  const rows =
+    ids.length > 0
+      ? await callDaemon<MemoryItem[]>("memories_by_ids", { ids })
+      : [];
   const byId = new Map(rows.map((r) => [r.id, r]));
   const cards: MemoryItem[] = [];
   const seen = new Set<string>();

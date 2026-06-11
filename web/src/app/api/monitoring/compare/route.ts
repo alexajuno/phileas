@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { compareTraces } from "@/lib/metrics-db";
+import { callDaemon, daemonErrorStatus } from "@/lib/daemon";
+import type { CompareResult } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -21,17 +22,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "invalid days" }, { status: 400 });
   }
   try {
-    const data = compareTraces({
-      cutoffIso: cutoffDate.toISOString(),
+    const data = await callDaemon<CompareResult>("metrics_compare", {
+      cutoff: cutoffDate.toISOString(),
       source,
-      windowDays,
+      window_days: windowDays,
     });
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const status = message.includes("unable to open") ? 503 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status: daemonErrorStatus(err) },
+    );
   }
 }

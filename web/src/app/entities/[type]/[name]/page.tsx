@@ -2,13 +2,12 @@ import { notFound } from "next/navigation";
 
 import { EntityDetailView } from "@/components/entity-detail-view";
 import { SiteHeader } from "@/components/site-header";
-import { DaemonUnavailableError } from "@/lib/daemon";
+import { callDaemon, DaemonUnavailableError } from "@/lib/daemon";
 import {
   findEntity,
   getEntityMemoryIds,
   getEntityRelations,
 } from "@/lib/graph";
-import { fetchMemoriesByIds } from "@/lib/queries";
 import type { EntityDetail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +37,9 @@ async function loadEntity(type: string, name: string): Promise<LoadResult> {
   }
   let memories: EntityDetail["memories"] = [];
   try {
-    memories = fetchMemoriesByIds(memoryIds);
+    memories = await callDaemon<EntityDetail["memories"]>("memories_by_ids", {
+      ids: memoryIds,
+    });
   } catch {
     memories = [];
   }

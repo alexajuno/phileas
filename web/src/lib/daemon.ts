@@ -18,6 +18,18 @@ export function daemonPort(): number | null {
   }
 }
 
+/**
+ * Base URL for the daemon's JSON-RPC endpoint. `PHILEAS_API_URL` overrides the
+ * local port-file discovery, letting the dashboard target a remote daemon (the
+ * box) instead of `127.0.0.1`. Returns null when neither is available.
+ */
+export function daemonBaseUrl(): string | null {
+  const override = process.env.PHILEAS_API_URL;
+  if (override) return override.replace(/\/+$/, "");
+  const port = daemonPort();
+  return port === null ? null : `http://127.0.0.1:${port}`;
+}
+
 export class DaemonUnavailableError extends Error {
   constructor(message = "phileas daemon not running") {
     super(message);
@@ -36,12 +48,12 @@ export async function callDaemon<T = unknown>(
   method: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  const port = daemonPort();
-  if (port === null) throw new DaemonUnavailableError();
+  const base = daemonBaseUrl();
+  if (base === null) throw new DaemonUnavailableError();
 
   let res: Response;
   try {
-    res = await fetch(`http://127.0.0.1:${port}`, {
+    res = await fetch(base, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ method, params }),
@@ -63,4 +75,14 @@ export async function callDaemon<T = unknown>(
     throw new DaemonError(body.error ?? `daemon HTTP ${res.status}`);
   }
   return body.result as T;
+}
+
+/**
+ * Map a daemon call error to an HTTP status for a route response:
+ * daemon down -> 503, daemon-side error -> 502, anything else -> 500.
+ */
+export function daemonErrorStatus(err: unknown): number {
+  if (err instanceof DaemonUnavailableError) return 503;
+  if (err instanceof DaemonError) return 502;
+  return 500;
 }

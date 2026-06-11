@@ -1,6 +1,6 @@
 "use client";
 
-import type { TraceRow } from "@/lib/metrics-db";
+import type { TraceRow } from "@/lib/types";
 
 export type ResolvedMemory = {
   id: string;
