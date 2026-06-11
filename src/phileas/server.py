@@ -312,6 +312,7 @@ def recall(
     memory_type: str | None = None,
     min_importance: int | None = None,
     top_k: int = 30,
+    context: str | None = None,
 ) -> str:
     """Retrieve memories relevant to a focused term query.
 
@@ -333,8 +334,12 @@ def recall(
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
         min_importance: Only return memories with importance >= this value.
         top_k: Max memories to return (default 30). Increase for broader recall.
+        context: Optional active context (e.g. "bug-fix work", "phileas"). When set,
+            memories scoped to that context (or a parent of it) are boosted, and
+            memories scoped to a disjoint/excluded/expired context are ranked down
+            but not dropped. Omit for unscoped, globally-valid recall.
     """
-    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance)
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance, context=context)
     if not items:
         return "No relevant memories found."
 

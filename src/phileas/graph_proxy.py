@@ -185,8 +185,17 @@ class GraphProxy:
     def get_scopes_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
         return self._read("get_scopes_for_memory", {"memory_id": memory_id}, default=[])
 
+    def get_scopes_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        return self._read("get_scopes_for_memories", {"memory_ids": list(memory_ids)}, default={})
+
     def get_memories_in_context(self, context: str) -> list[dict[str, Any]]:
         return self._read("get_memories_in_context", {"context": context}, default=[])
+
+    def resolve_context(self, name: str) -> dict[str, Any] | None:
+        return self._read("resolve_context", {"name": name}, default=None)
+
+    def expand_context(self, name: str, hop_cap: int = 3) -> dict[str, Any] | None:
+        return self._read("expand_context", {"name": name, "hop_cap": hop_cap}, default=None)
 
     # -- Entity <-> Entity edges (REL) --
 
