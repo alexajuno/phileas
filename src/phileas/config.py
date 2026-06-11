@@ -1,6 +1,16 @@
 """Configuration system for Phileas.
 
-Config loading priority: env vars > config.toml > code defaults.
+What's configurable is deliberately small: the home directory and the
+cross-machine sync transport. Retrieval/scoring tuning is NOT here — those knobs
+are never hand-tuned, so they live as code constants next to the code that uses
+them (recall hyperparameters in ``engine.py``, output bounds in
+``recall_format.py``, scoring weights/decay in ``scoring.py``).
+
+Config loading priority (later wins): code defaults < user ``config.toml`` <
+project ``.phileas.toml``. The home directory also honours the ``PHILEAS_HOME``
+env var. Unknown TOML keys are ignored, so a stale config.toml carrying the old
+``[recall]``/``[scoring]``/… sections loads cleanly (those sections are simply
+dropped).
 
 Usage:
     from phileas.config import load_config
@@ -26,88 +36,13 @@ except ModuleNotFoundError:  # pragma: no cover — Python < 3.11
 
 
 @dataclass
-class EmbeddingsConfig:
-    model: str = "all-MiniLM-L6-v2"
-
-
-@dataclass
-class RerankerConfig:
-    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-
-@dataclass
-class RecallConfig:
-    similarity_floor: float = 0.5
-    relevance_floor: float = 0.15
-    graph_boost: float = 0.5
-    mmr_lambda: float = 0.7
-    default_top_k: int = 10
-
-    # Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph
-    # bridge). Both scale O(seeds × entities × neighbours); on entity-rich
-    # queries Path 3 already saturates the pool, so iterating thousands of
-    # seeds finds duplicates. See research/phileas/recall-path-attribution.md.
-    path3b_max_seeds: int = 30
-    path4_max_seeds: int = 30
-
-    # Skill-driven recall delivery (PHI-39).
-    mode: str = "auto"  # always | never | auto
-    format: str = "pointer"  # inline | pointer
-    pipeline: str = "rerank"  # rerank | direct
-
-    # Pointer/hydrate split caps (AA-106) — bound the two unbounded-by-count
-    # paths so a hub entity or a heavy day can't overflow the main context.
-    # Full detail for any trimmed item is one hydrate()/timeline() call away.
-    recent_max: int = 40  # hard cap on total memories recall_recent returns
-    about_max: int = 25  # cap on memories about() returns before a "+N more" footer
-
-    # Output-size bounds (AA-112) — the count caps above assume short pointer
-    # lines; with ~1k-char summaries 40 pointers still blew past the MCP
-    # 25k-token ceiling (observed 61.5k chars). Two independent layers, each
-    # togglable with 0 and monitored via `phileas stats bounds`:
-    #   layer 1: clip each pointer summary (all pointer tools; body is one
-    #            hydrate() away).
-    #   layer 2: hard budget on recall_recent's total rendered chars — the
-    #            guarantee, sized for worst-case ~2.4 chars/token (10k chars
-    #            ≈ 4.2k tokens, well under the 25k-token ceiling).
-    pointer_summary_chars: int = 200  # layer 1: clip pointer summaries (0 = show whole)
-    recent_max_chars: int = 10_000  # layer 2: recall_recent output budget (0 = off)
-
-
-@dataclass
-class ReinforcementConfig:
-    floor: float = 0.70  # Min similarity to reinforce
-    ceiling: float = 0.95  # Above this is dedup, not reinforcement
-    base_decay: float = 0.01  # Default decay rate (50% after ~70 days)
-    decay_halving: float = 0.5  # Decay rate multiplier per halving_interval reinforcements
-    halving_interval: int = 3  # Reinforcements needed to halve decay rate
-    min_decay: float = 0.001  # Floor on decay rate (near-permanent)
-
-
-@dataclass
-class ScoringConfig:
-    relevance_weight: float = 0.55
-    importance_weight: float = 0.15
-    recency_weight: float = 0.10
-    access_weight: float = 0.05
-    reinforcement_weight: float = 0.15
-
-
-@dataclass
-class LoggingConfig:
-    level: str = "INFO"
-    file_max_bytes: int = 5_242_880  # 5 MB
-    file_backup_count: int = 3
-
-
-@dataclass
 class SyncConfig:
     """Event-driven sync (push-on-write).
 
     The daemon owns *when* to push (a write fires a debounced, fire-and-forget
     signal); transport owns *how* (the `push_command`). This decouples the
     trigger from the cross-machine transport, which is being moved to an
-    HTTP/SSE path against the box (AA-104). Disabled by default — opt in once a
+    HTTP/SSE path against the box. Disabled by default — opt in once a
     `push_command` is configured.
     """
 
@@ -152,12 +87,6 @@ class PhileasConfig:
     """Top-level Phileas configuration."""
 
     home: Path = field(default_factory=lambda: _DEFAULT_HOME)
-    embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
-    reranker: RerankerConfig = field(default_factory=RerankerConfig)
-    recall: RecallConfig = field(default_factory=RecallConfig)
-    scoring: ScoringConfig = field(default_factory=ScoringConfig)
-    reinforcement: ReinforcementConfig = field(default_factory=ReinforcementConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
 
     # -- Derived paths --
@@ -197,19 +126,13 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 
 
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
-    """Merge a parsed TOML dict onto a PhileasConfig in-place."""
-    section_map = {
-        "embeddings": cfg.embeddings,
-        "reranker": cfg.reranker,
-        "recall": cfg.recall,
-        "scoring": cfg.scoring,
-        "reinforcement": cfg.reinforcement,
-        "logging": cfg.logging,
-        "sync": cfg.sync,
-    }
-    for section_name, section_obj in section_map.items():
-        if section_name in data:
-            _apply_toml_section(section_obj, data[section_name])
+    """Merge a parsed TOML dict onto a PhileasConfig in-place.
+
+    Only the ``[sync]`` section is configurable; every other section (including
+    retired ones like ``[recall]``) is silently ignored.
+    """
+    if "sync" in data:
+        _apply_toml_section(cfg.sync, data["sync"])
 
 
 def _find_project_config(start: Path | None = None) -> Path | None:
@@ -230,7 +153,7 @@ def load_config(
     home: Path | None = None,
     project_start: Path | None = None,
 ) -> PhileasConfig:
-    """Load Phileas configuration with priority: project > user > env > defaults.
+    """Load Phileas configuration with priority: project > user > defaults.
 
     Layering order (later wins):
       1. Code defaults.

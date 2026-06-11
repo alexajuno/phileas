@@ -260,7 +260,7 @@ def stats_bounds(since: str, bucket: str, as_json: bool):
             ],
         )
     )
-    t = Table(title="Per layer — toggle via recall.pointer_summary_chars / recall.recent_max_chars (0 = off)")
+    t = Table(title="Per layer — bounds set in recall_format.py (POINTER_SUMMARY_CHARS / RECENT_MAX_CHARS; 0 = off)")
     for col in ("Layer", "Fired", "Fire rate", "Effect"):
         t.add_column(col)
     trunc = data["truncation"]

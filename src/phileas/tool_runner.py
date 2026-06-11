@@ -23,7 +23,17 @@ from datetime import date as _date
 from datetime import timedelta
 from typing import Callable
 
-from phileas.recall_format import cap_day_blocks, id8, pointer_line, render_pointers, select_recent
+from phileas.recall_format import (
+    ABOUT_MAX,
+    POINTER_SUMMARY_CHARS,
+    RECENT_MAX,
+    RECENT_MAX_CHARS,
+    cap_day_blocks,
+    id8,
+    pointer_line,
+    render_pointers,
+    select_recent,
+)
 
 EntitiesFn = Callable[[list[dict]], dict[str, list[dict]]]
 ToolResult = dict  # {"items": list[dict], "text": str, "tokens": int}
@@ -65,10 +75,8 @@ def recall_recent(
         by_day[day].append(item)
 
     # Pass 1: each day's top under a hard global count cap, newest day first, so a
-    # heavy low-importance day can't overflow the context (AA-106 — this path blew
-    # up at 81k chars).
-    recall_cfg = engine.config.recall
-    recent_max = recall_cfg.recent_max
+    # heavy low-importance day can't overflow the context.
+    recent_max = RECENT_MAX
     per_day, selected, truncated = select_recent(
         by_day,
         top_per_day=top_per_day,
@@ -77,21 +85,21 @@ def recall_recent(
     )
 
     # Pass 2: render pointers (entity tags batched across the whole selection; no
-    # per-line date — the day header carries it), with AA-112 layer 1 — per-summary
-    # clipping (pointer_summary_chars, 0 = off; full body one hydrate() away).
-    clip = recall_cfg.pointer_summary_chars
+    # per-line date — the day header carries it), with layer 1 — per-summary
+    # clipping (0 = off; full body one hydrate() away).
+    clip = POINTER_SUMMARY_CHARS
     ents = entities_fn(selected)
     blocks = [
         (day, day_total, [pointer_line(it, ents, show_date=False, max_summary_chars=clip) for it in top])
         for day, day_total, top in per_day
     ]
 
-    # Pass 3: AA-112 layer 2 — hard char budget on the rendered output
-    # (recent_max_chars, 0 = off). The count cap bounds the wrong axis when
-    # summaries run long (40 × ~1k chars ≈ 60k > the MCP token ceiling); this
-    # bounds what actually lands in context.
+    # Pass 3: layer 2 — hard char budget on the rendered output (0 = off). The
+    # count cap bounds the wrong axis when summaries run long (a few dozen × ~1k
+    # chars overruns the MCP token ceiling); this bounds what actually lands in
+    # context.
     head = f"Recent memories (last {days} day(s)):"
-    budget = recall_cfg.recent_max_chars
+    budget = RECENT_MAX_CHARS
     footer_reserve = 200  # headroom for the head line + one footer line
     body_budget = max(1, budget - len(head) - footer_reserve) if budget > 0 else 0
     body_lines, budget_dropped, size_capped = cap_day_blocks(blocks, max_chars=body_budget)
@@ -105,8 +113,8 @@ def recall_recent(
         lines.append(f"\n… capped at {recent_max} memories — narrow with `days` or use timeline for a fuller window.")
     output = "\n".join(lines)
 
-    # Per-layer effectiveness counters (AA-112) — carried out to the caller's trace
-    # and surfaced by `phileas stats bounds` so each layer proves itself (or gets
+    # Per-layer effectiveness counters — carried out to the caller's trace and
+    # surfaced by `phileas stats bounds` so each layer proves itself (or gets
     # turned off).
     summary_lens = [len((it.get("summary") or "").strip()) for it in selected]
     bounds = {
@@ -135,7 +143,7 @@ def timeline(
             return {"items": [], "text": f"No memories found between {start_date} and {end_date}."}
         return {"items": [], "text": f"No memories found for {start_date}."}
 
-    clip = engine.config.recall.pointer_summary_chars
+    clip = POINTER_SUMMARY_CHARS
     range_str = f"{start_date} to {end_date}" if end_date else start_date
     lines = [f"Memories for {range_str} ({len(items)} found):"]
     lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=clip))
@@ -155,8 +163,8 @@ def about(
     if not items:
         return {"items": [], "text": f"No memories found for '{name}'."}
 
-    clip = engine.config.recall.pointer_summary_chars
-    cap = engine.config.recall.about_max
+    clip = POINTER_SUMMARY_CHARS
+    cap = ABOUT_MAX
     shown = items[:cap]
     lines = [f"Memories about '{name}' ({len(items)} found):"]
     lines.extend(render_pointers(shown, entities_fn(shown), show_date=True, max_summary_chars=clip))
@@ -189,7 +197,7 @@ def serendipity(
     items = engine.serendipity(n=n, exclude_ids=parsed)
     if not items:
         return {"items": [], "text": "No memories available for serendipity."}
-    clip = engine.config.recall.pointer_summary_chars
+    clip = POINTER_SUMMARY_CHARS
     lines = [f"Serendipity — {len(items)} high-signal memories (NOT query-matched):"]
     lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=clip))
     return {"items": items, "text": "\n".join(lines)}

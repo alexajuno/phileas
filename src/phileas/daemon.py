@@ -303,10 +303,11 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         log.warning(f"Daemon failed to pre-warm vector store embeddings: {e}")
 
     try:
-        from sentence_transformers import CrossEncoder
+        from phileas import reranker
 
-        encoder = CrossEncoder(config.reranker.model, max_length=256)
-        encoder.predict([("warmup", "warmup")])
+        # Warm the lazy-loaded singleton the query path actually uses (not a
+        # throwaway encoder).
+        reranker.rerank("warmup", [("warmup", "warmup")])
     except Exception as e:
         log.warning(f"Daemon failed to pre-warm reranker: {e}")
 
@@ -417,18 +418,14 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     def _reinforcement_loop():
         import time
 
-        reinforce_cfg = config.reinforcement
         while True:
             if not _reinforce_queue:
                 time.sleep(1)
                 continue
             item = _reinforce_queue.popleft()
             try:
-                similar = vector.find_similar(
-                    item["summary"],
-                    floor=reinforce_cfg.floor,
-                    ceiling=reinforce_cfg.ceiling,
-                )
+                # Similarity floor/ceiling are find_similar's own defaults.
+                similar = vector.find_similar(item["summary"])
                 if similar:
                     similar_id, sim_score = similar
                     existing = db.get_item(similar_id)

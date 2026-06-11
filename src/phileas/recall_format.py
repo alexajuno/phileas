@@ -18,6 +18,14 @@ verify via `phileas stats bounds` before trusting it):
 
 from __future__ import annotations
 
+# Recall output bounds — never hand-tuned; the rationale for each layer lives in
+# the module docstring above (the count cap vs. the output-size cap). Set a
+# constant to 0 to disable that layer.
+RECENT_MAX = 40  # hard cap on memories recall_recent returns
+ABOUT_MAX = 25  # cap on memories about() returns before a "+N more" footer
+POINTER_SUMMARY_CHARS = 200  # layer 1: clip each pointer summary (0 = off)
+RECENT_MAX_CHARS = 10_000  # layer 2: recall_recent total output budget (0 = off)
+
 
 def id8(memory_id: str) -> str:
     """First 8 chars of a memory id — the pointer handle."""

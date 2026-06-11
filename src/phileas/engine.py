@@ -29,6 +29,20 @@ log = get_logger()
 # Memory types for bucketed retrieval — single-sourced from the Literal alias
 _MEMORY_TYPES: list[str] = list(get_args(MemoryType))
 
+# Recall tuning — internal retrieval knobs, never hand-tuned, so the defaults
+# live here as the single source of truth rather than behind a config layer.
+SIMILARITY_FLOOR = 0.5  # min cosine for a semantic/raw hit to enter candidates
+RELEVANCE_FLOOR = 0.15  # post-rerank floor for cross-encoder-scored items
+GRAPH_BOOST = 0.5  # relevance bump for graph-connected memories
+MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
+
+# Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph bridge).
+# Both scale O(seeds × entities × neighbours); on entity-rich queries Path 3
+# already saturates the pool, so iterating thousands of seeds finds duplicates.
+# See research/phileas/recall-path-attribution.md.
+PATH3B_MAX_SEEDS = 30
+PATH4_MAX_SEEDS = 30
+
 
 def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     """Days since a given datetime, with optional fallback (e.g. created_at)."""
@@ -492,7 +506,7 @@ class MemoryEngine:
         if all_type_ids:
             semantic_hits = self.vector.search(query, top_k=_effective_top_k * 3)
             for mem_id, sim in semantic_hits:
-                if sim < self.config.recall.similarity_floor:
+                if sim < SIMILARITY_FLOOR:
                     continue
                 if mem_id not in all_type_ids:
                     continue
@@ -679,11 +693,10 @@ class MemoryEngine:
         # → those memories' entities (Acme, Lakeside, ...) → all their memories.
         # Catches non-obvious connections that query embeddings miss.
         #
-        # Capped by recall.path3b_max_seeds: on entity-rich queries the pool
-        # is already saturated by Path 3 and further bridging is mostly
-        # duplicate. Iteration is deterministic (sorted id) so traces and
-        # tests can compare across runs.
-        graph_pivot_snapshot = sorted(graph_ids)[: self.config.recall.path3b_max_seeds]
+        # Capped by PATH3B_MAX_SEEDS: on entity-rich queries the pool is already
+        # saturated by Path 3 and further bridging is mostly duplicate. Iteration
+        # is deterministic (sorted id) so traces and tests can compare across runs.
+        graph_pivot_snapshot = sorted(graph_ids)[:PATH3B_MAX_SEEDS]
         for mem_id in graph_pivot_snapshot:
             try:
                 pivot_entities = self.graph.get_entities_for_memory(mem_id)
@@ -746,7 +759,7 @@ class MemoryEngine:
         # though their bridges duplicate Path 3b's by construction.
         non_graph_seeds = [m for m in candidates if m not in graph_ids]
         graph_seeds = [m for m in candidates if m in graph_ids]
-        bridge_source_ids = (non_graph_seeds + graph_seeds)[: self.config.recall.path4_max_seeds]
+        bridge_source_ids = (non_graph_seeds + graph_seeds)[:PATH4_MAX_SEEDS]
         for mem_id in bridge_source_ids:
             entities = self.graph.get_entities_for_memory(mem_id)
             for entity in entities:
@@ -774,7 +787,7 @@ class MemoryEngine:
         # lost during summarization (names, places, specific phrases).
         raw_hits = self.vector.search_raw(query, top_k=_effective_top_k * 3)
         for mem_id, sim in raw_hits:
-            if sim < self.config.recall.similarity_floor:
+            if sim < SIMILARITY_FLOOR:
                 continue
             raw_text_ids.add(mem_id)
             if mem_id not in candidates:
@@ -790,7 +803,7 @@ class MemoryEngine:
         # are not added to `candidates` here — only the sibling memories are.
         # Lower floor than memory search: long event chunks score lower
         # under cosine than focused summaries.
-        event_floor = min(0.25, self.config.recall.similarity_floor)
+        event_floor = min(0.25, SIMILARITY_FLOOR)
         event_hits = self.vector.search_events(query, top_k=20)
         for event_id, sim in event_hits:
             if sim < event_floor:
@@ -861,7 +874,7 @@ class MemoryEngine:
         _mark("rerank")
 
         # Build unified relevance map
-        graph_boost = self.config.recall.graph_boost
+        graph_boost = GRAPH_BOOST
         relevance_map: dict[str, float] = {}
         for mem_id in filtered:
             cosine = cosine_map.get(mem_id, 0.0)
@@ -902,7 +915,7 @@ class MemoryEngine:
         # keyword matching or graph traversal, so they earned their place)
         for mem_id in list(filtered.keys()):
             if mem_id not in structurally_matched:
-                if relevance_map.get(mem_id, 0.0) < self.config.recall.relevance_floor:
+                if relevance_map.get(mem_id, 0.0) < RELEVANCE_FLOOR:
                     del filtered[mem_id]
         _mark("score_blend")
 
@@ -963,7 +976,7 @@ class MemoryEngine:
                 mmr_candidates,
                 sim_matrix,
                 top_k=top_k,
-                lambda_param=self.config.recall.mmr_lambda,
+                lambda_param=MMR_LAMBDA,
             )
         _mark("mmr")
 
@@ -974,21 +987,15 @@ class MemoryEngine:
             item = filtered[sel["id"]]
             relevance = sel["relevance"]
             days = _days_since(item.last_accessed, fallback=item.created_at)
+            # Weights and decay params are the scoring.py function defaults
+            # (the retired [scoring]/[reinforcement] config just re-supplied
+            # identical values) — single-sourced there now.
             score = compute_score(
                 relevance,
                 item.importance,
                 days,
                 item.access_count,
                 item.reinforcement_count,
-                relevance_weight=self.config.scoring.relevance_weight,
-                importance_weight=self.config.scoring.importance_weight,
-                recency_weight=self.config.scoring.recency_weight,
-                access_weight=self.config.scoring.access_weight,
-                reinforcement_weight=self.config.scoring.reinforcement_weight,
-                base_decay=self.config.reinforcement.base_decay,
-                decay_halving=self.config.reinforcement.decay_halving,
-                halving_interval=self.config.reinforcement.halving_interval,
-                min_decay=self.config.reinforcement.min_decay,
             )
             results.append(_item_to_dict(item, score))
 

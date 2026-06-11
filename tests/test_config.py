@@ -1,4 +1,9 @@
-"""Tests for the Phileas configuration system."""
+"""Tests for the Phileas configuration system.
+
+The configurable surface is deliberately small: the home directory and the
+``[sync]`` transport section. Everything else (retrieval/scoring tuning) is a
+code constant, so there is nothing here to test for those.
+"""
 
 import textwrap
 from pathlib import Path
@@ -20,38 +25,15 @@ class TestDefaults:
         cfg = load_config()
         assert cfg.home == Path.home() / ".phileas"
 
-    def test_default_embeddings(self):
-        cfg = load_config()
-        assert cfg.embeddings.model == "all-MiniLM-L6-v2"
-
-    def test_default_reranker(self):
-        cfg = load_config()
-        assert cfg.reranker.model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-    def test_default_recall(self, tmp_path):
+    def test_default_sync(self, tmp_path):
         cfg = load_config(home=tmp_path)
-        assert cfg.recall.similarity_floor == 0.5
-        assert cfg.recall.relevance_floor == 0.15
-        assert cfg.recall.graph_boost == 0.5
-        assert cfg.recall.mmr_lambda == 0.7
-        assert cfg.recall.default_top_k == 10
-        assert cfg.recall.mode == "auto"
-        assert cfg.recall.format == "pointer"
-        assert cfg.recall.pipeline == "rerank"
-
-    def test_default_scoring(self, tmp_path):
-        cfg = load_config(home=tmp_path)
-        assert cfg.scoring.relevance_weight == 0.55
-        assert cfg.scoring.importance_weight == 0.15
-        assert cfg.scoring.recency_weight == 0.1
-        assert cfg.scoring.access_weight == 0.05
-        assert cfg.scoring.reinforcement_weight == 0.15
-
-    def test_default_logging(self):
-        cfg = load_config()
-        assert cfg.logging.level == "INFO"
-        assert cfg.logging.file_max_bytes == 5_242_880
-        assert cfg.logging.file_backup_count == 3
+        assert cfg.sync.push_on_write is False
+        assert cfg.sync.push_command is None
+        assert cfg.sync.debounce_seconds == 3.0
+        assert cfg.sync.min_interval_seconds == 10.0
+        assert cfg.sync.subscribe is False
+        assert cfg.sync.peer_url is None
+        assert cfg.sync.pull_command is None
 
     def test_derived_paths(self):
         cfg = load_config()
@@ -76,78 +58,42 @@ class TestTomlOverrides:
         config_file = tmp_path / "config.toml"
         config_file.write_text(
             textwrap.dedent("""\
-            [recall]
-            similarity_floor = 0.6
-            default_top_k = 20
+            [sync]
+            push_on_write = true
+            push_command = "rsync -a ~/.phileas/ box:~/.phileas/"
         """)
         )
         cfg = load_config(home=tmp_path)
         # Overridden
-        assert cfg.recall.similarity_floor == 0.6
-        assert cfg.recall.default_top_k == 20
+        assert cfg.sync.push_on_write is True
+        assert cfg.sync.push_command == "rsync -a ~/.phileas/ box:~/.phileas/"
         # Not overridden — still defaults
-        assert cfg.recall.relevance_floor == 0.15
-        assert cfg.recall.graph_boost == 0.5
-        assert cfg.recall.mmr_lambda == 0.7
+        assert cfg.sync.debounce_seconds == 3.0
+        assert cfg.sync.min_interval_seconds == 10.0
+        assert cfg.sync.subscribe is False
 
-    def test_scoring_override(self, tmp_path):
+    def test_unknown_section_ignored(self, tmp_path):
+        """A stale config carrying a retired section loads cleanly (no crash)."""
         config_file = tmp_path / "config.toml"
         config_file.write_text(
             textwrap.dedent("""\
-            [scoring]
-            relevance_weight = 0.6
-            importance_weight = 0.15
-        """)
-        )
-        cfg = load_config(home=tmp_path)
-        assert cfg.scoring.relevance_weight == 0.6
-        assert cfg.scoring.importance_weight == 0.15
-        # Unchanged (defaults)
-        assert cfg.scoring.recency_weight == 0.10
-        assert cfg.scoring.access_weight == 0.05
-        assert cfg.scoring.reinforcement_weight == 0.15
+            [recall]
+            similarity_floor = 0.6
 
-    def test_logging_override(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            textwrap.dedent("""\
-            [logging]
-            level = "DEBUG"
-            file_max_bytes = 1048576
+            [sync]
+            subscribe = true
         """)
         )
         cfg = load_config(home=tmp_path)
-        assert cfg.logging.level == "DEBUG"
-        assert cfg.logging.file_max_bytes == 1_048_576
-        assert cfg.logging.file_backup_count == 3
-
-    def test_embeddings_override(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            textwrap.dedent("""\
-            [embeddings]
-            model = "all-mpnet-base-v2"
-        """)
-        )
-        cfg = load_config(home=tmp_path)
-        assert cfg.embeddings.model == "all-mpnet-base-v2"
-
-    def test_reranker_override(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            textwrap.dedent("""\
-            [reranker]
-            model = "cross-encoder/ms-marco-MiniLM-L-12-v2"
-        """)
-        )
-        cfg = load_config(home=tmp_path)
-        assert cfg.reranker.model == "cross-encoder/ms-marco-MiniLM-L-12-v2"
+        # Retired section is silently dropped; the live one still applies.
+        assert not hasattr(cfg, "recall")
+        assert cfg.sync.subscribe is True
 
     def test_no_config_file(self, tmp_path):
         """When config.toml doesn't exist, all defaults should apply."""
         cfg = load_config(home=tmp_path)
         assert cfg.home == tmp_path
-        assert cfg.embeddings.model == "all-MiniLM-L6-v2"
+        assert cfg.sync.push_on_write is False
 
     def test_derived_paths_with_custom_home(self, tmp_path):
         cfg = load_config(home=tmp_path)
@@ -181,14 +127,14 @@ class TestEnvOverride:
         config_file = custom_home / "config.toml"
         config_file.write_text(
             textwrap.dedent("""\
-            [recall]
-            default_top_k = 25
+            [sync]
+            push_on_write = true
         """)
         )
         monkeypatch.setenv("PHILEAS_HOME", str(custom_home))
         cfg = load_config()
         assert cfg.home == custom_home
-        assert cfg.recall.default_top_k == 25
+        assert cfg.sync.push_on_write is True
 
     def test_explicit_home_overrides_env(self, tmp_path, monkeypatch):
         """Explicit home= parameter beats PHILEAS_HOME env var."""
@@ -211,12 +157,12 @@ class TestProjectConfig:
 
     def test_finds_phileas_toml_in_current_dir(self, tmp_path):
         marker = tmp_path / ".phileas.toml"
-        marker.write_text('[recall]\nmode = "never"\n')
+        marker.write_text("[sync]\nsubscribe = true\n")
         assert _find_project_config(tmp_path) == marker
 
     def test_walks_up_to_find_phileas_toml(self, tmp_path):
         marker = tmp_path / ".phileas.toml"
-        marker.write_text('[recall]\nmode = "always"\n')
+        marker.write_text("[sync]\nsubscribe = true\n")
         nested = tmp_path / "a" / "b" / "c"
         nested.mkdir(parents=True)
         assert _find_project_config(nested) == marker
@@ -237,26 +183,26 @@ class TestProjectConfig:
         user_home.mkdir()
         (user_home / "config.toml").write_text(
             textwrap.dedent("""\
-            [recall]
-            mode = "auto"
-            default_top_k = 5
+            [sync]
+            subscribe = false
+            push_on_write = true
         """)
         )
         project_root = tmp_path / "proj"
         project_root.mkdir()
         (project_root / ".phileas.toml").write_text(
             textwrap.dedent("""\
-            [recall]
-            mode = "never"
+            [sync]
+            subscribe = true
         """)
         )
         cfg = load_config(home=user_home, project_start=project_root)
-        # Project wins on `mode`
-        assert cfg.recall.mode == "never"
-        # User TOML still wins on `default_top_k` (not set in project)
-        assert cfg.recall.default_top_k == 5
+        # Project wins on `subscribe`
+        assert cfg.sync.subscribe is True
+        # User TOML still wins on `push_on_write` (not set in project)
+        assert cfg.sync.push_on_write is True
         # Defaults still apply for fields touched by neither
-        assert cfg.recall.format == "pointer"
+        assert cfg.sync.debounce_seconds == 3.0
 
     def test_project_walk_from_nested_cwd(self, tmp_path):
         user_home = tmp_path / "user"
@@ -266,24 +212,14 @@ class TestProjectConfig:
         nested.mkdir(parents=True)
         (project_root / ".phileas.toml").write_text(
             textwrap.dedent("""\
-            [recall]
-            mode = "always"
-            format = "inline"
+            [sync]
+            subscribe = true
+            peer_url = "https://box.local:8787"
         """)
         )
         cfg = load_config(home=user_home, project_start=nested)
-        assert cfg.recall.mode == "always"
-        assert cfg.recall.format == "inline"
-
-    def test_recall_pipeline_override(self, tmp_path):
-        (tmp_path / "config.toml").write_text(
-            textwrap.dedent("""\
-            [recall]
-            pipeline = "direct"
-        """)
-        )
-        cfg = load_config(home=tmp_path, project_start=tmp_path)
-        assert cfg.recall.pipeline == "direct"
+        assert cfg.sync.subscribe is True
+        assert cfg.sync.peer_url == "https://box.local:8787"
 
 
 def marker_outside_tmp_path(result: Path, tmp_path: Path) -> bool:

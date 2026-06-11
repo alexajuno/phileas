@@ -32,7 +32,7 @@ from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph_proxy import GraphProxy
 from phileas.mcp_auth import build_auth_components, register_login_routes
-from phileas.recall_format import render_pointers
+from phileas.recall_format import POINTER_SUMMARY_CHARS, render_pointers
 from phileas.vector import VectorStore
 
 # OAuth + HTTP serving is opt-in (PHILEAS_MCP_TRANSPORT=http) so the phone can
@@ -134,7 +134,7 @@ def _pointer_lines(items: list[dict], *, show_date: bool = True) -> list[str]:
         items,
         _entities_for(items),
         show_date=show_date,
-        max_summary_chars=_config.recall.pointer_summary_chars,
+        max_summary_chars=POINTER_SUMMARY_CHARS,
     )
 
 
@@ -540,9 +540,9 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
     prompt already carries a topic, prefer a focused recall(query) — recall
     folds recency into its score, so it's recency-aware without enumerating
     the whole window. Output is POINTER lines (summaries clipped; hydrate(id8)
-    for the full body) and hard-bounded both by count (recall.recent_max) and
-    by output size (recall.recent_max_chars), so a heavy day can't overflow
-    context; widen `days` or use timeline() for a fuller window.
+    for the full body) and hard-bounded both by count and by output size, so a
+    heavy day can't overflow context; widen `days` or use timeline() for a
+    fuller window.
 
     Args:
         days: How many days back to look (default 7).
