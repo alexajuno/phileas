@@ -37,6 +37,14 @@ def _parse_tags(raw: str | None) -> list[str]:
     return [str(x) for x in parsed] if isinstance(parsed, list) else []
 
 
+_PREVIEW_CHARS = 240
+
+
+def _preview(text: str) -> str:
+    """Mirror web/src/lib/phileas-db.ts:preview — first 240 chars, ellipsis if longer."""
+    return text if len(text) <= _PREVIEW_CHARS else text[:_PREVIEW_CHARS] + "…"
+
+
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
 SCHEMA = """
@@ -451,6 +459,83 @@ class Database:
             buckets[key] = buckets.get(key, 0) + 1
         ordered = sorted(buckets.items(), key=lambda kv: kv[0], reverse=True)
         return [{"day": day, "count": count} for day, count in ordered[:limit]]
+
+    @_locked
+    def web_memories_brief(self, ids: list[str]) -> list[dict]:
+        """Minimal columns for a set of ids, ANY status — mirrors the resolveMemories
+        helper in monitoring/traces/[id]. Ordering and placeholders for missing ids
+        are the caller's concern (the trace view reconstructs input order)."""
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"""SELECT id, summary, memory_type, importance, created_at
+                FROM memory_items WHERE id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "summary": r["summary"],
+                "memory_type": r["memory_type"],
+                "importance": r["importance"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    @_locked
+    def web_ingestion_health(self) -> dict:
+        """Event-ingestion counts (1h / 24h / total) — mirrors phileas-db.ts:fetchIngestionHealth."""
+        now = datetime.now(timezone.utc)
+        h1 = (now - timedelta(hours=1)).isoformat()
+        d1 = (now - timedelta(days=1)).isoformat()
+        return {
+            "events_received_1h": self.conn.execute(
+                "SELECT COUNT(*) FROM events WHERE received_at >= ?", (h1,)
+            ).fetchone()[0],
+            "events_received_24h": self.conn.execute(
+                "SELECT COUNT(*) FROM events WHERE received_at >= ?", (d1,)
+            ).fetchone()[0],
+            "events_total": self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+        }
+
+    @_locked
+    def web_ingestion_events(self, limit: int = 50) -> list[dict]:
+        """Recent ingested events with truncated text — mirrors phileas-db.ts:listIngestionEvents."""
+        limit = min(max(50 if limit is None else limit, 1), 500)
+        rows = self.conn.execute(
+            "SELECT id, text, received_at FROM events ORDER BY received_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [{"id": r["id"], "received_at": r["received_at"], "text_preview": _preview(r["text"])} for r in rows]
+
+    @_locked
+    def web_ingestion_event(self, event_id: str) -> dict | None:
+        """One event plus its linked active memories — mirrors phileas-db.ts:fetchIngestionEvent."""
+        ev = self.conn.execute("SELECT id, text, received_at FROM events WHERE id = ?", (event_id,)).fetchone()
+        if not ev:
+            return None
+        mems = self.conn.execute(
+            """SELECT id, summary, memory_type, importance, created_at
+               FROM memory_items
+               WHERE source_event_id = ? AND status = 'active'
+               ORDER BY created_at ASC""",
+            (event_id,),
+        ).fetchall()
+        return {
+            "event": {"id": ev["id"], "text": ev["text"], "received_at": ev["received_at"]},
+            "memories": [
+                {
+                    "id": m["id"],
+                    "summary": m["summary"],
+                    "memory_type": m["memory_type"],
+                    "importance": m["importance"],
+                    "created_at": m["created_at"],
+                }
+                for m in mems
+            ],
+        }
 
     # --- Internal ---
 

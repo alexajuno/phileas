@@ -784,8 +784,16 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         )
     elif method == "memories_by_ids":
         return engine.db.web_memories_by_ids(params.get("ids", []))
+    elif method == "memories_brief":
+        return engine.db.web_memories_brief(params.get("ids", []))
     elif method == "memories_days":
         return engine.db.web_days_with_counts(params.get("limit", 60), params.get("tz_offset_minutes"))
+    elif method == "ingestion_health":
+        return engine.db.web_ingestion_health()
+    elif method == "ingestion_events":
+        return engine.db.web_ingestion_events(params.get("limit", 50))
+    elif method == "ingestion_event":
+        return engine.db.web_ingestion_event(params["id"])
     elif method in ("metrics_traces", "metrics_trace", "metrics_compare", "metrics_aggregate"):
         from phileas.stats import queries as stats_queries
 

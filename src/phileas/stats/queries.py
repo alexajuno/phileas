@@ -382,7 +382,7 @@ def _mean_fraction_map(maps: list[dict]) -> dict:
 
 
 def list_traces(metrics_db: Path, date: str | None = None, limit: int = 200, source: str | None = None) -> list[dict]:
-    limit = min(max(limit or 200, 1), 1000)
+    limit = min(max(200 if limit is None else limit, 1), 1000)
     clauses: list[str] = []
     params: dict = {"limit": limit}
     if date:
