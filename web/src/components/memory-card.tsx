@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState } from "react";
 import { ChevronDown, Trash2 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { ForgetMemoryDialog } from "@/components/forget-memory-dialog";
 import { formatTime, toneFor } from "@/lib/format";
 import { highlight } from "@/lib/highlight";
@@ -98,36 +97,25 @@ export function MemoryCard({
         {terms ? highlight(memory.summary, terms) : memory.summary}
       </p>
 
-      {(memory.tags.length > 0 || hasRaw) && (
+      {hasRaw && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-          {memory.tags.map((t) => (
-            <Badge
-              key={t}
-              variant="outline"
-              className="rounded-full border-border/70 px-2 py-0 text-[10px] font-normal text-muted-foreground"
-            >
-              {terms ? highlight(t, terms) : t}
-            </Badge>
-          ))}
-          {hasRaw && (
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className={cn(
+              "ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+              "text-[11px] text-muted-foreground transition-colors",
+              "hover:text-foreground",
+            )}
+          >
+            raw
+            <ChevronDown
               className={cn(
-                "ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
-                "text-[11px] text-muted-foreground transition-colors",
-                "hover:text-foreground",
+                "h-3 w-3 transition-transform",
+                open && "rotate-180",
               )}
-            >
-              raw
-              <ChevronDown
-                className={cn(
-                  "h-3 w-3 transition-transform",
-                  open && "rotate-180",
-                )}
-              />
-            </button>
-          )}
+            />
+          </button>
         </div>
       )}
 
