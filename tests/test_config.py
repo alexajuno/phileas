@@ -4,7 +4,6 @@ import textwrap
 from pathlib import Path
 
 from phileas.config import (
-    LLMConfig,
     _find_project_config,
     load_config,
 )
@@ -20,11 +19,6 @@ class TestDefaults:
     def test_default_home(self):
         cfg = load_config()
         assert cfg.home == Path.home() / ".phileas"
-
-    def test_default_llm(self, tmp_path):
-        cfg = load_config(home=tmp_path)
-        assert cfg.llm.provider is None
-        assert cfg.llm.model is None
 
     def test_default_embeddings(self):
         cfg = load_config()
@@ -96,19 +90,6 @@ class TestTomlOverrides:
         assert cfg.recall.graph_boost == 0.5
         assert cfg.recall.mmr_lambda == 0.7
 
-    def test_full_llm_override(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            textwrap.dedent("""\
-            [llm]
-            provider = "anthropic"
-            model = "claude-sonnet-4-20250514"
-        """)
-        )
-        cfg = load_config(home=tmp_path)
-        assert cfg.llm.provider == "anthropic"
-        assert cfg.llm.model == "claude-sonnet-4-20250514"
-
     def test_scoring_override(self, tmp_path):
         config_file = tmp_path / "config.toml"
         config_file.write_text(
@@ -167,7 +148,6 @@ class TestTomlOverrides:
         cfg = load_config(home=tmp_path)
         assert cfg.home == tmp_path
         assert cfg.embeddings.model == "all-MiniLM-L6-v2"
-        assert cfg.llm.provider is None
 
     def test_derived_paths_with_custom_home(self, tmp_path):
         cfg = load_config(home=tmp_path)
@@ -219,47 +199,6 @@ class TestEnvOverride:
         monkeypatch.setenv("PHILEAS_HOME", str(env_home))
         cfg = load_config(home=explicit_home)
         assert cfg.home == explicit_home
-
-
-# ------------------------------------------------------------------
-# LLM availability check
-# ------------------------------------------------------------------
-
-
-class TestLLMAvailability:
-    """LLMConfig.available is True only when both provider and model are set."""
-
-    def test_not_available_by_default(self):
-        llm = LLMConfig()
-        assert llm.available is False
-
-    def test_not_available_provider_only(self):
-        llm = LLMConfig(provider="anthropic")
-        assert llm.available is False
-
-    def test_not_available_model_only(self):
-        llm = LLMConfig(model="claude-sonnet-4-20250514")
-        assert llm.available is False
-
-    def test_available_when_both_set(self):
-        llm = LLMConfig(provider="anthropic", model="claude-sonnet-4-20250514")
-        assert llm.available is True
-
-    def test_available_from_config(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            textwrap.dedent("""\
-            [llm]
-            provider = "anthropic"
-            model = "claude-sonnet-4-20250514"
-        """)
-        )
-        cfg = load_config(home=tmp_path)
-        assert cfg.llm.available is True
-
-    def test_not_available_from_empty_config(self, tmp_path):
-        cfg = load_config(home=tmp_path)
-        assert cfg.llm.available is False
 
 
 # ------------------------------------------------------------------

@@ -3,11 +3,9 @@
 Walks the user through first-time configuration:
  1. Choose usage mode (Claude Code / Antigravity / Codex / Standalone / All)
  2. Choose data directory
- 3. Pick LLM provider + model + API key env var (standalone/both)
- 4. Write config.toml
- 5. Wire Claude Code MCP config (claude-code/both)
- 6. Download embedding + reranker models
- 7. Test LLM connection (if configured)
+ 3. Write config.toml
+ 4. Wire Claude Code MCP config (claude-code/both)
+ 5. Download embedding + reranker models
 """
 
 from __future__ import annotations
@@ -21,22 +19,7 @@ from rich.console import Console
 
 console = Console()
 
-# -- Provider defaults ------------------------------------------------
-
-PROVIDER_DEFAULTS: dict[str, dict[str, str | None]] = {
-    "anthropic": {
-        "model": "claude-haiku-4-5-20251001",
-        "api_key_env": "ANTHROPIC_API_KEY",
-    },
-    "openai": {
-        "model": "gpt-4o-mini",
-        "api_key_env": "OPENAI_API_KEY",
-    },
-    "ollama": {
-        "model": "llama3",
-        "api_key_env": None,
-    },
-}
+# -- Model defaults ---------------------------------------------------
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -53,7 +36,7 @@ def _resolve_default_home() -> str:
     return str(Path.home() / ".phileas")
 
 
-def _write_config(home: Path, provider: str | None, model: str | None, api_key_env: str | None) -> Path:
+def _write_config(home: Path) -> Path:
     """Write config.toml and return its path."""
     home.mkdir(parents=True, exist_ok=True)
     config_path = home / "config.toml"
@@ -62,15 +45,6 @@ def _write_config(home: Path, provider: str | None, model: str | None, api_key_e
     lines.append("[storage]")
     lines.append(f'home = "{home}"')
     lines.append("")
-
-    if provider:
-        lines.append("[llm]")
-        lines.append(f'provider = "{provider}"')
-        if model:
-            lines.append(f'model = "{model}"')
-        if api_key_env:
-            lines.append(f'api_key_env = "{api_key_env}"')
-        lines.append("")
 
     config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return config_path
@@ -446,41 +420,12 @@ def run_wizard() -> None:
     home_str = click.prompt("Where should Phileas store data?", default=default_home)
     home = Path(home_str).expanduser().resolve()
 
-    # 3. LLM provider (standalone or both)
-    provider: str | None = None
-    model: str | None = None
-    api_key_env: str | None = None
-
-    if use_standalone:
-        console.print()
-        console.print("[bold]LLM provider[/bold] (used for auto-importance, extraction, query rewriting):")
-        console.print("  [cyan]anthropic[/cyan]  -- Claude models via Anthropic API")
-        console.print("  [cyan]openai[/cyan]     -- GPT models via OpenAI API")
-        console.print("  [cyan]ollama[/cyan]     -- Local models via Ollama")
-        console.print()
-
-        provider = click.prompt(
-            "LLM provider",
-            type=click.Choice(["anthropic", "openai", "ollama"], case_sensitive=False),
-            default="openai",
-        )
-
-        defaults = PROVIDER_DEFAULTS[provider]
-        model = click.prompt("Model name", default=defaults["model"])
-
-        default_env = defaults["api_key_env"]
-        if default_env:
-            api_key_env = click.prompt(
-                "Environment variable for API key (keys are NEVER stored in config)",
-                default=default_env,
-            )
-
-    # 4. Write config
+    # 3. Write config
     console.print()
-    config_path = _write_config(home, provider, model, api_key_env)
+    config_path = _write_config(home)
     console.print(f"[green]Wrote[/green] {config_path}")
 
-    # 5. Wire integrations
+    # 4. Wire integrations
     if use_claude_code:
         console.print()
         console.print("[bold]Configuring Claude Code integration...[/bold]")
@@ -530,13 +475,13 @@ def run_wizard() -> None:
         console.print(f"  Skill {marker} -- {msg}")
         console.print("  [dim]Restart Codex CLI to pick up MCP + skill changes.[/dim]")
 
-    # 6. Download models
+    # 5. Download models
     console.print()
     console.print("[bold]Downloading models...[/bold]")
     _download_embedding_model()
     _download_reranker_model()
 
-    # 7. Done
+    # 6. Done
     console.print()
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()

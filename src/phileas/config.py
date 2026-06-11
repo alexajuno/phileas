@@ -6,7 +6,6 @@ Usage:
     from phileas.config import load_config
     cfg = load_config()
     cfg.db_path          # Path to SQLite database
-    cfg.llm.available    # True when LLM provider and model are configured
 """
 
 from __future__ import annotations
@@ -24,20 +23,6 @@ except ModuleNotFoundError:  # pragma: no cover — Python < 3.11
 # ------------------------------------------------------------------
 # Nested config dataclasses
 # ------------------------------------------------------------------
-
-
-@dataclass
-class LLMConfig:
-    """LLM provider configuration. Resolved via litellm at call time."""
-
-    provider: str | None = None
-    model: str | None = None
-    api_key_env: str | None = None
-
-    @property
-    def available(self) -> bool:
-        """True when both provider and model are configured."""
-        return self.provider is not None and self.model is not None
 
 
 @dataclass
@@ -167,7 +152,6 @@ class PhileasConfig:
     """Top-level Phileas configuration."""
 
     home: Path = field(default_factory=lambda: _DEFAULT_HOME)
-    llm: LLMConfig = field(default_factory=LLMConfig)
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
     reranker: RerankerConfig = field(default_factory=RerankerConfig)
     recall: RecallConfig = field(default_factory=RecallConfig)
@@ -214,9 +198,6 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place."""
-    if "llm" in data:
-        _apply_toml_section(cfg.llm, data["llm"])
-
     section_map = {
         "embeddings": cfg.embeddings,
         "reranker": cfg.reranker,
