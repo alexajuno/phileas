@@ -766,6 +766,47 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.status()
         else:
             raise ValueError(f"Unknown graph_read op: {op}")
+    # -- Web dashboard reads (memory.db + metrics.db) ----------------------
+    # The read contract for the dashboard (observability Phase 1). Memory reads
+    # return rows shaped for web/src/lib/types.ts:MemoryItem; metrics reads
+    # mirror web/src/lib/metrics-db.ts. Web still uses its own direct-DB path
+    # until Phase 2 cuts over to these.
+    elif method == "memories_for_day":
+        return engine.db.web_memories_for_day(params["start"], params["end"])
+    elif method == "memories_search":
+        return engine.db.web_search(params.get("query", ""), params.get("limit", 100))
+    elif method == "memories_export":
+        return engine.db.web_export(
+            start_iso=params.get("start"),
+            end_iso=params.get("end"),
+            memory_type=params.get("type"),
+            min_importance=params.get("min_importance"),
+        )
+    elif method == "memories_by_ids":
+        return engine.db.web_memories_by_ids(params.get("ids", []))
+    elif method == "memories_days":
+        return engine.db.web_days_with_counts(params.get("limit", 60), params.get("tz_offset_minutes"))
+    elif method in ("metrics_traces", "metrics_trace", "metrics_compare", "metrics_aggregate"):
+        from phileas.stats import queries as stats_queries
+
+        metrics_db = engine.config.home / "metrics.db"
+        if method == "metrics_traces":
+            return stats_queries.list_traces(
+                metrics_db,
+                date=params.get("date"),
+                limit=params.get("limit", 200),
+                source=params.get("source"),
+            )
+        if method == "metrics_trace":
+            return stats_queries.get_trace(metrics_db, params["id"])
+        if method == "metrics_compare":
+            return stats_queries.compare_traces(
+                metrics_db,
+                params["cutoff"],
+                source=params.get("source"),
+                window_days=params.get("window_days", 7),
+            )
+        return stats_queries.aggregate_recent(metrics_db, days=params.get("days", 7))
     # -- Recall-family read tools ------------------------------------------
     # Shared with the stdio MCP server and the CLI via tool_runner, so all
     # three emit byte-identical strings. Returns {"items", "text"}: the web

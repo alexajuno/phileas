@@ -5,9 +5,11 @@ that can be rebuilt from this database.
 """
 
 import functools
+import json
+import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from phileas.models import Event, MemoryItem
@@ -22,6 +24,17 @@ def _locked(method):
             return method(self, *args, **kwargs)
 
     return wrapper
+
+
+def _parse_tags(raw: str | None) -> list[str]:
+    """Mirror web/src/lib/queries.ts:parseTags — a JSON array of strings, else []."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except TypeError, ValueError:
+        return []
+    return [str(x) for x in parsed] if isinstance(parsed, list) else []
 
 
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
@@ -300,6 +313,144 @@ class Database:
             (since_iso, limit),
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
+
+    # --- Web dashboard reads ---
+    #
+    # Rows shaped for web/src/lib/types.ts:MemoryItem — the daemon's read
+    # contract for the dashboard (observability Phase 1). These serialize from
+    # the raw sqlite row, NOT from MemoryItem, because the web shape carries two
+    # columns the model doesn't: `tags` (a JSON-array string) and the legacy
+    # `source_session_id` (now always NULL, kept for shape parity). The SQL
+    # mirrors queries.ts exactly so the eventual web cutover is behaviour-neutral.
+
+    _WEB_COLS = (
+        "id, summary, memory_type, importance, status, "
+        "access_count, reinforcement_count, last_reinforced, "
+        "raw_text, tags, daily_ref, source_session_id, "
+        "created_at, updated_at"
+    )
+
+    @staticmethod
+    def _row_to_web_dict(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "summary": row["summary"],
+            "memory_type": row["memory_type"],
+            "importance": row["importance"],
+            "status": row["status"],
+            "access_count": row["access_count"],
+            "reinforcement_count": row["reinforcement_count"],
+            "last_reinforced": row["last_reinforced"],
+            "raw_text": row["raw_text"],
+            "tags": _parse_tags(row["tags"]),
+            "daily_ref": row["daily_ref"],
+            "source_session_id": row["source_session_id"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @_locked
+    def web_memories_for_day(self, start_iso: str, end_iso: str) -> list[dict]:
+        """Active memories created within [start_iso, end_iso).
+
+        The bounds are the UTC-ISO day window the client computes from its local
+        day (day.ts). We do not recompute them here so the boundary string
+        comparison stays byte-identical to the current direct-DB read.
+        """
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE status = 'active'
+                  AND created_at >= ? AND created_at < ?
+                ORDER BY created_at DESC""",
+            (start_iso, end_iso),
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_search(self, query: str, limit: int = 100) -> list[dict]:
+        """Keyword search over summary/raw_text/tags — mirrors queries.ts:searchMemories
+        (up to 8 whitespace terms, LIKE-AND, backslash-escaped)."""
+        terms = (query or "").split()[:8]
+        if not terms:
+            return []
+        clauses: list[str] = []
+        params: list[str | int] = []
+        for term in terms:
+            clauses.append("(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')")
+            like = "%" + re.sub(r"([\\%_])", r"\\\1", term) + "%"
+            params.extend([like, like, like])
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE status = 'active' AND {" AND ".join(clauses)}
+                ORDER BY created_at DESC LIMIT ?""",
+            params,
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_export(
+        self,
+        start_iso: str | None = None,
+        end_iso: str | None = None,
+        memory_type: str | None = None,
+        min_importance: int | None = None,
+    ) -> list[dict]:
+        """Filtered export — mirrors queries.ts:fetchMemoriesForExport. Bounds are
+        client-computed UTC ISO; min_importance only filters when > 1."""
+        clauses = ["status = 'active'"]
+        params: list[str | int] = []
+        if start_iso:
+            clauses.append("created_at >= ?")
+            params.append(start_iso)
+        if end_iso:
+            clauses.append("created_at < ?")
+            params.append(end_iso)
+        if memory_type:
+            clauses.append("memory_type = ?")
+            params.append(memory_type)
+        if min_importance and min_importance > 1:
+            clauses.append("importance >= ?")
+            params.append(min_importance)
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC""",
+            params,
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_memories_by_ids(self, ids: list[str]) -> list[dict]:
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE status = 'active' AND id IN ({placeholders})
+                ORDER BY created_at DESC""",
+            ids,
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_days_with_counts(self, limit: int = 60, tz_offset_minutes: int | None = None) -> list[dict]:
+        """Active-memory counts bucketed by LOCAL day — mirrors queries.ts:fetchDaysWithCounts.
+
+        created_at is stored UTC; the bucket key is the viewer's *local* day.
+        ``tz_offset_minutes`` pins the bucketing timezone for a remote client;
+        None falls back to the daemon's own local timezone (correct when the
+        daemon and the viewer share a machine — Phase 1's single-host case).
+        """
+        rows = self.conn.execute("SELECT created_at FROM memory_items WHERE status = 'active'").fetchall()
+        tz = timezone(timedelta(minutes=tz_offset_minutes)) if tz_offset_minutes is not None else None
+        buckets: dict[str, int] = {}
+        for r in rows:
+            local = datetime.fromisoformat(r["created_at"]).astimezone(tz)
+            key = local.strftime("%Y-%m-%d")
+            buckets[key] = buckets.get(key, 0) + 1
+        ordered = sorted(buckets.items(), key=lambda kv: kv[0], reverse=True)
+        return [{"day": day, "count": count} for day, count in ordered[:limit]]
 
     # --- Internal ---
 
