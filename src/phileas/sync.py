@@ -1,11 +1,11 @@
-"""Two-way memory sync between Phileas stores (e.g. laptop <-> VPS).
+"""Two-way memory sync between Phileas stores (e.g. local <-> VPS).
 
 Phileas keeps the same logical store in three backends: SQLite (`memory.db`,
 canonical), ChromaDB (vectors, derived) and KuzuDB (entity graph, derived). Two
 machines that both write — the laptop (Claude Code) and the box (phone connector)
 — diverge. This module reconciles them.
 
-Design (see notes/vps/06-sync.md):
+Design:
 
 - **Union by id, newest-wins.** Memory ids are stable uuid4s, so a genuinely new
   memory on either side never collides. When the same id exists on both, the row
