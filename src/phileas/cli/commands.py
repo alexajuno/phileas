@@ -363,6 +363,53 @@ def scope_cmd(
 
 
 # ------------------------------------------------------------------
+# resolve (AA-120)
+# ------------------------------------------------------------------
+
+
+@click.command("resolve")
+@click.argument("memory_id")
+@click.argument("other_id")
+@click.argument("resolution", type=click.Choice(["supersede", "scope", "coexist"]))
+@click.option("--context", "contexts", multiple=True, help="Context for MEMORY_ID (scope; repeatable).")
+@click.option("--other-context", "other_contexts", multiple=True, help="Context for OTHER_ID (scope; repeatable).")
+@click.option("--confidence", default=None, type=float, help="0-1 weight for an open (coexist) contradiction.")
+def resolve_cmd(
+    memory_id: str,
+    other_id: str,
+    resolution: str,
+    contexts: tuple[str, ...],
+    other_contexts: tuple[str, ...],
+    confidence: float | None,
+):
+    """Resolve a contradiction between two memories.
+
+    RESOLUTION is one of: supersede (MEMORY_ID is right, OTHER_ID is archived),
+    scope (each true in its own context — pass --context / --other-context), or
+    coexist (a genuine open contradiction — optional --confidence). Both ids
+    accept a full uuid or an 8-char prefix.
+    """
+    params = {
+        "memory_id": memory_id,
+        "other_id": other_id,
+        "resolution": resolution,
+        "contexts": list(contexts) or None,
+        "other_contexts": list(other_contexts) or None,
+        "confidence": confidence,
+    }
+    try:
+        resp = _daemon_call("resolve_contradiction", params)
+        if resp and resp.get("ok"):
+            click.echo(resp["result"])
+            return
+        engine = _get_engine()
+        click.echo(engine.resolve_contradiction(**params))
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
+
+
+# ------------------------------------------------------------------
 # update
 # ------------------------------------------------------------------
 

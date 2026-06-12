@@ -242,6 +242,14 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
                 quals.append("historical")
             types = "/".join(r.get("context_types") or []) or "?"
             lines.append(f"    {r['context_name']} [{types}] ({', '.join(quals)})")
+    # Contradictions (AA-120): only render when present.
+    contradictions = result.get("contradictions") or []
+    if contradictions:
+        lines.append(f"  contradicts {len(contradictions)} memory(ies):")
+        for c in contradictions:
+            kind = "resolved by context" if c.get("resolution") == "context" else "open"
+            tail = f", confidence={c['confidence']}" if c.get("confidence") is not None else ""
+            lines.append(f"    [{id8(c['memory_id'])}] ({kind}{tail})")
     return {"items": [result], "text": "\n".join(lines)}
 
 

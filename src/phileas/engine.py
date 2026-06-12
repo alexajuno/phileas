@@ -54,6 +54,17 @@ CONTEXT_EXCLUDED_DEMOTE = 0.5  # polarity='excluded' covering the active context
 CONTEXT_HISTORICAL_DEMOTE = 0.2  # valid_to in the past — demote as historical
 CONTEXT_HOP_CAP = 3  # max PART_OF hops walked for lifting (ancestors) and descendants
 
+# Contradiction detection at memorize time (AA-120). A synchronous probe of the
+# nearest active memory: close enough to be about the same thing (floor), but not
+# so close it is a near-verbatim restatement (ceiling). The band overlaps the
+# async reinforcement band [0.70, 0.95) on purpose — a restatement may both bump
+# the reinforcement count and surface here. A hit only *surfaces* the resolve
+# menu; the agent judges whether it is a genuine conflict (vs a restatement or a
+# merely-related fact) and picks a resolution. Loose by design: a false flag is
+# cheap to ignore, a miss coexists silently.
+CONTRADICTION_SIM_FLOOR = 0.75  # below this the two memories aren't about the same thing
+CONTRADICTION_SIM_CEILING = 0.98  # at/above this it's a near-verbatim restatement, not a conflict
+
 
 def _days_since(dt: datetime | None, fallback: datetime | None = None) -> float:
     """Days since a given datetime, with optional fallback (e.g. created_at)."""
@@ -293,6 +304,14 @@ class MemoryEngine:
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         for s in scopes:
             s["historical"] = _scope_is_expired(s, now_utc)
+        # Contradictions (AA-120): memories this one is in conflict with, with
+        # how the conflict was settled ('context' = contextual variants, 'open'
+        # = competing hypotheses). Empty ⇒ no recorded conflict.
+        contradictions: list[dict] = []
+        try:
+            contradictions = self.graph.get_contradictions_for_memory(item.id)
+        except Exception as e:
+            log.debug("hydrate contradiction lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
         return {
             "id": item.id,
             "summary": item.summary,
@@ -307,6 +326,7 @@ class MemoryEngine:
             "source_event_id": item.source_event_id,
             "entities": entities,
             "scopes": scopes,
+            "contradictions": contradictions,
         }
 
     def serendipity(self, n: int = 3, exclude_ids: list[str] | None = None) -> list[dict]:
@@ -373,6 +393,7 @@ class MemoryEngine:
         relationships: list[dict] | None = None,
         source_event_id: str | None = None,
         contexts: list[str] | None = None,
+        detect_conflict: bool = True,
     ) -> dict:
         """Store a memory across all three backends.
 
@@ -384,7 +405,12 @@ class MemoryEngine:
         Context-typed entity and gets a SCOPED_TO edge. No contexts ⇒ the
         memory is globally valid, exactly as before (AA-118).
 
-        Returns a dict with keys: id, summary.
+        `detect_conflict` runs a synchronous probe for an existing active memory
+        the new one may contradict (AA-120). On a hit the result carries a
+        ``contradiction`` payload — the resolve menu for the caller to act on.
+        Disable for bulk/non-interactive writes that won't read the menu.
+
+        Returns a dict with keys: id, summary (plus contradiction when found).
         """
         op_extra(
             memory_type=memory_type,
@@ -417,10 +443,22 @@ class MemoryEngine:
 
         self.db.save_item(item)
 
-        # 4. Add to ChromaDB (with type metadata for future filtering)
+        # 4. Probe for a possible conflict *before* the new embedding lands, so
+        # the nearest-neighbour search can't match the memory against itself
+        # (AA-120). Held aside and attached to the result after the write.
+        conflict = None
+        if detect_conflict:
+            try:
+                conflict = self.vector.find_similar(
+                    summary, floor=CONTRADICTION_SIM_FLOOR, ceiling=CONTRADICTION_SIM_CEILING
+                )
+            except Exception as e:
+                log.debug("contradiction probe failed", extra={"op": "memorize", "data": {"error": str(e)}})
+
+        # 5. Add to ChromaDB (with type metadata for future filtering)
         self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
 
-        # 5. Link entities and relationships in KuzuDB
+        # 6. Link entities and relationships in KuzuDB
         if entities:
             for entity in entities:
                 name = entity.get("name")
@@ -463,21 +501,35 @@ class MemoryEngine:
                 except Exception as e:
                     log.debug("scope edge failed", extra={"op": "memorize", "data": {"context": ctx, "error": str(e)}})
 
-        # 6. Link memory to Day entity in graph
+        # 7. Link memory to Day entity in graph
         self._link_day_entity(item.id, daily_ref)
 
         op_extra(id=item.id)
 
-        # 7. Queue reinforcement check to daemon (async)
+        # 8. Queue reinforcement check to daemon (async)
         self._queue_reinforcement(item.id, summary)
 
-        # 6. Contradiction check is now agent-driven: the host Claude can
-        # call `recall` before memorize and decide for itself whether the
-        # new memory supersedes anything.
         result: dict = {"id": item.id, "summary": item.summary}
 
-        # 7. Entity extraction is agent-driven too: callers should pass
-        # `entities` / `relationships` when they have them.
+        # 9. Surface a conflict candidate for the caller to resolve (AA-120). The
+        # probe flags topical nearness; the agent decides whether it is a genuine
+        # contradiction and, if so, calls resolve_contradiction with the choice.
+        if conflict:
+            cand_id, similarity = conflict
+            cand = self.db.get_item(cand_id)
+            if cand and cand.status == "active":
+                result["contradiction"] = {
+                    "new_id": item.id,
+                    "candidate_id": cand.id,
+                    "candidate_summary": cand.summary,
+                    "similarity": round(similarity, 3),
+                    "options": ["supersede", "scope", "coexist"],
+                    "explanation": (
+                        f"Highly similar to active memory [{cand.id[:8]}] "
+                        f"(similarity {round(similarity, 3)}). If they genuinely conflict, "
+                        "resolve via resolve_contradiction; if not, ignore."
+                    ),
+                }
 
         try:
             self._metrics.record_ingest(
@@ -1045,6 +1097,13 @@ class MemoryEngine:
         # Applied *after* the relevance_floor filter so a demotion can lower rank
         # but never drop a memory ("demote, don't drop"). Skipped entirely when
         # no context is passed — that path stays byte-identical to today.
+        #
+        # A CONTRADICTS pair (AA-120) is handled here implicitly: a scoped-both
+        # pair has disjoint contexts, so under an active context one side is
+        # boosted and the other demoted *once* by the scope scoring below. The
+        # CONTRADICTS edge adds no recall penalty of its own — doing so would
+        # double-demote the disjoint side. Contextual variation is a scope
+        # concern, not an edge concern; keep it that way.
         # ----------------------------------------------------------
         ctx_name = (context or "").strip()
         if ctx_name:
@@ -1455,6 +1514,125 @@ class MemoryEngine:
         if confidence is not None:
             quals.append(f"confidence={confidence}")
         return f"{verb} [{item.id[:8]}] to context '{result.get('context_name', context)}' ({', '.join(quals)})."
+
+    # ------------------------------------------------------------------
+    # resolve_contradiction (AA-120)
+    # ------------------------------------------------------------------
+
+    def _resolve_one(self, memory_id: str) -> MemoryItem | str:
+        """Resolve an id (full uuid or 8-char prefix) to one item, or an error string."""
+        clean = (memory_id or "").strip()
+        if not clean:
+            return "a memory id is required."
+        matches = self.db.get_items_by_id_prefix(clean)
+        if not matches:
+            return f"No memory found for id '{clean}'."
+        if len(matches) > 1:
+            lines = [f"Ambiguous id prefix '{clean}' matched {len(matches)} memories — disambiguate:"]
+            lines.extend(f"  [{m.id[:8]}] {m.summary}" for m in matches)
+            return "\n".join(lines)
+        return matches[0]
+
+    def _apply_scopes(self, memory_id: str, contexts: list[str] | None) -> list[str]:
+        """Scope a memory to each named context; return the names that took."""
+        applied: list[str] = []
+        for ctx in contexts or []:
+            name = (ctx or "").strip()
+            if not name:
+                continue
+            res = self.graph.add_scope(memory_id, name)
+            if res.get("ok"):
+                applied.append(res.get("context_name") or name)
+            else:
+                log.debug(
+                    "scope edge failed during resolve",
+                    extra={"op": "resolve_contradiction", "data": {"context": name, "reason": res.get("reason")}},
+                )
+        return applied
+
+    @timed_op("resolve_contradiction")
+    def resolve_contradiction(
+        self,
+        memory_id: str,
+        other_id: str,
+        resolution: str,
+        contexts: list[str] | None = None,
+        other_contexts: list[str] | None = None,
+        confidence: float | None = None,
+    ) -> str:
+        """Resolve a flagged contradiction between two memories (AA-120).
+
+        ``memory_id`` and ``other_id`` are the conflicting pair (full uuid or
+        8-char prefix). ``resolution`` is one of:
+
+          - ``supersede`` — ``memory_id`` is correct, ``other_id`` is wrong:
+            archive ``other_id`` and link ``memory_id`` -[SUPERSEDES]-> it,
+            joining the existing correction trail (if the *new* memory is the
+            wrong one, ``forget`` it instead).
+          - ``scope`` — each holds in its own context: scope ``memory_id`` to
+            ``contexts`` and ``other_id`` to ``other_contexts``, then mark the
+            pair CONTRADICTS resolved-by-context so recall reads them as
+            contextual variants rather than rivals.
+          - ``coexist`` — a genuine open contradiction (competing hypotheses):
+            record a CONTRADICTS edge weighted by ``confidence`` and leave both
+            active.
+
+        No auto-resolution — the caller has judged the conflict real and chosen
+        the branch. Returns a human-readable summary of what changed.
+        """
+        op_extra(memory_id=memory_id, other_id=other_id, resolution=resolution)
+        resolution = (resolution or "").strip().lower()
+        if resolution not in ("supersede", "scope", "coexist"):
+            return f"Unknown resolution {resolution!r} (use 'supersede', 'scope', or 'coexist')."
+
+        survivor = self._resolve_one(memory_id)
+        if isinstance(survivor, str):
+            return survivor
+        other = self._resolve_one(other_id)
+        if isinstance(other, str):
+            return other
+        if survivor.id == other.id:
+            return "memory_id and other_id refer to the same memory."
+
+        if resolution == "supersede":
+            self.db.archive_item(other.id)
+            for delete in (self.vector.delete, self.vector.delete_raw):
+                try:
+                    delete(other.id)
+                except Exception as e:
+                    log.debug(
+                        "vector delete failed during supersede",
+                        extra={"op": "resolve_contradiction", "data": {"id": other.id, "error": str(e)}},
+                    )
+            self.graph.link_memory_to_memory(survivor.id, "SUPERSEDES", other.id)
+            return f"Superseded [{other.id[:8]}] (archived) with [{survivor.id[:8]}] — linked SUPERSEDES."
+
+        if resolution == "scope":
+            # Precondition checked against the *input*, not the write result, so
+            # the message is right even if a (proxied) scope write degrades.
+            want_new = [c.strip() for c in (contexts or []) if c and c.strip()]
+            want_old = [c.strip() for c in (other_contexts or []) if c and c.strip()]
+            if not (want_new and want_old):
+                return (
+                    "scope needs a context for each memory: pass contexts=[...] for "
+                    f"[{survivor.id[:8]}] and other_contexts=[...] for [{other.id[:8]}]."
+                )
+            self._apply_scopes(survivor.id, want_new)
+            self._apply_scopes(other.id, want_old)
+            res = self.graph.add_contradiction(survivor.id, other.id, resolution="context")
+            if not res.get("ok"):
+                return f"Scoped both, but the CONTRADICTS edge failed: {res.get('reason', 'graph unavailable')}."
+            return (
+                f"Scoped [{survivor.id[:8]}] to {want_new} and [{other.id[:8]}] to {want_old}; "
+                "marked CONTRADICTS resolved-by-context."
+            )
+
+        # coexist
+        res = self.graph.add_contradiction(survivor.id, other.id, resolution="open", confidence=confidence)
+        if not res.get("ok"):
+            return f"Coexist failed: {res.get('reason', 'graph unavailable')}."
+        conf = f" (confidence {confidence})" if confidence is not None else ""
+        return f"Recorded open contradiction between [{survivor.id[:8]}] and [{other.id[:8]}]{conf}; both stay active."
 
     # ------------------------------------------------------------------
     # about
