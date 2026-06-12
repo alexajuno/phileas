@@ -46,6 +46,21 @@ def _seed(eng: MemoryEngine, summary: str, **kw) -> str:
     return item.id
 
 
+def _seed_corpus(eng: MemoryEngine, n: int = 8) -> None:
+    """Seed unrelated memories so a single shared query term is discriminative.
+
+    A scoped-pair test keyword-matches one term ("router") across the two
+    memories under test. With only those two in the store the term sits in every
+    memory, so its inverse document frequency — and the keyword relevance floor
+    that scales by it — is zero, and the relevance cut keeps just one. Memories
+    that do not carry the term restore a real document frequency, so both surface
+    and the active context decides their order. These carry no query term and no
+    embedding, so they never enter a result themselves.
+    """
+    for i in range(n):
+        _seed(eng, f"background note {i} on gardening, baking, and the weather")
+
+
 def _mem_rel_count(eng: MemoryEngine, from_id: str, to_id: str, edge_type: str) -> int:
     """Directed MEM_REL edge count of a given type — for asserting SUPERSEDES."""
     eng.graph._ensure_connected()
@@ -226,6 +241,7 @@ def test_scope_both_surfaces_per_context(tmp_dir: Path):
     """A scoped-both pair ranks by the active context, each above the other in
     its own scope (the design's contextual-variation outcome)."""
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     a = _seed(eng, "router work happens in this repo", importance=5)
     b = _seed(eng, "router work happens over there", importance=5)
     eng.resolve_contradiction(a, b, "scope", contexts=["phileas"], other_contexts=["ai router"])
@@ -242,6 +258,7 @@ def test_contradicts_edge_does_not_double_demote(tmp_dir: Path):
     a disjoint memory that contradicts scores the same as a disjoint memory that
     doesn't. Contextual variation is handled by SCOPED_TO, not by the edge."""
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     anchor = _seed(eng, "router work happens in this repo", importance=5)
     contradicting = _seed(eng, "router work happens over there", importance=5)
     plain = _seed(eng, "router work happens over there", importance=5)  # identical content to `contradicting`

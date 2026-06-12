@@ -116,6 +116,22 @@ def _seed(eng: MemoryEngine, summary: str, **kw) -> str:
     return item.id
 
 
+def _seed_corpus(eng: MemoryEngine, n: int = 8) -> None:
+    """Seed unrelated memories so a single shared query term is discriminative.
+
+    The integration tests below keyword-match one term across two crafted
+    memories to isolate the context delta. With only those two in the store the
+    term sits in 100% of memories, so its inverse document frequency — and the
+    keyword relevance floor that scales by it — is zero, and neither memory
+    clears the relevance cut. Memories that do not contain the term give it a
+    real document frequency, restoring the floor and the uniform base relevance
+    the context delta is then measured against. These carry no query term and no
+    embedding, so they never enter a result themselves.
+    """
+    for i in range(n):
+        _seed(eng, f"background note {i} on gardening, baking, and the weather")
+
+
 def _ids(results: list[dict]) -> list[str]:
     return [r["id"] for r in results]
 
@@ -150,6 +166,7 @@ def test_expand_context_walks_part_of(tmp_dir: Path):
 def test_no_context_passthrough_ignores_scopes(tmp_dir: Path):
     """recall(query) with no context never reads scope edges (byte-identical)."""
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     ts = dt.datetime(2026, 1, 1, 12, 0, 0)
     scoped = _seed(eng, "widget alpha", id="aaaa0000-0000-0000-0000-000000000000", created_at=ts)
     plain = _seed(eng, "widget alpha", id="bbbb0000-0000-0000-0000-000000000000", created_at=ts)
@@ -195,6 +212,7 @@ def test_no_context_does_no_scope_reads(tmp_dir: Path):
 
 def test_in_context_boost_outranks_disjoint(tmp_dir: Path):
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     # Distinct summaries (both keyword-match "minimal") so the ranking is driven
     # by the context delta, not coupled to embedding/MMR diversity behaviour.
     in_ctx = _seed(eng, "minimal diffs preferred here", importance=5)
@@ -211,6 +229,7 @@ def test_in_context_boost_outranks_disjoint(tmp_dir: Path):
 def test_lifting_parent_scope_found_from_child_context(tmp_dir: Path):
     """A memory scoped to a parent context is boosted when querying a child."""
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     lifted = _seed(eng, "convention about diffs", importance=5)
     disjoint = _seed(eng, "convention for something else", importance=5)
     eng.graph.add_scope(lifted, "phileas")  # parent context
@@ -225,6 +244,7 @@ def test_lifting_parent_scope_found_from_child_context(tmp_dir: Path):
 
 def test_excluded_in_context_demoted_below_peer(tmp_dir: Path):
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     excluded = _seed(eng, "srt prefix rule one", importance=5)
     normal = _seed(eng, "srt prefix rule two", importance=5)
     eng.graph.add_scope(excluded, "bug-fix work", polarity="excluded")
@@ -241,6 +261,7 @@ def test_excluded_in_context_demoted_below_peer(tmp_dir: Path):
 
 def test_expired_validity_retrievable_but_ranked_down(tmp_dir: Path):
     eng = _engine(tmp_dir)
+    _seed_corpus(eng)
     fresh = _seed(eng, "router ownership current", importance=5)
     expired = _seed(eng, "router ownership past", importance=5)
     eng.graph.add_scope(fresh, "ai team")

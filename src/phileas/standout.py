@@ -34,10 +34,10 @@ from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Strategies: (sorted-desc scores, **params) -> keep-count from the top.
-# The distribution-based ones self-guard on tiny inputs (``small_set``) where a
-# single gap/std is noise; ``absolute`` and ``ratio`` are well-defined at any size.
-# Every strategy swallows unknown kwargs (**_) so the scaffolding can pass a
-# uniform param bundle.
+# The relative ones self-guard on tiny inputs (``small_set``) where one gap / std
+# / fraction-of-top is noise rather than signal; ``absolute`` is a flat threshold
+# that is well-defined at any size. Every strategy swallows unknown kwargs (**_)
+# so the scaffolding can pass a uniform param bundle.
 # ---------------------------------------------------------------------------
 
 
@@ -96,13 +96,20 @@ def _strat_zscore(s: list[float], *, k: float = 0.5, small_set: int = 3, **_) ->
     return max(sum(1 for x in s if x >= thresh), 1)
 
 
-def _strat_ratio(s: list[float], *, ratio: float = 0.7, **_) -> int:
-    """Keep scores within ``ratio`` of the top score — scale-free, robust at any size."""
-    if not s:
-        return 0
+def _strat_ratio(s: list[float], *, ratio: float = 0.7, small_set: int = 3, **_) -> int:
+    """Keep scores within ``ratio`` of the top score — a scale-free head-selector.
+
+    On a small set the top score is essentially the only reference point, so the
+    fraction test separates near-equal neighbours on noise; keep everything at or
+    below ``small_set`` and apply the threshold only once there is a real spread
+    to measure.
+    """
+    n = len(s)
+    if n <= small_set:
+        return n
     top = s[0]
     if top <= 0:
-        return len(s)
+        return n
     thresh = ratio * top
     return sum(1 for x in s if x >= thresh)
 

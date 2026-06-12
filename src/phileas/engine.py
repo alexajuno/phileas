@@ -10,6 +10,7 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 from datetime import date, datetime, timezone
@@ -44,12 +45,14 @@ COSINE_MIN_KEEP = 0  # semantic paths are additive to keyword/graph — force no
 RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
 RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
 
-# Structural floor for a keyword hit, scaled by query coverage at the scoring
-# site. A summary covering ALL query tokens earns the full floor; a lone
-# high-frequency token (or just the speaker's name) earns a fraction of it, so a
-# common token can't flood the pool with same-score hits and flatten the cosine
-# ordering that actually locates the answer. Below full coverage the cosine
-# signal carries the rank instead of an identical pinned score.
+# Structural floor for a keyword hit, scaled at the scoring site by the rarity
+# (inverse document frequency) of the rarest query term the summary matched. A
+# match on a discriminative term (a place named once) earns the full floor and
+# beats graph/semantic noise; a match on a corpus-common term (a frequent name,
+# a filler word) earns almost nothing and falls back to cosine — so a
+# high-frequency token can't floor hundreds of memories to the same score and
+# bury the cosine ordering that actually locates the answer. The head-selecting
+# relevance cut then keeps only what's within reach of the top.
 KEYWORD_STRUCT_FLOOR = 0.85
 
 # Candidate-gather pool size, deliberately decoupled from the caller's requested
@@ -673,8 +676,12 @@ class MemoryEngine:
 
         # One distributional cut method, shared by the cosine entry gates
         # (Paths 2/5/6) and the post-rerank relevance cut. PHILEAS_STANDOUT can
-        # override it for a benchmark sweep; the default is the gap strategy.
-        _cut_method, _cut_params = resolve_strategy()
+        # override it for a benchmark sweep. The default is `ratio` — keep what's
+        # within a fraction of the top score. It is a HEAD-selector: with no
+        # top_k cap the result size is the cut's job, and ratio keeps the
+        # genuinely-relevant head and bounds broad queries, where `gap` (a
+        # tail-trimmer) keeps the whole pool whenever there is no single cliff.
+        _cut_method, _cut_params = resolve_strategy(default="ratio")
 
         # Path 1: keyword search (SQLite, per-token OR-match ranked by coverage).
         # No stopword stripping. A multi-token query matches summaries holding
@@ -1108,10 +1115,21 @@ class MemoryEngine:
         _mark("rerank")
 
         # Build unified relevance map
-        # Query tokens for keyword coverage — same tokenization the keyword
-        # search uses, so coverage reflects exactly what put a memory in the pool.
+        # Query tokens + a rarity weight per token, for flooring keyword hits by
+        # term discriminativeness. idf_weight maps document frequency to [0, 1]:
+        # ~1.0 for a term in a single memory, 0.0 for one in every memory. Same
+        # tokenization the keyword search uses, so a term's weight matches what
+        # it was matched on.
         _q_tokens = query.lower().split()
-        _q_token_count = len(_q_tokens) or 1
+        _doc_freq, _active_total = self.db.doc_frequencies(_q_tokens)
+        _log_n = math.log(_active_total) if _active_total > 1 else 1.0
+
+        def _idf_weight(token: str) -> float:
+            df = _doc_freq.get(token, 0)
+            if df <= 0:
+                return 0.0
+            return min(1.0, math.log(_active_total / df) / _log_n)
+
         relevance_map: dict[str, float] = {}
         for mem_id in filtered:
             cosine = cosine_map.get(mem_id, 0.0)
@@ -1127,15 +1145,17 @@ class MemoryEngine:
                 # normalisation artefacts alone.
                 relevance_map[mem_id] = max(cosine, 0.95)
             elif mem_id in keyword_ids:
-                # Summary directly contains query terms — a structural signal,
-                # but only as strong as the share of the query it covers. Scale
-                # the floor by coverage: a memory mentioning every query token
-                # beats pure graph expansions, while a memory matching one
-                # common token (or just the speaker's name) falls back to its
-                # cosine and can't crowd out the real answer at a pinned score.
+                # Summary directly contains query terms — a structural signal as
+                # strong as the rarest term it matched. Floor by that term's
+                # rarity: a memory matching a discriminative term (a place, a
+                # proper noun) beats graph/semantic noise, while a memory matching
+                # only a corpus-common token (a frequent name, a filler word)
+                # falls back to its cosine and can't crowd out the real answer at
+                # a pinned score. This is what lets a rare exact-term match (low
+                # cosine, e.g. "Sweden") survive while a common-term flood doesn't.
                 summary_lc = filtered[mem_id].summary.lower()
-                coverage = sum(1 for t in _q_tokens if t in summary_lc) / _q_token_count
-                relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * coverage)
+                rarity = max((_idf_weight(t) for t in _q_tokens if t in summary_lc), default=0.0)
+                relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * rarity)
             elif mem_id in graph_ids:
                 # Graph-expanded but no keyword match. The hop already gated on
                 # query relevance (only the entity's standout memories entered),

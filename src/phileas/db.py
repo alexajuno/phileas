@@ -209,6 +209,27 @@ class Database:
         rows = self.conn.execute(sql, sql_params).fetchall()
         return [self._row_to_item(row) for row in rows]
 
+    def doc_frequencies(self, tokens: list[str]) -> tuple[dict[str, int], int]:
+        """Per-token active-memory document frequency, plus the active total.
+
+        Returns ``({token: count of active summaries containing it}, active_total)``
+        using the same substring LIKE semantics as ``search_by_keyword`` so the
+        frequency a token's match is weighted by is the frequency it was matched
+        on. Lets recall weight a keyword hit by term rarity (IDF): a match on a
+        rare, discriminative term is a strong signal; a match on a corpus-wide
+        common term (a frequent name, a filler word) is weak. One COUNT per
+        distinct token — cheap for the handful of tokens a query carries.
+        """
+        total = self.conn.execute("SELECT COUNT(*) FROM memory_items WHERE status = 'active'").fetchone()[0]
+        freqs: dict[str, int] = {}
+        for tok in {t.lower() for t in tokens if t}:
+            row = self.conn.execute(
+                "SELECT COUNT(*) FROM memory_items WHERE status = 'active' AND LOWER(summary) LIKE ?",
+                (f"%{tok}%",),
+            ).fetchone()
+            freqs[tok] = row[0] if row else 0
+        return freqs, total
+
     @_locked
     def archive_item(self, item_id: str, reason: str | None = None) -> None:
         self.conn.execute(
