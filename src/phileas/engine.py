@@ -45,6 +45,14 @@ COSINE_MIN_KEEP = 0  # semantic paths are additive to keyword/graph — force no
 RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
 RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
 
+# Structural floor for a keyword hit, scaled by query coverage at the scoring
+# site. A summary covering ALL query tokens earns the full floor; a lone
+# high-frequency token (or just the speaker's name) earns a fraction of it, so a
+# common token can't flood the pool with same-score hits and flatten the cosine
+# ordering that actually locates the answer. Below full coverage the cosine
+# signal carries the rank instead of an identical pinned score.
+KEYWORD_STRUCT_FLOOR = 0.85
+
 # Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph bridge).
 # Both scale O(seeds × entities × neighbours); on entity-rich queries Path 3
 # already saturates the pool, so iterating thousands of seeds finds duplicates.
@@ -1069,6 +1077,10 @@ class MemoryEngine:
 
         # Build unified relevance map
         graph_boost = GRAPH_BOOST
+        # Query tokens for keyword coverage — same tokenization the keyword
+        # search uses, so coverage reflects exactly what put a memory in the pool.
+        _q_tokens = query.lower().split()
+        _q_token_count = len(_q_tokens) or 1
         relevance_map: dict[str, float] = {}
         for mem_id in filtered:
             cosine = cosine_map.get(mem_id, 0.0)
@@ -1084,12 +1096,15 @@ class MemoryEngine:
                 # normalisation artefacts alone.
                 relevance_map[mem_id] = max(cosine, 0.95)
             elif mem_id in keyword_ids:
-                # Summary directly contains stop-word-filtered query terms.
-                # This is the highest-confidence structural signal: the
-                # memory's own text mentions what was asked about.
-                # Give it a high floor so it beats pure graph expansions
-                # that carry no query-term signal at all.
-                relevance_map[mem_id] = max(cosine, 0.85)
+                # Summary directly contains query terms — a structural signal,
+                # but only as strong as the share of the query it covers. Scale
+                # the floor by coverage: a memory mentioning every query token
+                # beats pure graph expansions, while a memory matching one
+                # common token (or just the speaker's name) falls back to its
+                # cosine and can't crowd out the real answer at a pinned score.
+                summary_lc = filtered[mem_id].summary.lower()
+                coverage = sum(1 for t in _q_tokens if t in summary_lc) / _q_token_count
+                relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * coverage)
             elif mem_id in graph_ids:
                 # Graph-expanded but no keyword match.
                 # hop=0: query word matched an entity name (moderate floor).
