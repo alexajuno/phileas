@@ -92,6 +92,49 @@ every one cut → empty result.
 - Replace evidence-rank with an **answer-level judge** (LoCoMo's own protocol)
   before trusting any aggregate — evidence-rank both under- and over-counts (¹, Q6).
 
+## Status — after the recall rework (2026-06-12)
+
+The AA-136/137 work plus the follow-on recall rework landed on
+`feat/recall-threshold`: the gather pool is decoupled from `top_k`, the relevance
+cut governs result size (no count cap), the graph hop is relevance-gated (an
+entity match pulls only the memories that stand out for the query, not all of
+them), the keyword floor scales by term **rarity (IDF)** rather than coverage,
+and the default cut is `ratio` (a head-selector) rather than `gap` (a
+tail-trimmer). Re-scored conv0:
+
+| measure | result |
+|---------|--------|
+| conv0 smoke (top-10), graph ON / OFF | **6/9** |
+| threshold mode (no `top_k`), focused queries | 4–36 memories, self-bound |
+| broad-query breadth | bounded by the cut (`painting` 1, `Caroline` 82, was 389) |
+| Q16 "Caroline moved Sweden" | rescued — `D4:3` @2 (cosine 0.23 / sem-rank 415, via rare-term IDF) |
+
+The win conditions above are met except where they depend on faithful extraction
+(the `about()` firehose) or an answer-level judge.
+
+### Open problems — pick up here next session
+
+- [ ] **Q7 is a harness mislabel, not a recall miss.** Gold `D1:12` is the
+  counselor turn; the actual answer `D1:14` ("painted that lake sunrise") ranks
+  @2–4 in every mode. Replace evidence-rank scoring with an **answer-level judge**
+  (LoCoMo's own protocol) before trusting the 6/9 number — it both under- and
+  over-counts.
+- [ ] **Q6 is the same shape.** `D1:5` is one of several valid transgender turns;
+  `D17:19` (poetry reading) and `D9:6` (mentoring) legitimately rank above it.
+  Evidence-rank under-counts — another case for the answer-level judge.
+- [ ] **Q14 is a genuine vocabulary gap.** "self-care" vs "me-time… running,
+  reading, violin" — cosine 0.36, semantic rank ~254/400. Not a plumbing bug;
+  needs query expansion or a stronger embedder, neither of which the recall
+  rework touched.
+- [ ] **Faithful extraction.** The mechanical extractor tags the *speaker* on
+  every turn, so Caroline owns 211/419 memories — this inflates `about()`
+  (firehose) and the bare-entity breadth (`Caroline` → 82). Tag *mentioned*
+  entities instead, re-extract, and re-measure; both should narrow.
+- [ ] **Tier-2 real number.** This 9-case smoke is directional only. A quotable
+  LoCoMo figure needs the answer-level LLM judge + faithful extraction across all
+  10 conversations (the agent-in-loop Mode B in
+  [`docs/research/eval-benchmarks.md`](../../docs/research/eval-benchmarks.md)).
+
 ## Method sweep (distributional cut)
 
 `sweep_standout.py` re-runs the 9 baseline cases under each `PHILEAS_STANDOUT`
