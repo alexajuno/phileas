@@ -32,14 +32,16 @@ _MEMORY_TYPES: list[str] = list(get_args(MemoryType))
 
 # Recall tuning — internal retrieval knobs, never hand-tuned, so the defaults
 # live here as the single source of truth rather than behind a config layer.
-SIMILARITY_FLOOR = 0.5  # min cosine for a semantic/raw hit to enter candidates
 GRAPH_BOOST = 0.5  # relevance bump for graph-connected memories
 MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
 
 # Distributional retrieval cut (standout.standout_keep). The relevance DECISION is
 # the relative cut over each query's own score spread; these are only low backstops
-# — a garbage gate, never the cut itself. Kept well below the band real matches land
-# in, so lowering one can't re-introduce the absolute-floor bug.
+# — a garbage gate, never the cut itself. Kept well below the ~0.38 cosine band real
+# English matches land in, so lowering one can't re-introduce the absolute-floor bug.
+COSINE_HARD_FLOOR = 0.25  # backstop for semantic/raw cosine hits (Paths 2/5)
+EVENT_HARD_FLOOR = 0.20  # event chunks score lower under cosine (Path 6)
+COSINE_MIN_KEEP = 0  # semantic paths are additive to keyword/graph — force nothing in
 RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
 RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
 
@@ -651,6 +653,11 @@ class MemoryEngine:
         # Stage 1: Gather candidates from multiple paths
         # ----------------------------------------------------------
 
+        # One distributional cut method, shared by the cosine entry gates
+        # (Paths 2/5/6) and the post-rerank relevance cut. PHILEAS_STANDOUT can
+        # override it for a benchmark sweep; the default is the gap strategy.
+        _cut_method, _cut_params = resolve_strategy()
+
         # Path 1: keyword search (SQLite, per-token OR-match ranked by coverage).
         # No stopword stripping. A multi-token query matches summaries holding
         # any of its tokens, with full-overlap summaries ranked first, so a
@@ -674,12 +681,18 @@ class MemoryEngine:
             type_item_cache[mtype] = active
             all_type_ids.update(active.keys())
 
-        # Search vector once, filter client-side
+        # Search vector once, filter client-side. The distributional cut needs the
+        # whole score list, so keep-set first, then iterate the kept hits.
         if all_type_ids:
             semantic_hits = self.vector.search(query, top_k=_effective_top_k * 3)
-            for mem_id, sim in semantic_hits:
-                if sim < SIMILARITY_FLOOR:
-                    continue
+            for k in standout_keep(
+                [sim for _, sim in semantic_hits],
+                hard_floor=COSINE_HARD_FLOOR,
+                min_keep=COSINE_MIN_KEEP,
+                method=_cut_method,
+                **_cut_params,
+            ):
+                mem_id, _sim = semantic_hits[k]
                 if mem_id not in all_type_ids:
                     continue
                 semantic_ids.add(mem_id)
@@ -958,9 +971,14 @@ class MemoryEngine:
         # Searches the raw_memories ChromaDB collection — catches details
         # lost during summarization (names, places, specific phrases).
         raw_hits = self.vector.search_raw(query, top_k=_effective_top_k * 3)
-        for mem_id, sim in raw_hits:
-            if sim < SIMILARITY_FLOOR:
-                continue
+        for k in standout_keep(
+            [sim for _, sim in raw_hits],
+            hard_floor=COSINE_HARD_FLOOR,
+            min_keep=COSINE_MIN_KEEP,
+            method=_cut_method,
+            **_cut_params,
+        ):
+            mem_id, _sim = raw_hits[k]
             raw_text_ids.add(mem_id)
             if mem_id not in candidates:
                 item = self.db.get_item(mem_id)
@@ -973,13 +991,17 @@ class MemoryEngine:
         # tagged hop=1 (one structural step from the matching event).
         # Verbatim event passages themselves are not memory rows, so they
         # are not added to `candidates` here — only the sibling memories are.
-        # Lower floor than memory search: long event chunks score lower
+        # Lower backstop than memory search: long event chunks score lower
         # under cosine than focused summaries.
-        event_floor = min(0.25, SIMILARITY_FLOOR)
         event_hits = self.vector.search_events(query, top_k=20)
-        for event_id, sim in event_hits:
-            if sim < event_floor:
-                continue
+        for k in standout_keep(
+            [sim for _, sim in event_hits],
+            hard_floor=EVENT_HARD_FLOOR,
+            min_keep=0,
+            method=_cut_method,
+            **_cut_params,
+        ):
+            event_id, _sim = event_hits[k]
             for sibling in self.db.get_memories_for_event(event_id):
                 event_thread_ids.add(sibling.id)
                 if sibling.id not in candidates:
@@ -1091,14 +1113,13 @@ class MemoryEngine:
         # RELEVANCE_MIN_KEEP keeps the best reranked item.
         ce_ids = [m for m in filtered if m not in structurally_matched]
         if ce_ids:
-            ce_method, ce_params = resolve_strategy()
             keep_pos = set(
                 standout_keep(
                     [relevance_map.get(m, 0.0) for m in ce_ids],
                     hard_floor=RELEVANCE_HARD_FLOOR,
                     min_keep=RELEVANCE_MIN_KEEP,
-                    method=ce_method,
-                    **ce_params,
+                    method=_cut_method,
+                    **_cut_params,
                 )
             )
             for idx, mem_id in enumerate(ce_ids):
