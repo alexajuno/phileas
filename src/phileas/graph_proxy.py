@@ -226,6 +226,37 @@ class GraphProxy:
     def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
         self._write("link_memory_to_memory", {"from_id": from_id, "edge_type": edge_type, "to_id": to_id})
 
+    def add_contradiction(
+        self,
+        from_id: str,
+        to_id: str,
+        resolution: str = "open",
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        try:
+            from phileas.daemon import call
+
+            response = call(
+                "graph_write",
+                {
+                    "op": "add_contradiction",
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "resolution": resolution,
+                    "confidence": confidence,
+                },
+            )
+            if response is not None and response.get("ok", False):
+                inner = response.get("result") or {}
+                if inner.get("ok", False):
+                    return inner.get("summary") or {}
+        except Exception:
+            pass
+        return {"ok": False, "reason": "daemon unavailable"}
+
+    def get_contradictions_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
+        return self._read("get_contradictions_for_memory", {"memory_id": memory_id}, default=[])
+
     # -- Neighborhood / stats --
 
     def get_neighborhood(self, node_type: str, name: str, depth: int = 1) -> list[dict[str, Any]]:

@@ -36,7 +36,7 @@ _sync_pusher: SyncPusher | None = None
 # Dispatch methods that mutate the canonical (synced) store and should arm a
 # push. Events ride along incrementally on the next push, and the derived graph
 # is rebuilt on import, so neither needs its own trigger here.
-_WRITE_METHODS = frozenset({"memorize", "forget", "update", "reflect"})
+_WRITE_METHODS = frozenset({"memorize", "forget", "update", "reflect", "resolve_contradiction"})
 
 
 def _pid_path(config: PhileasConfig) -> Path:
@@ -590,6 +590,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return engine.forget(**params)
     elif method == "scope":
         return engine.scope(**params)
+    elif method == "resolve_contradiction":
+        return engine.resolve_contradiction(**params)
     elif method == "update":
         # Ensure backward compat: old callers pass only memory_id + summary
         return engine.update(**params)
@@ -718,6 +720,14 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 confidence=params.get("confidence"),
             )
             return {"ok": True, "summary": summary}
+        elif op == "add_contradiction":
+            summary = graph.add_contradiction(
+                params["from_id"],
+                params["to_id"],
+                resolution=params.get("resolution", "open"),
+                confidence=params.get("confidence"),
+            )
+            return {"ok": True, "summary": summary}
         else:
             raise ValueError(f"Unknown graph_write op: {op}")
     elif method == "graph_read":
@@ -733,6 +743,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_scopes_for_memory(params["memory_id"])
         elif op == "get_scopes_for_memories":
             return graph.get_scopes_for_memories(params["memory_ids"])
+        elif op == "get_contradictions_for_memory":
+            return graph.get_contradictions_for_memory(params["memory_id"])
         elif op == "get_memories_in_context":
             return graph.get_memories_in_context(params["context"])
         elif op == "resolve_context":

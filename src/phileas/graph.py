@@ -6,7 +6,12 @@ Schema (4 edge tables, 2 node tables):
   Node: Memory(id STRING PK)
   Edge: ABOUT(Memory → Entity)
   Edge: REL(Entity → Entity, edge_type)
-  Edge: MEM_REL(Memory → Memory, edge_type)
+  Edge: MEM_REL(Memory → Memory, edge_type, resolution, confidence)
+        — SUPERSEDES (correction trail) and CONTRADICTS (a conflict between two
+        live memories). For CONTRADICTS, `resolution` records how the conflict
+        was resolved ('context' = each true in its own scope, 'open' = genuine
+        competing hypotheses) and `confidence` weights an open pair
+        (docs/contextual-knowledge-design.md, AA-120).
   Edge: SCOPED_TO(Memory → Entity, polarity, valid_from, valid_to, confidence)
         — McCarthy's ist(c, p): the memory holds (or is excluded) in the
         context entity it points at. A memory with no SCOPED_TO edges is
@@ -319,6 +324,9 @@ class GraphStore:
         # are populated even for rows that the older migrations inserted
         # before this column was added.
         self._ensure_normalized_columns()
+        # AA-120: widen MEM_REL with the CONTRADICTS resolve qualifiers on
+        # graphs created before those columns existed.
+        self._ensure_mem_rel_columns()
 
     def _create_new_tables(self) -> None:
         self._conn.execute(
@@ -332,7 +340,9 @@ class GraphStore:
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS ABOUT (FROM Memory TO Entity)")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS REL (FROM Entity TO Entity, edge_type STRING DEFAULT '')")
         self._conn.execute(
-            "CREATE REL TABLE IF NOT EXISTS MEM_REL (FROM Memory TO Memory, edge_type STRING DEFAULT '')"
+            "CREATE REL TABLE IF NOT EXISTS MEM_REL ("
+            "FROM Memory TO Memory, edge_type STRING DEFAULT '', "
+            "resolution STRING, confidence DOUBLE)"
         )
         self._conn.execute(
             "CREATE REL TABLE IF NOT EXISTS SCOPED_TO ("
@@ -382,6 +392,22 @@ class GraphStore:
                 parameters={"id": eid, "pn": norm_primary, "an": _dump_list(norm_aliases)},
             )
         log.info("AA-58 backfill: normalized %d entities", len(rows))
+
+    def _ensure_mem_rel_columns(self) -> None:
+        """Add the ``resolution`` + ``confidence`` columns to MEM_REL if absent.
+
+        AA-120: the CONTRADICTS resolve flow stores how a conflict was settled
+        on the edge. Graphs created before these columns existed get them added
+        here (nullable — existing SUPERSEDES edges are unaffected). Idempotent.
+        """
+        try:
+            self._conn.execute("MATCH ()-[r:MEM_REL]->() RETURN r.resolution LIMIT 1")
+            return
+        except RuntimeError:
+            pass
+        log.info("AA-120: adding MEM_REL resolution + confidence columns")
+        self._conn.execute("ALTER TABLE MEM_REL ADD resolution STRING")
+        self._conn.execute("ALTER TABLE MEM_REL ADD confidence DOUBLE")
 
     def _ensure_merge_log_table(self) -> None:
         """Create the MergeLog audit table if missing.
@@ -1750,6 +1776,84 @@ class GraphStore:
             "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
+
+    @_locked
+    def add_contradiction(
+        self,
+        from_id: str,
+        to_id: str,
+        resolution: str = "open",
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        """Record a CONTRADICTS edge between two memories (AA-120).
+
+        A contradiction is symmetric, so the edge is stored in a canonical
+        direction (smaller id → larger id): one edge per unordered pair, which
+        keeps it idempotent and lets a repeat call update the qualifiers in
+        place. ``resolution`` is 'context' (each memory holds in its own scope —
+        recall differentiates them) or 'open' (genuine competing hypotheses);
+        ``confidence`` weights an open pair. Reads (``get_contradictions_for_memory``)
+        traverse the edge undirected, so caller order never matters.
+        """
+        if not self._ensure_connected():
+            return {"ok": False, "reason": "graph unavailable"}
+        if not (from_id and to_id):
+            return {"ok": False, "reason": "from_id and to_id are required"}
+        if from_id == to_id:
+            return {"ok": False, "reason": "a memory cannot contradict itself"}
+        resolution = (resolution or "open").strip().lower()
+        if resolution not in ("context", "open"):
+            return {"ok": False, "reason": f"invalid resolution {resolution!r} (use 'context' or 'open')"}
+        # Canonical orientation: smaller id is always the FROM side. A directed
+        # SET in the as-stored direction avoids the reverse-undirected-SET crash
+        # in Kuzu's CSR rel storage.
+        lo, hi = sorted((from_id, to_id))
+        conf = float(confidence) if confidence is not None else None
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": lo})
+        self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": hi})
+        endpoints = {"lo": lo, "hi": hi}
+        count_result = self._conn.execute(
+            "MATCH (a:Memory {id: $lo})-[r:MEM_REL]->(b:Memory {id: $hi}) "
+            "WHERE r.edge_type = 'CONTRADICTS' RETURN COUNT(*) AS cnt",
+            parameters=endpoints,
+        )
+        created = count_result.get_next()[0] == 0
+        if created:
+            self._conn.execute(
+                "MATCH (a:Memory {id: $lo}), (b:Memory {id: $hi}) "
+                "CREATE (a)-[:MEM_REL {edge_type: 'CONTRADICTS', resolution: $res, confidence: $conf}]->(b)",
+                parameters={**endpoints, "res": resolution, "conf": conf},
+            )
+        else:
+            self._conn.execute(
+                "MATCH (a:Memory {id: $lo})-[r:MEM_REL]->(b:Memory {id: $hi}) "
+                "WHERE r.edge_type = 'CONTRADICTS' SET r.resolution = $res, r.confidence = $conf",
+                parameters={**endpoints, "res": resolution, "conf": conf},
+            )
+        return {"ok": True, "created": created, "resolution": resolution, "confidence": conf}
+
+    @_locked
+    def get_contradictions_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
+        """Return the CONTRADICTS partners of a memory (empty ⇒ none).
+
+        Traverses the edge undirected so it finds the partner regardless of the
+        canonical orientation ``add_contradiction`` stored it in.
+        """
+        if not (memory_id and self._ensure_connected()):
+            return []
+        result = self._conn.execute(
+            "MATCH (m:Memory {id: $mid})-[r:MEM_REL]-(o:Memory) "
+            "WHERE r.edge_type = 'CONTRADICTS' RETURN o.id, r.resolution, r.confidence",
+            parameters={"mid": memory_id},
+        )
+        try:
+            rows: list[dict[str, Any]] = []
+            while result.has_next():
+                r = result.get_next()
+                rows.append({"memory_id": r[0], "resolution": r[1] or "open", "confidence": r[2]})
+            return rows
+        finally:
+            result.close()
 
     # ------------------------------------------------------------------
     # Memory → Entity scoping edges (SCOPED_TO) — AA-118

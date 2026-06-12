@@ -138,6 +138,31 @@ def _pointer_lines(items: list[dict], *, show_date: bool = True) -> list[str]:
     )
 
 
+def _contradiction_menu(contradiction: dict | None) -> str:
+    """Render the supersede/scope/coexist resolve menu for a flagged conflict (AA-120).
+
+    Returns "" when memorize surfaced no conflict candidate. Otherwise the agent
+    reads the menu, judges whether the conflict is real, and — if so — calls
+    ``resolve_contradiction`` with the chosen branch.
+    """
+    if not contradiction:
+        return ""
+    new8 = contradiction["new_id"][:8]
+    cand8 = contradiction["candidate_id"][:8]
+    return "\n".join(
+        [
+            f'⚠ Possible conflict with [{cand8}] "{contradiction["candidate_summary"]}" '
+            f"(similarity {contradiction['similarity']}). If they genuinely conflict, resolve:",
+            f'  • supersede — new fact is right, old is wrong: resolve_contradiction("{new8}", "{cand8}", "supersede")',
+            f"  • scope     — each true in its own context: "
+            f'resolve_contradiction("{new8}", "{cand8}", "scope", contexts=[...], other_contexts=[...])',
+            f"  • coexist   — genuine open contradiction: "
+            f'resolve_contradiction("{new8}", "{cand8}", "coexist", confidence=...)',
+            "  If they are unrelated or one merely restates the other, ignore this.",
+        ]
+    )
+
+
 def _instrumented_tool(*tool_args, **tool_kwargs):
     """Wrap ``@_instrumented_tool()`` with MCP-call telemetry.
 
@@ -243,7 +268,9 @@ def memorize(
         contexts=parsed_contexts,
     )
 
-    return f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
+    stored = f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
+    menu = _contradiction_menu(result.get("contradiction"))
+    return f"{stored}\n{menu}" if menu else stored
 
 
 @_instrumented_tool()
@@ -298,7 +325,9 @@ def memorize_batch(memories: list | str) -> str:
             entities=parsed_entities,
             relationships=parsed_relationships,
             source_event_id=mem.get("source_event_id"),
-            contexts=parsed_contexts,
+            # Bulk writes aren't a place to act on a per-item resolve menu;
+            # surface conflicts via the single-memory `memorize` path (AA-120).
+            detect_conflict=False,
         )
 
         results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
@@ -489,6 +518,51 @@ def scope(
         polarity=polarity,
         valid_from=valid_from,
         valid_to=valid_to,
+        confidence=confidence,
+    )
+
+
+@_instrumented_tool()
+def resolve_contradiction(
+    memory_id: str,
+    other_id: str,
+    resolution: str,
+    contexts: list | str | None = None,
+    other_contexts: list | str | None = None,
+    confidence: float | None = None,
+) -> str:
+    """Resolve a contradiction `memorize` flagged between two memories.
+
+    When `memorize` warns that a new memory conflicts with an existing one, and
+    you judge the conflict genuine, call this with the branch that fits:
+
+      - "supersede": the old memory is wrong — `memory_id` (the correct one)
+        supersedes `other_id`, which is archived. Pass them winner-first. If it
+        is the *new* memory that is wrong, `forget` it instead of resolving.
+      - "scope": both are true, each in its own context — pass `contexts` for
+        `memory_id` and `other_contexts` for `other_id`. Each gets a SCOPED_TO
+        edge and the pair is marked a contextual variant, so a context-aware
+        recall surfaces the right one without the two penalizing each other.
+      - "coexist": a genuine open contradiction (competing live hypotheses) —
+        records the conflict with an optional `confidence` weight; both stay
+        active and contested.
+
+    Args:
+        memory_id: One memory's uuid or 8-char prefix (the survivor for supersede).
+        other_id: The conflicting memory's uuid or 8-char prefix.
+        resolution: "supersede", "scope", or "coexist".
+        contexts: For "scope" — list or JSON string of context names for `memory_id`.
+        other_contexts: For "scope" — context names for `other_id`.
+        confidence: For "coexist" — optional 0-1 weight on the contradiction.
+    """
+    parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
+    parsed_other = json.loads(other_contexts) if isinstance(other_contexts, str) else other_contexts
+    return engine.resolve_contradiction(
+        memory_id=memory_id,
+        other_id=other_id,
+        resolution=resolution,
+        contexts=parsed_contexts,
+        other_contexts=parsed_other,
         confidence=confidence,
     )
 
