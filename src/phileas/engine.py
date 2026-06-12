@@ -587,7 +587,7 @@ class MemoryEngine:
         Stage 2: Cross-encoder reranking (semantic relevance)
         Stage 3: MMR diversity selection + final scoring
 
-        ``context`` (AA-119) is an optional active-context name. When given, it
+        ``context`` is an optional active-context name. When given, it
         is resolved to a Context entity, expanded over the PART_OF hierarchy
         (lifting), and used to boost in-context memories / demote disjoint,
         excluded, or expired-validity ones in stage 2. When omitted, no scope
@@ -644,11 +644,11 @@ class MemoryEngine:
         # Stage 1: Gather candidates from multiple paths
         # ----------------------------------------------------------
 
-        # Path 1: keyword search (SQLite, AND-match).
-        # No stopword stripping — the agent passes focused term queries.
-        # Sentence-shaped queries return nothing (every token would need to
-        # appear in some summary); the recall MCP description teaches the
-        # multi-call pattern for compound questions.
+        # Path 1: keyword search (SQLite, per-token OR-match ranked by coverage).
+        # No stopword stripping. A multi-token query matches summaries holding
+        # any of its tokens, with full-overlap summaries ranked first, so a
+        # clumsy query whose terms are spread across memories still surfaces
+        # candidates here rather than degrading to semantic-only.
         keyword_hits = self.db.search_by_keyword(query, top_k=_effective_top_k * 3)
         for item in keyword_hits:
             candidates[item.id] = item

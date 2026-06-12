@@ -169,22 +169,39 @@ class Database:
 
     @_locked
     def search_by_keyword(self, query: str, top_k: int | None = None) -> list[MemoryItem]:
-        """Keyword search using SQLite LIKE — AND-match across whitespace tokens.
+        """Keyword search using SQLite LIKE — per-token OR-match, ranked by coverage.
 
-        The agent is expected to pass a focused term query (one concept, 1–4
-        words). All tokens must appear in the summary; an empty/whitespace-only
-        query returns nothing. No stopword stripping — that's the agent's
-        concern. Use multiple recall() calls for compound questions.
+        Each whitespace token is matched independently; a summary is returned if
+        it contains *any* token, ordered by how many distinct tokens it covers
+        (full multi-token overlap first), then recency. A focused query whose
+        tokens all co-occur in one summary still ranks that summary at the top;
+        a clumsy multi-token query whose tokens are spread across separate
+        memories surfaces each contributor instead of collapsing to nothing.
+
+        An empty/whitespace-only query returns nothing. No stopword stripping —
+        that's the agent's concern. The OR widens the candidate pool; the
+        downstream rerank and distributional cut decide what's actually worth
+        keeping.
         """
         words = query.lower().split()
         if not words:
             return []
 
-        conditions = " AND ".join(["LOWER(summary) LIKE ?" for _ in words])
-        params = [f"%{w}%" for w in words]
+        # WHERE keeps any summary that matches at least one token; the ORDER BY
+        # expression sums the per-token LIKE booleans into a coverage score so
+        # summaries covering more of the query rank first. The same LIKE
+        # patterns bind to both clauses — WHERE first in the SQL text, then the
+        # coverage sum — so the params are the pattern list repeated twice.
+        like_patterns = [f"%{w}%" for w in words]
+        where_clause = " OR ".join(["LOWER(summary) LIKE ?" for _ in words])
+        coverage_expr = " + ".join(["(LOWER(summary) LIKE ?)" for _ in words])
 
-        sql = f"SELECT * FROM memory_items WHERE status = 'active' AND ({conditions}) ORDER BY created_at DESC"
-        sql_params: list = list(params)
+        sql = (
+            "SELECT * FROM memory_items "
+            f"WHERE status = 'active' AND ({where_clause}) "
+            f"ORDER BY ({coverage_expr}) DESC, created_at DESC"
+        )
+        sql_params: list = like_patterns + like_patterns
         if top_k is not None:
             sql += " LIMIT ?"
             sql_params.append(top_k)
