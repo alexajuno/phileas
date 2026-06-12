@@ -32,7 +32,6 @@ _MEMORY_TYPES: list[str] = list(get_args(MemoryType))
 
 # Recall tuning — internal retrieval knobs, never hand-tuned, so the defaults
 # live here as the single source of truth rather than behind a config layer.
-GRAPH_BOOST = 0.5  # relevance bump for graph-connected memories
 MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
 
 # Distributional retrieval cut (standout.standout_keep). The relevance DECISION is
@@ -702,8 +701,12 @@ class MemoryEngine:
 
         # Search vector once, filter client-side. The distributional cut needs the
         # whole score list, so keep-set first, then iterate the kept hits.
+        # query_cosine doubles as the relevance signal the graph hop is gated on
+        # below: it maps every memory in the pool to its similarity to THIS query.
+        query_cosine: dict[str, float] = {}
         if all_type_ids:
             semantic_hits = self.vector.search(query, top_k=_pool)
+            query_cosine = dict(semantic_hits)
             for k in standout_keep(
                 [sim for _, sim in semantic_hits],
                 hard_floor=COSINE_HARD_FLOOR,
@@ -789,6 +792,24 @@ class MemoryEngine:
             except Exception as e:
                 log.debug("graph lookup failed", extra={"op": "recall", "data": {"entity": ename, "error": str(e)}})
                 return
+            # Smart hop: the entity match decides MEMBERSHIP (these memories are
+            # about this entity); the query decides which of them are relevant.
+            # Gate the pull by the query-cosine standout so a high-mass entity
+            # (a person with hundreds of memories) contributes only the memories
+            # that stand out for THIS query, not its whole history — the same
+            # distributional cut used everywhere else, applied to the entity's
+            # own memories. A referent (LLM-resolved) or a Day is itself the
+            # constraint, so those pull their full set. An entity with nothing
+            # above the cosine floor contributes nothing rather than flooding.
+            if referent_rank_value is None and etype != "Day" and memory_ids:
+                kept = standout_keep(
+                    [query_cosine.get(m, 0.0) for m in memory_ids],
+                    hard_floor=COSINE_HARD_FLOOR,
+                    min_keep=0,
+                    method=_cut_method,
+                    **_cut_params,
+                )
+                memory_ids = [memory_ids[i] for i in kept]
             for mem_id in memory_ids:
                 graph_ids.add(mem_id)
                 if sub_path is not None:
@@ -931,10 +952,10 @@ class MemoryEngine:
 
         # Path 3c: LLM-proposed referents (pronoun / kinship resolution)
         # Fires only when stage 0 flagged the query as ambiguous.
-        # Only the directly resolved entity gets the referent boost —
-        # neighbours traversed via REL edges ride the regular graph_boost,
-        # so e.g. resolving a kinship term → its linked person doesn't pull every coworker's
-        # unrelated memory to the top. Rank (1-indexed) comes from the
+        # Only the directly resolved entity gets the referent boost — neighbours
+        # traversed via REL edges rank on query cosine like any graph hit, so
+        # e.g. resolving a kinship term → its linked person doesn't pull every
+        # coworker's unrelated memory to the top. Rank (1-indexed) comes from the
         # LLM output order so the most-confident pick wins ties.
         for idx, (etype, ename) in enumerate(referent_names, start=1):
             _add_memories_for_entity(etype, ename, hop=0, referent_rank_value=idx)
@@ -1087,7 +1108,6 @@ class MemoryEngine:
         _mark("rerank")
 
         # Build unified relevance map
-        graph_boost = GRAPH_BOOST
         # Query tokens for keyword coverage — same tokenization the keyword
         # search uses, so coverage reflects exactly what put a memory in the pool.
         _q_tokens = query.lower().split()
@@ -1117,16 +1137,13 @@ class MemoryEngine:
                 coverage = sum(1 for t in _q_tokens if t in summary_lc) / _q_token_count
                 relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * coverage)
             elif mem_id in graph_ids:
-                # Graph-expanded but no keyword match.
-                # hop=0: query word matched an entity name (moderate floor).
-                # hop>=1: farther expansion — rely on cosine similarity so
-                # unrelated high-importance memories don't float to the top
-                # just because the graph connected them three hops away.
-                hop = candidate_hop.get(mem_id, 2)
-                if hop == 0:
-                    relevance_map[mem_id] = max(cosine, graph_boost)
-                else:
-                    relevance_map[mem_id] = cosine
+                # Graph-expanded but no keyword match. The hop already gated on
+                # query relevance (only the entity's standout memories entered),
+                # so membership has served its purpose — candidacy. Rank by query
+                # cosine and don't floor: a flat membership floor would pin a
+                # weakly-relevant entity memory above a strong semantic hit and
+                # refill the result with an entity's near-history.
+                relevance_map[mem_id] = cosine
             else:
                 relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
 
