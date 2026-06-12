@@ -202,7 +202,7 @@ class MemoryEngine:
         self.graph = graph
         self.config = config if config is not None else load_config()
 
-        # Usage tracking (records daemon op metrics; no LLM dependency)
+        # Usage tracking (records daemon op metrics)
         from phileas.stats.usage import UsageTracker
 
         usage_db = self.config.home / "usage.db"
@@ -473,7 +473,7 @@ class MemoryEngine:
 
         # 6. Contradiction check is now agent-driven: the host Claude can
         # call `recall` before memorize and decide for itself whether the
-        # new memory supersedes anything. The daemon stays LLM-free.
+        # new memory supersedes anything.
         result: dict = {"id": item.id, "summary": item.summary}
 
         # 7. Entity extraction is agent-driven too: callers should pass
@@ -570,7 +570,7 @@ class MemoryEngine:
 
         # Query rewriting (alternate phrasings, pronoun referent resolution)
         # is the host agent's job — if it wants richer recall it calls this
-        # tool multiple times with rewritten queries. Daemon stays LLM-free.
+        # tool multiple times with rewritten queries.
         referent_names: list[tuple[str, str]] = []
 
         candidates: dict[str, MemoryItem] = {}  # id -> item
