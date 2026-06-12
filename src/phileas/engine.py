@@ -53,6 +53,13 @@ RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribut
 # signal carries the rank instead of an identical pinned score.
 KEYWORD_STRUCT_FLOOR = 0.85
 
+# Candidate-gather pool size, deliberately decoupled from the caller's requested
+# result count. The distributional cut needs the full score distribution to find
+# the elbow; sizing the pool off top_k fed the cut a truncated shape and made the
+# result non-monotonic in top_k. A generous fixed pool keeps the cut stable while
+# bounding gather cost; the relevance cut — not this number — decides what returns.
+RECALL_POOL = 200
+
 # Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph bridge).
 # Both scale O(seeds × entities × neighbours); on entity-rich queries Path 3
 # already saturates the pool, so iterating thousands of seeds finds duplicates.
@@ -616,6 +623,10 @@ class MemoryEngine:
 
         _t0 = perf_counter()
         _effective_top_k = top_k if top_k is not None else 9999
+        # Gather pool is fixed and independent of the requested result count, so
+        # the distributional cut always sees the same score shape. An explicit
+        # large top_k still widens it (a caller asking for more candidates).
+        _pool = RECALL_POOL if top_k is None else max(RECALL_POOL, top_k)
 
         # Per-stage timings (ms) — labelled by the immediately-preceding stage
         # at each _mark() call. Linear flow assumption: stages don't reorder.
@@ -671,7 +682,7 @@ class MemoryEngine:
         # any of its tokens, with full-overlap summaries ranked first, so a
         # clumsy query whose terms are spread across memories still surfaces
         # candidates here rather than degrading to semantic-only.
-        keyword_hits = self.db.search_by_keyword(query, top_k=_effective_top_k * 3)
+        keyword_hits = self.db.search_by_keyword(query, top_k=_pool)
         for item in keyword_hits:
             candidates[item.id] = item
             keyword_ids.add(item.id)
@@ -692,7 +703,7 @@ class MemoryEngine:
         # Search vector once, filter client-side. The distributional cut needs the
         # whole score list, so keep-set first, then iterate the kept hits.
         if all_type_ids:
-            semantic_hits = self.vector.search(query, top_k=_effective_top_k * 3)
+            semantic_hits = self.vector.search(query, top_k=_pool)
             for k in standout_keep(
                 [sim for _, sim in semantic_hits],
                 hard_floor=COSINE_HARD_FLOOR,
@@ -978,7 +989,7 @@ class MemoryEngine:
         # Path 5: raw text search (verbatim conversation snippets)
         # Searches the raw_memories ChromaDB collection — catches details
         # lost during summarization (names, places, specific phrases).
-        raw_hits = self.vector.search_raw(query, top_k=_effective_top_k * 3)
+        raw_hits = self.vector.search_raw(query, top_k=_pool)
         for k in standout_keep(
             [sim for _, sim in raw_hits],
             hard_floor=COSINE_HARD_FLOOR,
@@ -1051,7 +1062,7 @@ class MemoryEngine:
         structurally_matched = keyword_ids | graph_ids
 
         # Cosine similarity for structurally-matched candidates
-        cosine_hits = self.vector.search(query, top_k=_effective_top_k * 5)
+        cosine_hits = self.vector.search(query, top_k=_pool)
         cosine_map = {mid: sim for mid, sim in cosine_hits}
         _mark("cosine_full")
 
@@ -1119,27 +1130,28 @@ class MemoryEngine:
             else:
                 relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
 
-        # Post-rerank cut: keep the cross-encoder-scored items that stand out in
-        # THIS query's relevance spread instead of chopping at a fixed floor.
-        # Structural hits (keyword/graph) already earned their place and bypass it.
-        # Coupling note: a semantic-only hit (Path 2/5) is not structural, so its
-        # relevance here is the normalized cross-encoder score (norm_ce), NOT its
-        # cosine — which is why a low-cosine English rescue only survives if
-        # RELEVANCE_MIN_KEEP keeps the best reranked item.
-        ce_ids = [m for m in filtered if m not in structurally_matched]
-        if ce_ids:
-            keep_pos = set(
-                standout_keep(
-                    [relevance_map.get(m, 0.0) for m in ce_ids],
-                    hard_floor=RELEVANCE_HARD_FLOOR,
-                    min_keep=RELEVANCE_MIN_KEEP,
-                    method=_cut_method,
-                    **_cut_params,
-                )
+        # Relevance cut — the result-size decision. Keep the memories that stand
+        # out in THIS query's relevance spread (the distributional elbow), not a
+        # fixed count. Applied across every path at once: keyword, graph, and
+        # cross-encoder hits all share one relevance_map, so a structural hit no
+        # longer auto-survives — it competes on the same relevance as everything
+        # else. This is what lets recall return as many memories as are actually
+        # relevant and no more, instead of padding to (or truncating at) top_k.
+        # min_keep retains the single best item so a flat/weak spread still answers
+        # rather than returning empty.
+        gate_ids = list(filtered.keys())
+        keep_pos = set(
+            standout_keep(
+                [relevance_map.get(m, 0.0) for m in gate_ids],
+                hard_floor=RELEVANCE_HARD_FLOOR,
+                min_keep=RELEVANCE_MIN_KEEP,
+                method=_cut_method,
+                **_cut_params,
             )
-            for idx, mem_id in enumerate(ce_ids):
-                if idx not in keep_pos:
-                    del filtered[mem_id]
+        )
+        for idx, mem_id in enumerate(gate_ids):
+            if idx not in keep_pos:
+                del filtered[mem_id]
         _mark("score_blend")
 
         if not filtered:
