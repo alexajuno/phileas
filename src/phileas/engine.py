@@ -21,6 +21,7 @@ from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
 from phileas.scoring import compute_score, mmr_select
+from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
 
@@ -32,9 +33,15 @@ _MEMORY_TYPES: list[str] = list(get_args(MemoryType))
 # Recall tuning — internal retrieval knobs, never hand-tuned, so the defaults
 # live here as the single source of truth rather than behind a config layer.
 SIMILARITY_FLOOR = 0.5  # min cosine for a semantic/raw hit to enter candidates
-RELEVANCE_FLOOR = 0.15  # post-rerank floor for cross-encoder-scored items
 GRAPH_BOOST = 0.5  # relevance bump for graph-connected memories
 MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
+
+# Distributional retrieval cut (standout.standout_keep). The relevance DECISION is
+# the relative cut over each query's own score spread; these are only low backstops
+# — a garbage gate, never the cut itself. Kept well below the band real matches land
+# in, so lowering one can't re-introduce the absolute-floor bug.
+RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
+RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
 
 # Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph bridge).
 # Both scale O(seeds × entities × neighbours); on entity-rich queries Path 3
@@ -1075,12 +1082,27 @@ class MemoryEngine:
             else:
                 relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
 
-        # Post-rerank filter: only apply relevance_floor to
-        # cross-encoder scored items (structural hits already passed
-        # keyword matching or graph traversal, so they earned their place)
-        for mem_id in list(filtered.keys()):
-            if mem_id not in structurally_matched:
-                if relevance_map.get(mem_id, 0.0) < RELEVANCE_FLOOR:
+        # Post-rerank cut: keep the cross-encoder-scored items that stand out in
+        # THIS query's relevance spread instead of chopping at a fixed floor.
+        # Structural hits (keyword/graph) already earned their place and bypass it.
+        # Coupling note: a semantic-only hit (Path 2/5) is not structural, so its
+        # relevance here is the normalized cross-encoder score (norm_ce), NOT its
+        # cosine — which is why a low-cosine English rescue only survives if
+        # RELEVANCE_MIN_KEEP keeps the best reranked item.
+        ce_ids = [m for m in filtered if m not in structurally_matched]
+        if ce_ids:
+            ce_method, ce_params = resolve_strategy()
+            keep_pos = set(
+                standout_keep(
+                    [relevance_map.get(m, 0.0) for m in ce_ids],
+                    hard_floor=RELEVANCE_HARD_FLOOR,
+                    min_keep=RELEVANCE_MIN_KEEP,
+                    method=ce_method,
+                    **ce_params,
+                )
+            )
+            for idx, mem_id in enumerate(ce_ids):
+                if idx not in keep_pos:
                     del filtered[mem_id]
         _mark("score_blend")
 
