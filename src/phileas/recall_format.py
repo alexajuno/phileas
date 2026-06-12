@@ -18,6 +18,8 @@ verify via `phileas stats bounds` before trusting it):
 
 from __future__ import annotations
 
+from phileas.standout import standout_keep
+
 # Recall output bounds — never hand-tuned; the rationale for each layer lives in
 # the module docstring above (the count cap vs. the output-size cap). Set a
 # constant to 0 to disable that layer.
@@ -102,10 +104,22 @@ def select_recent(
             truncated = True
             break
         day_items = by_day[day]
-        filtered = [i for i in day_items if (i.get("importance") or 0) >= min_importance]
-        if not filtered:
-            filtered = day_items
-        top = sorted(filtered, key=lambda x: x.get("importance") or 0, reverse=True)[:top_per_day]
+        # The shared distributional-cut primitive in its absolute mode: keep the
+        # day's memories at/above min_importance (capped at top_per_day), falling
+        # back to the day's top top_per_day when none clear the bar. Integer
+        # importance has no meaningful intra-day cliff, so the relative cut is
+        # disabled here (method="absolute") — this routes the saturation logic
+        # through the shared primitive without changing behaviour.
+        keep = standout_keep(
+            [float(i.get("importance") or 0) for i in day_items],
+            hard_floor=0.0,
+            min_keep=0,
+            max_keep=top_per_day,
+            method="absolute",
+            floor=float(min_importance),
+            fallback_top=top_per_day,
+        )
+        top = sorted((day_items[k] for k in keep), key=lambda x: x.get("importance") or 0, reverse=True)
         remaining = recent_max - len(selected)
         if len(top) > remaining:
             top = top[:remaining]
