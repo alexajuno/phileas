@@ -107,12 +107,42 @@ def cmd_extract(idx: int) -> None:
     conv = load_conv(idx)
     c = conv["conversation"]
     eng = _engine()
+    # LOCOMO_WINDOW=r anchors each memory on its turn but concatenates the r
+    # turns on either side (verbatim, no summarization — still mechanical). This
+    # co-locates a question's vocabulary with its answer when LoCoMo splits them
+    # across adjacent turns (e.g. the "self-care" cue sits one turn before the
+    # running/reading/violin answer). Windows never cross a session boundary, so
+    # a memory only joins turns that happened on the same day. Default 0 keeps
+    # the one-turn-per-memory behaviour.
+    window = int(os.environ.get("LOCOMO_WINDOW", "0"))
+    # LOCOMO_EVENTS=session also populates Phileas's raw layer the way real
+    # ingestion does: one Event per session (the verbatim turns) plus a raw_text
+    # entry per memory. That activates recall Path 6 (event-text → sibling
+    # fanout) and Path 5 (raw-text), which the bare memorize() path leaves empty.
+    # Path 6 is what bridges a vocabulary split: a query term that only appears
+    # in a neighbour turn still matches the session event, which then drags in
+    # every fact extracted from that session.
+    events = os.environ.get("LOCOMO_EVENTS", "")
+    if events:
+        from phileas.models import Event
+    # LOCOMO_FAITHFUL=<path> swaps mechanical verbatim copy for a self-contained
+    # fact per turn (pronouns resolved, the concept named in the text, speakers
+    # attributed) — what a smart reader writes at ingest time. Only the dia_ids
+    # present in the file are rewritten; the rest stay mechanical, so a partial
+    # file (e.g. sessions 1-4) seeds faithful needles into a mechanical haystack.
+    faithful: dict[str, str] = {}
+    fpath = os.environ.get("LOCOMO_FAITHFUL", "")
+    if fpath:
+        faithful = json.loads(Path(fpath).read_text())
+    names = (c.get("speaker_a", ""), c.get("speaker_b", ""))
     sess_keys = [k for k in c if k.startswith("session_") and not k.endswith("date_time")]
     sess_keys.sort(key=lambda k: int(k.split("_")[1]))
     dia_map: dict[str, str] = {}
     n = 0
     for sk in sess_keys:
         date = parse_date(c.get(f"{sk}_date_time", ""))
+        # Build the session's non-empty turns first so windowing can index neighbours.
+        rows: list[tuple[str, str, str]] = []  # (dia_id, speaker, text)
         for turn in c[sk]:
             speaker = turn.get("speaker", "?")
             text = (turn.get("text") or "").strip()
@@ -121,20 +151,43 @@ def cmd_extract(idx: int) -> None:
                 text = f"{text} [shared an image: {cap}]".strip()
             if not text:
                 continue
-            summary = f"{speaker}: {text}"
+            rows.append((turn.get("dia_id", f"{sk}:{len(rows)}"), speaker, text))
+        event_id = None
+        if events == "session" and rows:
+            ev = Event(text="\n".join(f"{sp}: {tx}" for _, sp, tx in rows))
+            eng.save_event(ev)
+            event_id = ev.id
+        for i, (dia, speaker, text) in enumerate(rows):
+            if dia in faithful:
+                summary = faithful[dia]
+                # Tag every person actually named in the fact, not just the
+                # speaker — the faithful way, which also feeds the graph path.
+                ents = [{"name": nm, "type": "person"} for nm in names if nm and nm in summary]
+            elif window > 0:
+                lo, hi = max(0, i - window), min(len(rows), i + window + 1)
+                summary = " | ".join(f"{rows[j][1]}: {rows[j][2]}" for j in range(lo, hi))
+                ents = [{"name": speaker, "type": "person"}]
+            else:
+                summary = f"{speaker}: {text}"
+                ents = [{"name": speaker, "type": "person"}]
             res = eng.memorize(
                 summary=summary,
                 memory_type="knowledge",
                 daily_ref=date,
-                entities=[{"name": speaker, "type": "person"}],
+                entities=ents,
+                source_event_id=event_id,
+                detect_conflict=False,
             )
-            dia_map[turn.get("dia_id", f"{sk}:{n}")] = res["id"]
+            if events:
+                eng.vector.add_raw(res["id"], text)
+            dia_map[dia] = res["id"]
             n += 1
-        print(f"  {sk} ({date}): {len(c[sk])} turns", file=sys.stderr)
+        print(f"  {sk} ({date}): {len(rows)} turns", file=sys.stderr)
     out = _home_dir() / "dia_map.json"
     out.write_text(json.dumps(dia_map, indent=0))
+    faithful_used = sum(1 for d in dia_map if d in faithful)
     print(
-        f"extracted {n} memories from conv{idx} "
+        f"extracted {n} memories from conv{idx} (window={window}, faithful={faithful_used}) "
         f"({conv['conversation']['speaker_a']}/{conv['conversation']['speaker_b']}) -> {out}"
     )
 

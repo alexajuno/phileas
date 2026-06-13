@@ -112,24 +112,58 @@ tail-trimmer). Re-scored conv0:
 The win conditions above are met except where they depend on faithful extraction
 (the `about()` firehose) or an answer-level judge.
 
+## Faithful extraction — demonstrated (2026-06-13)
+
+`LOCOMO_FAITHFUL=<path>` swaps the verbatim per-turn copy for a self-contained
+fact per turn: pronouns resolved, the concept named in the text, speakers
+attributed, and every named person tagged (not just the speaker). The facts for
+conv0 sessions 1–4 (all 9 gold cases live there) are hand-written in
+`faithful_conv0.json` — me-as-model, the Tier-2 reader. Sessions 5–19 stay
+mechanical, so the run is faithful needles in a mechanical haystack and the turn
+count is identical (419) — a clean A/B on text quality alone.
+
+```bash
+mkdir -p /tmp/locomo-eval/conv0faith
+LOCOMO_FAITHFUL=evals/locomo/faithful_conv0.json \
+  PHILEAS_HOME=/tmp/locomo-eval/conv0faith .venv/bin/python evals/locomo/locomo_smoke.py extract 0
+PHILEAS_HOME=/tmp/locomo-eval/conv0faith .venv/bin/python evals/locomo/score_run.py
+```
+
+| case | mechanical | faithful |
+|------|-----------|----------|
+| Q6 identity (`D1:5`)  | @7   | **@2** |
+| Q7 sunrise (`D1:12`)  | miss | **@2** |
+| Q14 self-care (`D2:5`)| miss | **@3** |
+| Q1 research (`D2:8`)  | @1   | @3 (longer fact, still top-10) |
+| **any-gold-surfaced** | **7/9** | **9/9** |
+
+The mechanism, read off `ask "Melanie self-care"`: mechanically, the answer turn
+`D2:5` is verbatim *"carving out some me-time… running, reading, violin"* — no
+"self-care" token, so it never surfaces; the query instead matches `D2:3`/`D2:4`,
+which carry the word but not the answer. The faithful fact for `D2:5` reads
+*"Melanie practices self-care by carving out daily me-time — running, reading, or
+playing her violin"*, co-locating the concept with the answer so the cross-encoder
+scores it `@3 (0.574)`. Per-turn copy splits the concept from its answer across
+adjacent turns; a reader writes them into one fact. Closes Q14's vocabulary gap
+and lifts Q6 with no bigger embedder, query expansion, or reranker change.
+
 ### Open problems — pick up here next session
 
-- [ ] **Q7 is a harness mislabel, not a recall miss.** Gold `D1:12` is the
-  counselor turn; the actual answer `D1:14` ("painted that lake sunrise") ranks
-  @2–4 in every mode. Replace evidence-rank scoring with an **answer-level judge**
-  (LoCoMo's own protocol) before trusting the 6/9 number — it both under- and
-  over-counts.
-- [ ] **Q6 is the same shape.** `D1:5` is one of several valid transgender turns;
-  `D17:19` (poetry reading) and `D9:6` (mentoring) legitimately rank above it.
-  Evidence-rank under-counts — another case for the answer-level judge.
-- [ ] **Q14 is a genuine vocabulary gap.** "self-care" vs "me-time… running,
-  reading, violin" — cosine 0.36, semantic rank ~254/400. Not a plumbing bug;
-  needs query expansion or a stronger embedder, neither of which the recall
-  rework touched.
-- [ ] **Faithful extraction.** The mechanical extractor tags the *speaker* on
-  every turn, so Caroline owns 211/419 memories — this inflates `about()`
-  (firehose) and the bare-entity breadth (`Caroline` → 82). Tag *mentioned*
-  entities instead, re-extract, and re-measure; both should narrow.
+- [x] **Q14 vocabulary gap** — closed by faithful extraction (above); the concept
+  word lands in the answer-bearing fact, so the cross-encoder matches it.
+- [x] **Faithful extraction** — `faithful_conv0.json` + `LOCOMO_FAITHFUL` exists
+  and tags named entities rather than the speaker. `about()` still returns ~half
+  the corpus, because in a two-person conversation nearly every fact names one of
+  the two speakers — the firehose is inherent to the corpus, not the tagging.
+- [ ] **Evidence-rank still both under- and over-counts.** Q7 (`D1:12` is the
+  image-share turn; the answer `D1:14` "painted that lake sunrise" is the real
+  evidence) and Q6 (`D1:5` is one of several valid transgender turns) are mislabels.
+  An **answer-level judge** (LoCoMo's own protocol) is the honest metric — pending
+  because it needs a paid LLM call per question.
+- [ ] **Faithful extraction at corpus scale.** Sessions 1–4 are hand-written.
+  A quotable number needs faithful facts for all 419 turns × 10 conversations,
+  which is the real ingest path (`ingest_session` → agent → `memorize_batch`),
+  not hand authoring.
 - [ ] **Tier-2 real number.** This 9-case smoke is directional only. A quotable
   LoCoMo figure needs the answer-level LLM judge + faithful extraction across all
   10 conversations (the agent-in-loop Mode B in
@@ -152,6 +186,7 @@ to both cut sites — a baseline to beat, not the exact historical split.
 
 ## Files
 
-- `locomo_smoke.py` — loader, mechanical extractor, `ask` / `about` / `gold` probes.
+- `locomo_smoke.py` — loader, extractor (mechanical / windowed / faithful), `ask` / `about` / `gold` probes.
+- `faithful_conv0.json` — hand-written self-contained facts for conv0 sessions 1–4, loaded via `LOCOMO_FAITHFUL`.
 - `score_run.py` — the 9 baseline cases + `about()` probe, objective dia-id scoring.
 - `sweep_standout.py` — re-scores those cases under each distributional-cut strategy.
