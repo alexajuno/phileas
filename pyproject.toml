@@ -29,7 +29,9 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/ajuno/phileas"
+Homepage = "https://github.com/alexajuno/phileas"
+Repository = "https://github.com/alexajuno/phileas"
+Issues = "https://github.com/alexajuno/phileas/issues"
 
 [project.scripts]
 phileas = "phileas.cli:app"
