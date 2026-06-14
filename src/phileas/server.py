@@ -4,7 +4,8 @@ Pure storage + retrieval. Claude Code is the brain — it extracts memories
 via skills/agents and calls these tools to store and retrieve them.
 
 Tools:
-  - memorize: store a pre-extracted memory
+  - ingest_text: capture verbatim source text as an event; returns its event_id
+  - memorize: store a pre-extracted memory (must reference a source event_id)
   - recall: retrieve relevant memories
   - forget: archive a memory
   - relate: create a graph edge between entities
@@ -78,7 +79,11 @@ mcp = FastMCP(
         "source_event_id, linked entities. The inverse of the pointer trim.\n"
         "- thread(event_id): the verbatim originating conversation + sibling memories. Get the "
         "event_id from hydrate first. The deepest, most expensive view.\n"
-        "- memorize(): store new memories; prefer memorize_batch() for multiple at once"
+        "- memorize(): store new memories; prefer memorize_batch() for multiple at once.\n"
+        "  WRITES ARE TWO STEPS: first ingest_text(text=<verbatim source you're distilling>) "
+        "to capture the raw turn and get an event_id, then memorize(..., source_event_id=that). "
+        "One ingest_text per passage; reuse its id across a batch. A memory with no source event "
+        "is refused — that link is what lets thread() show where the memory came from."
     ),
 )
 
@@ -209,15 +214,35 @@ def _instrumented_tool(*tool_args, **tool_kwargs):
     return decorator
 
 
+def _validated_event_id(source_event_id: str | None) -> str:
+    """Enforce the provenance contract: every memory references a real event.
+
+    Returns the cleaned id, or raises ValueError pointing at ingest_text — the
+    capture step that mints the id. This is where a naked memorize is refused.
+    """
+    sid = (source_event_id or "").strip()
+    if not sid:
+        raise ValueError(
+            "source_event_id is required. Call ingest_text(text=<verbatim source>) "
+            "first, then pass the returned event_id here."
+        )
+    if db.get_event(sid) is None:
+        raise ValueError(
+            f"source_event_id {sid!r} does not exist. Capture the source with "
+            "ingest_text(...) and pass the event_id it returns."
+        )
+    return sid
+
+
 @_instrumented_tool()
 def memorize(
     summary: str,
+    source_event_id: str,
     memory_type: str = "knowledge",
     importance: int = 5,
     daily_ref: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
-    source_event_id: str | None = None,
     contexts: list | str | None = None,
 ) -> str:
     """Store a memory about the user.
@@ -227,14 +252,18 @@ def memorize(
     and project decisions with stated reasoning (why X over Y, what was
     rejected, deadline/constraint that forced the call). Skip
     forward-prescriptive conventions ("always do X") — those belong in
-    the repo's CLAUDE.md. See the <phileas-memorize-hint> for full guidance.
+    the repo's CLAUDE.md.
 
     Write `summary` as an objective, AI-written fact — never paste raw
-    conversation verbatim. Raw turns belong in the events table (auto-ingested
-    via the Stop hook); memories *reference* events, they don't contain them.
+    conversation verbatim. Raw turns belong in the events table: capture one
+    with `ingest_text` and reference it via `source_event_id`; memories
+    *reference* events, they don't contain them.
 
     Args:
         summary: What to remember (1-2 sentences, in your own words).
+        source_event_id: Required. Event id this memory was distilled from —
+            the value returned by `ingest_text(text=<verbatim source>)`. Recall
+            hydrates the memory with its originating thread through this link.
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
         importance: Importance score 1-10 (10 = most important).
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
@@ -243,16 +272,13 @@ def memorize(
             entity creation, never overwritten. Helps the linker keep
             same-name distinct referents apart (Apple fruit vs Apple Inc.).
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
-        source_event_id: Event id this memory was extracted from. The
-            <phileas-memorize-hint> block surfaces it as `event_id=...`;
-            pass it through so recall can hydrate this memory with its
-            originating conversation thread.
         contexts: List or JSON string of context names this memory is
             scoped to (e.g. ["phileas", "when sick"]). Use when the fact
             holds only in a context, not globally — each name resolves
             (or mints) a Context-typed entity and gets a SCOPED_TO edge.
             Omit for globally valid facts. Post-hoc scoping: `scope()`.
     """
+    source_event_id = _validated_event_id(source_event_id)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
     parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
@@ -274,13 +300,18 @@ def memorize(
 
 
 @_instrumented_tool()
-def memorize_batch(memories: list | str) -> str:
+def memorize_batch(memories: list | str, source_event_id: str | None = None) -> str:
     """Store multiple memories in one call.
 
     Use when catching up on a conversation or saving several related memories at once.
     Same scope as `memorize`: facts that code and git won't preserve —
     personal context, patterns, life events, and project decisions with
     reasoning. Skip forward-prescriptive conventions (those go in CLAUDE.md).
+
+    A batch usually comes from one passage: capture it once with `ingest_text`
+    and pass the returned id as the batch-level `source_event_id` below — every
+    item links to it. The whole batch is rejected before any write if a source
+    is missing or unknown.
 
     Args:
         memories: List or JSON string of memory objects. Each object has:
@@ -290,18 +321,28 @@ def memorize_batch(memories: list | str) -> str:
             - daily_ref: YYYY-MM-DD. Defaults to today.
             - entities: List of {"name": str, "type": str, "description"?: str}.
             - relationships: List of {"from_name", "from_type", "edge", "to_name", "to_type"}.
-            - source_event_id: Event id this memory came from (optional). The
-              <phileas-memorize-hint> surfaces it as `event_id=...`; pass it
-              through so recall can hydrate the originating thread.
+            - source_event_id: Event id this memory came from (from ingest_text).
+              Overrides the batch-level value; required unless that is set.
             - contexts: List of context names the memory is scoped to
               (optional — omit for globally valid facts).
+        source_event_id: Event id shared by every item in the batch — the value
+            from a single ingest_text call covering the source passage. Items
+            may override it. Required unless every item carries its own.
     """
     items = json.loads(memories) if isinstance(memories, str) else memories
     if not items:
         return "No memories provided."
 
+    # Resolve + validate provenance for every item that will actually be
+    # written, before any write — so a bad batch fails atomically rather than
+    # leaving half its memories stored.
+    validated: dict[int, str] = {}
+    for i, mem in enumerate(items):
+        if mem.get("summary"):
+            validated[i] = _validated_event_id(mem.get("source_event_id") or source_event_id)
+
     results = []
-    for mem in items:
+    for i, mem in enumerate(items):
         summary = mem.get("summary")
         if not summary:
             results.append("Skipped — no summary provided")
@@ -324,7 +365,7 @@ def memorize_batch(memories: list | str) -> str:
             daily_ref=mem.get("daily_ref"),
             entities=parsed_entities,
             relationships=parsed_relationships,
-            source_event_id=mem.get("source_event_id"),
+            source_event_id=validated[i],
             # Bulk writes aren't a place to act on a per-item resolve menu;
             # surface conflicts via the single-memory `memorize` path (AA-120).
             detect_conflict=False,
@@ -788,6 +829,40 @@ def mark_session_done(session_path: str) -> str:
     db.mark_session_processed(session_id, file_path=session_path)
     total = db.get_processed_session_count()
     return f"Session {session_id} marked as processed. Total processed sessions: {total}."
+
+
+@_instrumented_tool()
+def ingest_text(text: str, source_kind: str = "agent") -> dict:
+    """Capture verbatim source text as an event, the first step of memorizing.
+
+    A memory must reference the raw text it was distilled from. Call this with
+    the exact words you are about to summarize (the user's message, the relevant
+    turn, a quoted passage), then pass the returned `event_id` to `memorize` /
+    `memorize_batch` as `source_event_id`. The raw text is stored and embedded,
+    so `thread(event_id)` can later show the conversation a memory came from.
+
+    One call per source chunk: if a batch of memories all come from the same
+    passage, capture it once and reuse the id across them.
+
+    Args:
+        text: The verbatim source text (not a summary). Stored as-is.
+        source_kind: Which surface this came from. Default "agent" (you, mid-session).
+
+    Returns:
+        {"event_id": str, "received_at": ISO-8601, "source_kind": str}
+    """
+    from phileas.models import Event
+
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("ingest_text requires non-empty verbatim text.")
+    event = Event(text=text, source_kind=source_kind)
+    engine.save_event(event)
+    return {
+        "event_id": event.id,
+        "received_at": event.received_at.isoformat(),
+        "source_kind": event.source_kind,
+    }
 
 
 @_instrumented_tool()

@@ -82,6 +82,10 @@ MIGRATIONS = [
     "ALTER TABLE events DROP COLUMN extraction_error",
     "ALTER TABLE events DROP COLUMN memory_count",
     "ALTER TABLE memory_items DROP COLUMN consolidated_into",
+    # Provenance: tag each raw event with the surface that captured it, so
+    # health can track per-source recency (in-session "agent" traffic can't
+    # mask a dead "claude_code" capture path).
+    "ALTER TABLE events ADD COLUMN source_kind TEXT",
 ]
 
 
@@ -603,9 +607,9 @@ class Database:
     @_locked
     def save_event(self, event: Event) -> None:
         self.conn.execute(
-            """INSERT OR REPLACE INTO events (id, text, received_at)
-               VALUES (?, ?, ?)""",
-            (event.id, event.text, event.received_at.isoformat()),
+            """INSERT OR REPLACE INTO events (id, text, received_at, source_kind)
+               VALUES (?, ?, ?, ?)""",
+            (event.id, event.text, event.received_at.isoformat(), event.source_kind),
         )
         self.conn.commit()
 
@@ -623,7 +627,7 @@ class Database:
     @_locked
     def get_all_events(self, limit: int | None = None) -> list[Event]:
         """All events in insertion order — used by the embed-backfill script."""
-        sql = "SELECT id, text, received_at FROM events ORDER BY received_at ASC"
+        sql = "SELECT id, text, received_at, source_kind FROM events ORDER BY received_at ASC"
         params: tuple = ()
         if limit is not None:
             sql += " LIMIT ?"
@@ -634,6 +638,7 @@ class Database:
                 id=row["id"],
                 text=row["text"],
                 received_at=datetime.fromisoformat(row["received_at"]),
+                source_kind=row["source_kind"] or "unknown",
             )
             for row in rows
         ]
@@ -641,7 +646,7 @@ class Database:
     @_locked
     def get_event(self, event_id: str) -> Event | None:
         row = self.conn.execute(
-            "SELECT id, text, received_at FROM events WHERE id = ?",
+            "SELECT id, text, received_at, source_kind FROM events WHERE id = ?",
             (event_id,),
         ).fetchone()
         if not row:
@@ -650,4 +655,5 @@ class Database:
             id=row["id"],
             text=row["text"],
             received_at=datetime.fromisoformat(row["received_at"]),
+            source_kind=row["source_kind"] or "unknown",
         )

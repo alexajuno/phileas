@@ -51,3 +51,5 @@ class Event:
     id: str = field(default_factory=_uuid)
     text: str = ""
     received_at: datetime = field(default_factory=_now)
+    source_kind: str = "agent"  # which surface captured this raw text: "agent" (in-session
+    # memorize), "claude_code" (session poller), "reflection" (synthesis basis), …
