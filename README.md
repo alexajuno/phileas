@@ -32,7 +32,7 @@ For the command reference, run `phileas --help` or `phileas COMMAND --help`.
 
 ## Requirements
 
-Python 3.14+
+Python 3.11+
 
 ## License
 
