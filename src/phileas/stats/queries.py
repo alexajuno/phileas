@@ -214,7 +214,7 @@ def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
     for r in rows:
         try:
             extra = json.loads(r["extra"] or "{}")
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             extra = {}
         if "output_chars" not in extra:
             uninstrumented += 1
@@ -333,7 +333,7 @@ def _json_or_none(value: str | None):
         return None
     try:
         return json.loads(value)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -424,7 +424,7 @@ def _lookup_stage_timings(conn: sqlite3.Connection, trace_created_at: str, laten
         return None
     try:
         parsed = json.loads(row["stage_timings_json"])
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
     return {k: v for k, v in parsed.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
 

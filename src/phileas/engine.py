@@ -161,7 +161,7 @@ def _scope_is_expired(scope: dict, now: datetime) -> bool:
         return False
     try:
         parsed = datetime.fromisoformat(str(vt))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return False
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)

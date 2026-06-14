@@ -61,7 +61,7 @@ def _wire_claude_code(home: Path) -> bool:
     if mcp_json_path.exists():
         try:
             mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError, OSError:
+        except (json.JSONDecodeError, OSError):
             mcp_config = {}
     else:
         mcp_config = {}
@@ -111,7 +111,7 @@ def _wire_antigravity(home: Path) -> bool:
         if mcp_json_path.exists() and mcp_json_path.stat().st_size > 0:
             try:
                 mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError, OSError:
+            except (json.JSONDecodeError, OSError):
                 mcp_config = {}
         else:
             mcp_config = {}
