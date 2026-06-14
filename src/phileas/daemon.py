@@ -618,14 +618,13 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
 
         return import_bundle(engine, params["bundle"])
     elif method == "ingest":
-        # Store the raw turn as an event for thread() recall and the
-        # in-turn memorize-hint trigger. No LLM call happens here.
+        # Store the raw turn as an event for thread() recall. No LLM call here.
         text = params.get("text", "")
         if not text:
             return {"queued": False, "reason": "empty text"}
         from phileas.models import Event
 
-        event = Event(text=text)
+        event = Event(text=text, source_kind=params.get("source_kind", "claude_code"))
         engine.save_event(event)
         return {"queued": True, "event_id": event.id}
     # -- Graph write broker ------------------------------------------------
