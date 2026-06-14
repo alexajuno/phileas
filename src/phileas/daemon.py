@@ -13,12 +13,11 @@ import json
 import logging
 import os
 import signal
+import socket
 from collections import deque
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from socketserver import ThreadingMixIn
 
-from phileas import tool_runner
+from phileas import api, tool_runner
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
@@ -311,61 +310,24 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     except Exception as e:
         log.warning(f"Daemon failed to pre-warm reranker: {e}")
 
-    # Create request handler with engine reference
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, format, *args):
-            pass  # Silence HTTP logs
+    # Bridge the legacy JSON-RPC to the engine, arming a push after a write
+    # succeeds — never blocking the response on it (notify() is fire-and-forget).
+    # The closure reads _sync_pusher at call time, after start() assigns it below.
+    def _dispatch_for_api(method, params):
+        result = _dispatch(engine, method, params)
+        if method in _WRITE_METHODS and _sync_pusher is not None:
+            _sync_pusher.notify()
+        return result
 
-        def do_POST(self):
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length)) if length else {}
+    # Bind the socket here so the daemon learns the random port and owns
+    # lifecycle; uvicorn serves on the live socket (see api.serve).
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
 
-            method = body.get("method", "")
-            params = body.get("params", {})
-
-            try:
-                result = _dispatch(engine, method, params)
-                # Arm a push only after the write succeeded — never block the
-                # response on it (notify() is non-blocking and fire-and-forget).
-                if method in _WRITE_METHODS and _sync_pusher is not None:
-                    _sync_pusher.notify()
-                self._respond(200, {"ok": True, "result": result})
-            except Exception as exc:
-                self._respond(500, {"ok": False, "error": str(exc)})
-
-        def do_GET(self):
-            if self.path == "/health":
-                self._respond(200, {"ok": True, "pid": os.getpid()})
-            else:
-                self._respond(404, {"ok": False, "error": "not found"})
-
-        def _respond(self, code: int, data: dict):
-            body = json.dumps(data, default=str).encode()
-            try:
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            except BrokenPipeError, ConnectionResetError:
-                pass  # Client gave up; nothing to do.
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-        # Bounded executor — request bursts previously leaked Thread-N workers
-        # in multi-generational clusters (Thread-4..Thread-36 etc), pinning
-        # tens of glibc arenas. A small reused pool keeps the daemon's working
-        # set bounded; bump max_workers if recall fan-out demands it.
-        daemon_threads = True
-        block_on_close = False
-        _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="phileas-http")
-
-        def process_request(self, request, client_address):
-            self._executor.submit(self.process_request_thread, request, client_address)
-
-    server = ThreadedHTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
+    app = api.create_app(engine, dispatch=_dispatch_for_api)
+    server = api.make_server(app)
 
     # Write PID and port files
     config.home.mkdir(parents=True, exist_ok=True)
@@ -403,7 +365,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     try:
         from phileas.systemd import install_timers
 
-        installed = install_timers(config.home)
+        installed = install_timers(config.home, health_interval_min=config.health.check_interval_minutes)
         if installed:
             log.info("systemd timers installed", extra={"op": "daemon", "data": {"timers": installed}})
     except Exception as e:
@@ -548,16 +510,17 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # in-turn by the host Claude Code session via the Stop hook's
     # <phileas-memorize-hint>.
 
-    # Run the HTTP server on a worker thread; the main thread parks on
-    # stop_event so it can do cleanup safely after SIGTERM/SIGINT.
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    # Run uvicorn on a worker thread; the main thread parks on stop_event so it
+    # can tear down safely after SIGTERM/SIGINT. uvicorn skips installing its
+    # own signal handlers off the main thread, so the daemon's handlers win.
+    server_thread = threading.Thread(target=api.serve, args=(server, [sock]), daemon=True)
     server_thread.start()
 
     stop_event.wait()
 
-    # Clean shutdown — safe because serve_forever is on another thread.
-    server.shutdown()
-    server.server_close()
+    # Clean shutdown — flip uvicorn's flag and let the serve loop exit.
+    server.should_exit = True
+    server_thread.join(timeout=5)
     _pid_path(config).unlink(missing_ok=True)
     _port_path(config).unlink(missing_ok=True)
     return port
