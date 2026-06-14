@@ -54,6 +54,19 @@ Treat recalled memories as background context, not as content to recite. Referen
 
 Inline `memorize` (and `memorize_batch` for multiple facts from one turn).
 
+### Writes are two steps — capture the source first
+
+Every memory points back at the raw turn it was distilled from, so a write is two calls:
+
+1. `ingest_text(text=<the verbatim source you're about to distill>)` — stores and embeds that raw text as an *event*, and returns its `event_id`.
+2. `memorize(summary=..., source_event_id=<that event_id>)` — records the memory, linked to its source.
+
+`source_event_id` is required; a `memorize` that can't name a real event is refused. That link is what lets `thread(event_id)` replay the verbatim conversation behind a memory, and what keeps a memory anchored to the evidence it came from.
+
+Capture once per source passage. When one passage yields several facts, call `ingest_text` a single time and reuse the one `event_id` — pass it as the batch-level `source_event_id` to `memorize_batch`, or repeat it across each `memorize`. Don't mint a fresh event per fact drawn from the same turn.
+
+`ingest_text` takes a `source_kind` that defaults to `"agent"` — live capture by you, the in-session model. Leave it at the default.
+
 ### What to save
 
 Phileas captures what the code alone and git alone will not preserve. **Archaeology test:** will this still be useful when the code shows only the result and git shows only the diff?
