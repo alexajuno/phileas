@@ -91,16 +91,16 @@ def _make_auth(expected_token: str | None):
     every guarded route then requires ``Authorization: Bearer <token>``.
     """
 
-    async def srt_guard(authorization: str | None = Header(default=None)) -> None:
+    async def guard(authorization: str | None = Header(default=None)) -> None:
         if not expected_token:
             return
-        srt_scheme = "Bearer "
-        if not authorization or not authorization.startswith(srt_scheme):
+        scheme = "Bearer "
+        if not authorization or not authorization.startswith(scheme):
             raise HTTPException(status_code=401, detail="missing bearer token")
-        if authorization[len(srt_scheme) :] != expected_token:
+        if authorization[len(scheme) :] != expected_token:
             raise HTTPException(status_code=403, detail="bad token")
 
-    return srt_guard
+    return guard
 
 
 # -- App factory -------------------------------------------------------------
@@ -181,10 +181,10 @@ def create_app(engine: MemoryEngine, dispatch=None) -> FastAPI:
 
     @app.get("/ingestion/events/{event_id}", dependencies=[auth])
     def ingestion_event(event_id: str):
-        srt_event = db.web_ingestion_event(event_id)
-        if srt_event is None:
+        event = db.web_ingestion_event(event_id)
+        if event is None:
             raise HTTPException(status_code=404, detail="event not found")
-        return srt_event
+        return event
 
     # The remaining _dispatch groups port the same way, each as its own router:
     #   graph_read / graph_write → /graph/*    (broker the KuzuDB write lock)
