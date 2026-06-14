@@ -113,7 +113,7 @@ def _daemon_rss_mb(config: PhileasConfig) -> int | None:
             for line in f:
                 if line.startswith("VmRSS:"):
                     return int(line.split()[1]) // 1024
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
     return None
 
@@ -164,7 +164,7 @@ def _load_state(path: Path) -> dict[str, str]:
     """Map of currently-firing alert key → ISO time it started firing."""
     try:
         return json.loads(path.read_text())
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return {}
 
 
