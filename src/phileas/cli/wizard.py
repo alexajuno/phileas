@@ -24,6 +24,9 @@ console = Console()
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+# Where to point new users who want to follow or support the project.
+REPO_URL = "https://github.com/alexajuno/phileas"
+
 
 # -- Helpers ----------------------------------------------------------
 
@@ -387,6 +390,26 @@ def _download_reranker_model() -> bool:
         return False
 
 
+# -- Invitation -------------------------------------------------------
+
+
+def _print_invitation() -> None:
+    """Invite the user to star the repo or share what worked — entirely opt-in."""
+    console.print()
+    console.print("[bold]One last thing[/bold]")
+    console.print(
+        "  If Phileas earns a spot in your setup, a star or a note on what worked\n"
+        f"  helps other people find it: [cyan]{REPO_URL}[/cyan]"
+    )
+    if click.confirm("  Open the repo so you can star it?", default=False):
+        import webbrowser
+
+        if webbrowser.open(REPO_URL):
+            console.print("  [green]Opened in your browser.[/green]")
+        else:
+            console.print(f"  Star it anytime at [cyan]{REPO_URL}[/cyan].")
+
+
 # -- Main wizard ------------------------------------------------------
 
 
@@ -511,5 +534,7 @@ def run_wizard() -> None:
         console.print("  [cyan]1.[/cyan] Restart Claude Code, Antigravity, and/or Codex for MCP integration")
         console.print('  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember "I like Python"[/cyan]')
         console.print("  [cyan]3.[/cyan] Check usage: [cyan]phileas usage[/cyan]")
+
+    _print_invitation()
 
     console.print()
