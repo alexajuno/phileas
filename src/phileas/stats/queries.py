@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -316,3 +316,221 @@ def memory_timeseries(phileas_db: Path, since: datetime | None) -> list[dict]:
             params,
         ).fetchall()
     return [dict(r) | {"count": 1} for r in rows]
+
+
+# --- Recall-trace reads (mirror web/src/lib/metrics-db.ts) ----------------
+#
+# The web "traces" monitoring view computed these in TS against a direct
+# better-sqlite3 handle on metrics.db. Ported verbatim so the daemon owns the
+# read and the web cutover is behaviour-preserving. The percentile/median index
+# math matches the JS exactly (floor-based, no interpolation).
+
+_TRACE_COLS = "id, created_at, source, query, latency_ms, candidate_count, returned_ids, pool_chars, extra"
+
+
+def _json_or_none(value: str | None):
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except TypeError, ValueError:
+        return None
+
+
+def _hydrate_trace(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "source": row["source"],
+        "query": row["query"],
+        "latency_ms": row["latency_ms"],
+        "candidate_count": row["candidate_count"],
+        "returned_ids": _json_or_none(row["returned_ids"]),
+        "pool_chars": row["pool_chars"],
+        "extra": _json_or_none(row["extra"]),
+    }
+
+
+def _percentile(ordered: list[float], p: float):
+    if not ordered:
+        return None
+    idx = min(len(ordered) - 1, max(0, int((p / 100) * len(ordered))))
+    return ordered[idx]
+
+
+def _median(ordered: list[float]):
+    if not ordered:
+        return None
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def _mean_fraction_map(maps: list[dict]) -> dict:
+    """Mean of per-map fractions, divided by the TOTAL map count (matches the JS)."""
+    if not maps:
+        return {}
+    fractions: dict[str, list[float]] = {}
+    for m in maps:
+        total = sum(m.values())
+        if total <= 0:
+            continue
+        for key, val in m.items():
+            fractions.setdefault(key, []).append(val / total)
+    return {key: sum(values) / len(maps) for key, values in fractions.items() if values}
+
+
+def list_traces(metrics_db: Path, date: str | None = None, limit: int = 200, source: str | None = None) -> list[dict]:
+    limit = min(max(200 if limit is None else limit, 1), 1000)
+    clauses: list[str] = []
+    params: dict = {"limit": limit}
+    if date:
+        clauses.append("substr(created_at, 1, 10) = :date")
+        params["date"] = date
+    if source:
+        clauses.append("source = :source")
+        params["source"] = source
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with _connect(metrics_db) as conn:
+        rows = conn.execute(
+            f"SELECT {_TRACE_COLS} FROM recall_traces {where} ORDER BY id DESC LIMIT :limit",
+            params,
+        ).fetchall()
+    return [_hydrate_trace(r) for r in rows]
+
+
+def _lookup_stage_timings(conn: sqlite3.Connection, trace_created_at: str, latency_ms: float) -> dict | None:
+    """Best-effort match of a recall_event's stage timings to a recall_trace, by
+    a ±5s window and near-identical latency — mirrors metrics-db.ts:lookupStageTimings."""
+    try:
+        t = datetime.fromisoformat(trace_created_at)
+    except ValueError:
+        return None
+    lo = (t - timedelta(seconds=5)).isoformat()
+    hi = (t + timedelta(seconds=5)).isoformat()
+    row = conn.execute(
+        """SELECT stage_timings_json
+           FROM recall_events
+           WHERE created_at BETWEEN ? AND ?
+             AND stage_timings_json IS NOT NULL
+             AND ABS(latency_ms - ?) < 1
+           ORDER BY ABS(latency_ms - ?) ASC,
+                    ABS(strftime('%s', created_at) - strftime('%s', ?)) ASC
+           LIMIT 1""",
+        (lo, hi, latency_ms, latency_ms, trace_created_at),
+    ).fetchone()
+    if not row or not row["stage_timings_json"]:
+        return None
+    try:
+        parsed = json.loads(row["stage_timings_json"])
+    except TypeError, ValueError:
+        return None
+    return {k: v for k, v in parsed.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+
+
+def get_trace(metrics_db: Path, trace_id: int) -> dict | None:
+    with _connect(metrics_db) as conn:
+        row = conn.execute(f"SELECT {_TRACE_COLS} FROM recall_traces WHERE id = ?", (trace_id,)).fetchone()
+        if not row:
+            return None
+        trace = _hydrate_trace(row)
+        extra = trace["extra"]
+        if (
+            trace["source"] == "engine.recall"
+            and trace["latency_ms"] is not None
+            and (not extra or extra.get("stage_timings") is None)
+        ):
+            stages = _lookup_stage_timings(conn, trace["created_at"], trace["latency_ms"])
+            if stages:
+                trace["extra"] = {**(extra or {}), "stage_timings": stages}
+    return trace
+
+
+def _bucketize_traces(rows: list[sqlite3.Row]) -> dict:
+    cand: list[float] = []
+    lat: list[float] = []
+    sources: list[dict] = []
+    hops: list[dict] = []
+    for r in rows:
+        if r["candidate_count"] is not None:
+            cand.append(r["candidate_count"])
+        if r["latency_ms"] is not None:
+            lat.append(r["latency_ms"])
+        ex = _json_or_none(r["extra"])
+        if isinstance(ex, dict):
+            gs = ex.get("gather_sources")
+            if isinstance(gs, dict):
+                sources.append(gs)
+            hd = ex.get("hop_distribution")
+            if isinstance(hd, dict):
+                hops.append({k: v for k, v in hd.items() if k not in ("None", None)})
+    cand.sort()
+    lat.sort()
+    return {
+        "count": len(rows),
+        "candidate_p50": _median(cand),
+        "candidate_p95": _percentile(cand, 95),
+        "latency_p50": _median(lat),
+        "latency_p95": _percentile(lat, 95),
+        "source_mix": _mean_fraction_map(sources),
+        "hop_distribution": _mean_fraction_map(hops),
+    }
+
+
+def compare_traces(metrics_db: Path, cutoff_iso: str, source: str | None = None, window_days: int = 7) -> dict:
+    source = source or "engine.recall_raw"
+    since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+    with _connect(metrics_db) as conn:
+        rows = conn.execute(
+            "SELECT created_at, latency_ms, candidate_count, extra FROM recall_traces "
+            "WHERE source = ? AND created_at >= ?",
+            (source, since),
+        ).fetchall()
+    before = [r for r in rows if r["created_at"] < cutoff_iso]
+    after = [r for r in rows if r["created_at"] >= cutoff_iso]
+    return {
+        "cutoff": cutoff_iso,
+        "source": source,
+        "since": since,
+        "before": _bucketize_traces(before),
+        "after": _bucketize_traces(after),
+    }
+
+
+def aggregate_recent(metrics_db: Path, days: int = 7) -> dict:
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _connect(metrics_db) as conn:
+        rows = conn.execute(
+            "SELECT source, latency_ms, candidate_count, pool_chars FROM recall_traces WHERE created_at >= ?",
+            (since,),
+        ).fetchall()
+    buckets: dict[str, dict] = {}
+    for r in rows:
+        b = buckets.setdefault(r["source"], {"lat": [], "pool": [], "cand": []})
+        if r["latency_ms"] is not None:
+            b["lat"].append(r["latency_ms"])
+        if r["pool_chars"] is not None:
+            b["pool"].append(r["pool_chars"])
+        if r["candidate_count"] is not None:
+            b["cand"].append(r["candidate_count"])
+
+    def _avg(xs: list[float]):
+        return sum(xs) / len(xs) if xs else None
+
+    by_source: list[dict] = []
+    for src, b in buckets.items():
+        ordered = sorted(b["lat"])
+        by_source.append(
+            {
+                "source": src,
+                "count": len(b["lat"]) or len(b["cand"]) or 0,
+                "p50": _percentile(ordered, 50),
+                "p90": _percentile(ordered, 90),
+                "p99": _percentile(ordered, 99),
+                "avg_pool_chars": _avg(b["pool"]),
+                "avg_candidates": _avg(b["cand"]),
+            }
+        )
+    by_source.sort(key=lambda a: -a["count"])
+    return {"since": since, "by_source": by_source, "total": len(rows)}

@@ -5,9 +5,10 @@ that can be rebuilt from this database.
 """
 
 import functools
+import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from phileas.models import Event, MemoryItem
@@ -22,6 +23,14 @@ def _locked(method):
             return method(self, *args, **kwargs)
 
     return wrapper
+
+
+_PREVIEW_CHARS = 240
+
+
+def _preview(text: str) -> str:
+    """Mirror web/src/lib/phileas-db.ts:preview — first 240 chars, ellipsis if longer."""
+    return text if len(text) <= _PREVIEW_CHARS else text[:_PREVIEW_CHARS] + "…"
 
 
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
@@ -338,6 +347,220 @@ class Database:
             (since_iso, limit),
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
+
+    # --- Web dashboard reads ---
+    #
+    # Rows shaped for web/src/lib/types.ts:MemoryItem — the daemon's read
+    # contract for the dashboard. We serialize straight from the raw sqlite row
+    # (not via MemoryItem) so created_at/updated_at stay the exact stored ISO
+    # strings the day-window comparison relies on, and the exposed column set is
+    # owned here rather than inherited from the model. Only columns the base
+    # schema actually creates are listed — the legacy `tags` / `source_session_id`
+    # columns exist on older DBs but not on a freshly built one, so reading them
+    # here would raise `no such column` on a rebuilt store.
+
+    _WEB_COLS = (
+        "id, summary, memory_type, importance, status, "
+        "access_count, reinforcement_count, last_reinforced, "
+        "raw_text, daily_ref, created_at, updated_at"
+    )
+
+    @staticmethod
+    def _row_to_web_dict(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "summary": row["summary"],
+            "memory_type": row["memory_type"],
+            "importance": row["importance"],
+            "status": row["status"],
+            "access_count": row["access_count"],
+            "reinforcement_count": row["reinforcement_count"],
+            "last_reinforced": row["last_reinforced"],
+            "raw_text": row["raw_text"],
+            "daily_ref": row["daily_ref"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    @_locked
+    def web_memories_for_day(self, start_iso: str, end_iso: str) -> list[dict]:
+        """Active memories created within [start_iso, end_iso).
+
+        The bounds are the UTC-ISO day window the client computes from its local
+        day (day.ts). We do not recompute them here so the boundary string
+        comparison stays byte-identical to the current direct-DB read.
+        """
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE status = 'active'
+                  AND created_at >= ? AND created_at < ?
+                ORDER BY created_at DESC""",
+            (start_iso, end_iso),
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_search(self, query: str, limit: int = 100) -> list[dict]:
+        """Keyword search over summary/raw_text — up to 8 whitespace terms,
+        LIKE-AND, backslash-escaped."""
+        terms = (query or "").split()[:8]
+        if not terms:
+            return []
+        clauses: list[str] = []
+        params: list[str | int] = []
+        for term in terms:
+            clauses.append("(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\')")
+            like = "%" + re.sub(r"([\\%_])", r"\\\1", term) + "%"
+            params.extend([like, like])
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE status = 'active' AND {" AND ".join(clauses)}
+                ORDER BY created_at DESC LIMIT ?""",
+            params,
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_export(
+        self,
+        start_iso: str | None = None,
+        end_iso: str | None = None,
+        memory_type: str | None = None,
+        min_importance: int | None = None,
+    ) -> list[dict]:
+        """Filtered export — mirrors queries.ts:fetchMemoriesForExport. Bounds are
+        client-computed UTC ISO; min_importance only filters when > 1."""
+        clauses = ["status = 'active'"]
+        params: list[str | int] = []
+        if start_iso:
+            clauses.append("created_at >= ?")
+            params.append(start_iso)
+        if end_iso:
+            clauses.append("created_at < ?")
+            params.append(end_iso)
+        if memory_type:
+            clauses.append("memory_type = ?")
+            params.append(memory_type)
+        if min_importance and min_importance > 1:
+            clauses.append("importance >= ?")
+            params.append(min_importance)
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC""",
+            params,
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_memories_by_ids(self, ids: list[str]) -> list[dict]:
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"""SELECT {self._WEB_COLS} FROM memory_items
+                WHERE status = 'active' AND id IN ({placeholders})
+                ORDER BY created_at DESC""",
+            ids,
+        ).fetchall()
+        return [self._row_to_web_dict(r) for r in rows]
+
+    @_locked
+    def web_days_with_counts(self, limit: int = 60, tz_offset_minutes: int | None = None) -> list[dict]:
+        """Active-memory counts bucketed by LOCAL day — mirrors queries.ts:fetchDaysWithCounts.
+
+        created_at is stored UTC; the bucket key is the viewer's *local* day.
+        ``tz_offset_minutes`` pins the bucketing timezone for a remote client;
+        None falls back to the daemon's own local timezone (correct when the
+        daemon and the viewer share a machine — Phase 1's single-host case).
+        """
+        rows = self.conn.execute("SELECT created_at FROM memory_items WHERE status = 'active'").fetchall()
+        tz = timezone(timedelta(minutes=tz_offset_minutes)) if tz_offset_minutes is not None else None
+        buckets: dict[str, int] = {}
+        for r in rows:
+            local = datetime.fromisoformat(r["created_at"]).astimezone(tz)
+            key = local.strftime("%Y-%m-%d")
+            buckets[key] = buckets.get(key, 0) + 1
+        ordered = sorted(buckets.items(), key=lambda kv: kv[0], reverse=True)
+        return [{"day": day, "count": count} for day, count in ordered[:limit]]
+
+    @_locked
+    def web_memories_brief(self, ids: list[str]) -> list[dict]:
+        """Minimal columns for a set of ids, ANY status — mirrors the resolveMemories
+        helper in monitoring/traces/[id]. Ordering and placeholders for missing ids
+        are the caller's concern (the trace view reconstructs input order)."""
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"""SELECT id, summary, memory_type, importance, created_at
+                FROM memory_items WHERE id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "summary": r["summary"],
+                "memory_type": r["memory_type"],
+                "importance": r["importance"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    @_locked
+    def web_ingestion_health(self) -> dict:
+        """Event-ingestion counts (1h / 24h / total) — mirrors phileas-db.ts:fetchIngestionHealth."""
+        now = datetime.now(timezone.utc)
+        h1 = (now - timedelta(hours=1)).isoformat()
+        d1 = (now - timedelta(days=1)).isoformat()
+        return {
+            "events_received_1h": self.conn.execute(
+                "SELECT COUNT(*) FROM events WHERE received_at >= ?", (h1,)
+            ).fetchone()[0],
+            "events_received_24h": self.conn.execute(
+                "SELECT COUNT(*) FROM events WHERE received_at >= ?", (d1,)
+            ).fetchone()[0],
+            "events_total": self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+        }
+
+    @_locked
+    def web_ingestion_events(self, limit: int = 50) -> list[dict]:
+        """Recent ingested events with truncated text — mirrors phileas-db.ts:listIngestionEvents."""
+        limit = min(max(50 if limit is None else limit, 1), 500)
+        rows = self.conn.execute(
+            "SELECT id, text, received_at FROM events ORDER BY received_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [{"id": r["id"], "received_at": r["received_at"], "text_preview": _preview(r["text"])} for r in rows]
+
+    @_locked
+    def web_ingestion_event(self, event_id: str) -> dict | None:
+        """One event plus its linked active memories — mirrors phileas-db.ts:fetchIngestionEvent."""
+        ev = self.conn.execute("SELECT id, text, received_at FROM events WHERE id = ?", (event_id,)).fetchone()
+        if not ev:
+            return None
+        mems = self.conn.execute(
+            """SELECT id, summary, memory_type, importance, created_at
+               FROM memory_items
+               WHERE source_event_id = ? AND status = 'active'
+               ORDER BY created_at ASC""",
+            (event_id,),
+        ).fetchall()
+        return {
+            "event": {"id": ev["id"], "text": ev["text"], "received_at": ev["received_at"]},
+            "memories": [
+                {
+                    "id": m["id"],
+                    "summary": m["summary"],
+                    "memory_type": m["memory_type"],
+                    "importance": m["importance"],
+                    "created_at": m["created_at"],
+                }
+                for m in mems
+            ],
+        }
 
     # --- Internal ---
 
