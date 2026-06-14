@@ -22,6 +22,26 @@ connection; they're cached afterward, so later runs work offline.
 No external LLM API key is needed to try Phileas: your MCP client's model does
 the reasoning, and the embedding and reranking run on your machine.
 
+## See it work in 60 seconds
+
+Store a couple of memories and search them — all local, no API key:
+
+```bash
+phileas remember "I'm learning Rust and prefer concise code reviews" --importance 7
+phileas remember "My cat's name is Mochi" --importance 5
+
+phileas recall "what is my cat's name"   # surfaces the Mochi memory
+phileas status                           # shows what's stored
+```
+
+`recall` runs entirely on your machine: it gathers candidates from keyword,
+vector, and graph search, reranks them with a local cross-encoder, and returns
+the best matches — no LLM API call.
+
+Want a sandboxed taste that won't touch your real memories? Run
+[`examples/quickstart.sh`](examples/quickstart.sh) — it does the same thing
+against a throwaway store.
+
 ## Connect to your AI
 
 If you use Claude Code, `phileas init` handles this automatically.
