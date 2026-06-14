@@ -5,12 +5,16 @@ description = "Local-first long-term memory for AI companions"
 readme = "README.md"
 license = "MIT"
 keywords = ["mcp", "memory", "llm", "ai", "embeddings", "local-first", "rag"]
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     "mcp[cli]",
@@ -48,7 +52,7 @@ packages = ["src/phileas"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py314"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
