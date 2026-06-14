@@ -15,6 +15,7 @@ from phileas.cli.commands import (
     export_cmd,
     find_entities,
     forget,
+    health,
     hydrate,
     ingest,
     init_cmd,
@@ -52,6 +53,7 @@ def app():
 
 
 app.add_command(status)
+app.add_command(health)
 app.add_command(remember)
 app.add_command(recall)
 app.add_command(recall_recent)

@@ -1,7 +1,7 @@
 """Tests for systemd timer management.
 
-Phileas ships a single user timer — phileas-reflect (daily reflection). The
-phileas-infer timer was removed alongside the inference/hooks layer (AA-116).
+Phileas ships two user timers — phileas-reflect (daily reflection) and
+phileas-health (periodic health check + push alerts).
 """
 
 from unittest.mock import MagicMock, patch
@@ -12,6 +12,7 @@ from phileas.systemd import _UNITS, _phileas_bin
 def test_unit_definitions_exist():
     """All expected timer units are defined."""
     assert "phileas-reflect" in _UNITS
+    assert "phileas-health" in _UNITS
     for name, units in _UNITS.items():
         assert "service" in units
         assert "timer" in units
@@ -50,15 +51,21 @@ def test_install_timers_writes_files(tmp_path):
     ):
         from phileas.systemd import install_timers
 
-        installed = install_timers(tmp_path)
+        installed = install_timers(tmp_path, health_interval_min=20)
 
-    assert len(installed) == 1
-    assert (unit_dir / "phileas-reflect.service").exists()
-    assert (unit_dir / "phileas-reflect.timer").exists()
+    assert set(installed) == {"phileas-reflect", "phileas-health"}
+    for name in installed:
+        assert (unit_dir / f"{name}.service").exists()
+        assert (unit_dir / f"{name}.timer").exists()
 
     # Check service content
     reflect_svc = (unit_dir / "phileas-reflect.service").read_text()
     assert "/usr/bin/phileas reflect" in reflect_svc
+
+    health_svc = (unit_dir / "phileas-health.service").read_text()
+    assert "/usr/bin/phileas health --notify" in health_svc
+    health_timer = (unit_dir / "phileas-health.timer").read_text()
+    assert "OnUnitActiveSec=20min" in health_timer
 
 
 def test_remove_timers_cleans_up(tmp_path):
@@ -90,7 +97,7 @@ def test_timer_status_handles_missing():
 
         results = timer_status()
 
-    assert len(results) == 1
+    assert len(results) == 2
     for r in results:
         assert "name" in r
         assert "active" in r

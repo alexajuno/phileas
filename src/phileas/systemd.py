@@ -2,6 +2,7 @@
 
 Installs/removes systemd user units for:
   - phileas-reflect: daily reflection (catches up on missed days)
+  - phileas-health: periodic health check that pushes alerts
 """
 
 from __future__ import annotations
@@ -54,10 +55,32 @@ Persistent=true
 WantedBy=timers.target
 """,
     },
+    "phileas-health": {
+        "service": """\
+[Unit]
+Description=Phileas health check + push alerts
+
+[Service]
+Type=oneshot
+ExecStart={bin} health --notify
+Environment=PHILEAS_HOME={home}
+""",
+        "timer": """\
+[Unit]
+Description=Phileas health check timer
+
+[Timer]
+OnBootSec={interval_min}min
+OnUnitActiveSec={interval_min}min
+
+[Install]
+WantedBy=timers.target
+""",
+    },
 }
 
 
-def install_timers(home: Path) -> list[str]:
+def install_timers(home: Path, health_interval_min: int = 15) -> list[str]:
     """Install and enable systemd user timers. Returns list of installed unit names."""
     unit_dir = _unit_dir()
     phileas_bin = _phileas_bin()
@@ -68,7 +91,8 @@ def install_timers(home: Path) -> list[str]:
         timer_path = unit_dir / f"{name}.timer"
 
         service_content = units["service"].format(bin=phileas_bin, home=str(home))
-        timer_content = units["timer"]
+        # Only the health timer carries a placeholder; reflect's is unchanged.
+        timer_content = units["timer"].format(interval_min=health_interval_min)
 
         service_path.write_text(service_content)
         timer_path.write_text(timer_content)
