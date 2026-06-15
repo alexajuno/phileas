@@ -59,8 +59,8 @@ mcp = FastMCP(
         "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
         "  Pass FOCUSED TERM QUERIES (one concept, 1–4 words: 'tennis', '<person> preferences',\n"
         "  'memory layer design'). Avoid full sentences — the keyword path OR-matches tokens and\n"
-        "  ranks by coverage, so a sentence's filler words match unrelated memories and dilute the\n"
-        "  ranking, and long natural-language queries score poorly on semantic too. For compound\n"
+        "  ranks by BM25 (rarer terms weigh more), so a sentence's filler tokens still widen the\n"
+        "  candidate pool, and long natural-language queries score poorly on semantic too. For compound\n"
         "  questions call recall() MULTIPLE TIMES IN PARALLEL with different\n"
         "  term queries and merge results by id. Example: instead of\n"
         "  recall('what did the user say about <person> and tennis'), call\n"
@@ -387,7 +387,7 @@ def recall(
 ) -> str:
     """Retrieve memories relevant to a focused term query.
 
-    Hybrid retrieval: keyword (OR-match across tokens, ranked by coverage) + semantic + graph
+    Hybrid retrieval: keyword (FTS5 OR-match across tokens, ranked by BM25) + semantic + graph
     entity lookup + raw-text + event-thread fanout. Returns up to top_k POINTER
     lines (`[id8] [type] date · summary · entity tags`) — long summaries are
     clipped, metadata is trimmed. Call hydrate(id8) for a memory's full detail.
@@ -395,10 +395,11 @@ def recall(
     Query shape (important):
         Pass focused noun-phrase queries — one concept, 1–4 words.
         Examples: "tennis", "<person> preferences", "memory layer design".
-        Sentence queries usually return nothing on the keyword path: every
-        whitespace-separated token must appear in some memory's summary.
-        For compound questions, call recall() multiple times in parallel
-        with different term queries and merge by id on your side.
+        Sentence queries dilute the keyword path: every whitespace token
+        OR-matches, so filler words pull in unrelated memories that BM25
+        then has to rank around. For compound questions, call recall()
+        multiple times in parallel with different term queries and merge
+        by id on your side.
 
     Args:
         query: Focused term query (1–4 words, one concept).

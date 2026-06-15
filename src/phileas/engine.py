@@ -1,7 +1,7 @@
 """Memory engine: orchestrates SQLite, ChromaDB, and KuzuDB backends.
 
 Three retrieval paths:
-  1. Keyword search (SQLite LIKE)
+  1. Keyword search (SQLite FTS5, ranked by BM25)
   2. Semantic search (ChromaDB embeddings)
   3. Graph search (KuzuDB entity nodes → connected memory IDs)
 
@@ -10,7 +10,6 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 
 from __future__ import annotations
 
-import math
 import os
 import threading
 from datetime import date, datetime, timezone
@@ -45,15 +44,21 @@ COSINE_MIN_KEEP = 0  # semantic paths are additive to keyword/graph — force no
 RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
 RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
 
-# Structural floor for a keyword hit, scaled at the scoring site by the rarity
-# (inverse document frequency) of the rarest query term the summary matched. A
-# match on a discriminative term (a place named once) earns the full floor and
-# beats graph/semantic noise; a match on a corpus-common term (a frequent name,
-# a filler word) earns almost nothing and falls back to cosine — so a
+# Structural floor for a keyword hit, scaled at the scoring site by its BM25
+# strength (see BM25_FLOOR_SCALE). A match on a discriminative term (a place
+# named once) scores high under BM25, earns close to the full floor, and beats
+# graph/semantic noise; a match on a corpus-common term (a frequent name, a
+# filler word) scores low, earns almost nothing, and falls back to cosine — so a
 # high-frequency token can't floor hundreds of memories to the same score and
 # bury the cosine ordering that actually locates the answer. The head-selecting
 # relevance cut then keeps only what's within reach of the top.
 KEYWORD_STRUCT_FLOOR = 0.85
+
+# BM25 magnitude (|bm25()|) at which a keyword hit earns the full structural
+# floor; weaker hits scale down linearly from it. Absolute, not per-query, so a
+# lone match on a common term stays weak rather than being lifted to the top of
+# its own small result set. Calibrated against the recall test suite.
+BM25_FLOOR_SCALE = 6.0
 
 # Candidate-gather pool size, deliberately decoupled from the caller's requested
 # result count. The distributional cut needs the full score distribution to find
@@ -657,6 +662,7 @@ class MemoryEngine:
 
         candidates: dict[str, MemoryItem] = {}  # id -> item
         keyword_ids: set[str] = set()  # track keyword-matched candidates
+        keyword_bm25: dict[str, float] = {}  # id -> raw bm25() score (negative; lower = better)
         semantic_ids: set[str] = set()  # track semantic-matched candidates
         graph_ids: set[str] = set()  # track graph-matched candidates
         # Sub-path breakdowns of graph_ids — observability only, so we can tell
@@ -683,15 +689,17 @@ class MemoryEngine:
         # tail-trimmer) keeps the whole pool whenever there is no single cliff.
         _cut_method, _cut_params = resolve_strategy(default="ratio")
 
-        # Path 1: keyword search (SQLite, per-token OR-match ranked by coverage).
-        # No stopword stripping. A multi-token query matches summaries holding
-        # any of its tokens, with full-overlap summaries ranked first, so a
-        # clumsy query whose terms are spread across memories still surfaces
-        # candidates here rather than degrading to semantic-only.
-        keyword_hits = self.db.search_by_keyword(query, top_k=_pool)
-        for item in keyword_hits:
+        # Path 1: keyword search (SQLite FTS5, ranked by BM25). No stopword
+        # stripping. A multi-token query matches summaries holding any of its
+        # tokens, BM25 ranking the ones covering more of the query (or matching
+        # rarer terms) higher, so a clumsy query whose terms are spread across
+        # memories still surfaces candidates here rather than degrading to
+        # semantic-only. The per-hit BM25 score feeds the structural floor below.
+        keyword_hits = self.db.search_by_keyword_scored(query, top_k=_pool)
+        for item, bm25 in keyword_hits:
             candidates[item.id] = item
             keyword_ids.add(item.id)
+            keyword_bm25[item.id] = bm25
         _mark("keyword")
 
         # Path 2: semantic search (ChromaDB) — bucketed by type
@@ -1115,21 +1123,6 @@ class MemoryEngine:
         _mark("rerank")
 
         # Build unified relevance map
-        # Query tokens + a rarity weight per token, for flooring keyword hits by
-        # term discriminativeness. idf_weight maps document frequency to [0, 1]:
-        # ~1.0 for a term in a single memory, 0.0 for one in every memory. Same
-        # tokenization the keyword search uses, so a term's weight matches what
-        # it was matched on.
-        _q_tokens = query.lower().split()
-        _doc_freq, _active_total = self.db.doc_frequencies(_q_tokens)
-        _log_n = math.log(_active_total) if _active_total > 1 else 1.0
-
-        def _idf_weight(token: str) -> float:
-            df = _doc_freq.get(token, 0)
-            if df <= 0:
-                return 0.0
-            return min(1.0, math.log(_active_total / df) / _log_n)
-
         relevance_map: dict[str, float] = {}
         for mem_id in filtered:
             cosine = cosine_map.get(mem_id, 0.0)
@@ -1146,16 +1139,17 @@ class MemoryEngine:
                 relevance_map[mem_id] = max(cosine, 0.95)
             elif mem_id in keyword_ids:
                 # Summary directly contains query terms — a structural signal as
-                # strong as the rarest term it matched. Floor by that term's
-                # rarity: a memory matching a discriminative term (a place, a
-                # proper noun) beats graph/semantic noise, while a memory matching
+                # strong as the match's BM25 score. Floor by that score: a memory
+                # matching a discriminative term (a place, a proper noun) scores
+                # high and beats graph/semantic noise, while a memory matching
                 # only a corpus-common token (a frequent name, a filler word)
-                # falls back to its cosine and can't crowd out the real answer at
-                # a pinned score. This is what lets a rare exact-term match (low
-                # cosine, e.g. "Sweden") survive while a common-term flood doesn't.
-                summary_lc = filtered[mem_id].summary.lower()
-                rarity = max((_idf_weight(t) for t in _q_tokens if t in summary_lc), default=0.0)
-                relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * rarity)
+                # scores low, falls back to its cosine, and can't crowd out the
+                # real answer at a pinned score. This is what lets a rare
+                # exact-term match (low cosine, e.g. "Sweden") survive while a
+                # common-term flood doesn't. bm25() is negative; negate for a
+                # magnitude, then saturate against BM25_FLOOR_SCALE into [0, 1].
+                strength = min(1.0, -keyword_bm25.get(mem_id, 0.0) / BM25_FLOOR_SCALE)
+                relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * strength)
             elif mem_id in graph_ids:
                 # Graph-expanded but no keyword match. The hop already gated on
                 # query relevance (only the entity's standout memories entered),

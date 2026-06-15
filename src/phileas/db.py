@@ -33,6 +33,27 @@ def _preview(text: str) -> str:
     return text if len(text) <= _PREVIEW_CHARS else text[:_PREVIEW_CHARS] + "…"
 
 
+def _fts_match_query(query: str) -> str | None:
+    """Build a safe FTS5 MATCH expression from free-form query text.
+
+    Each whitespace token becomes a quoted prefix term (``"tok"*``) and the
+    terms are OR-ed together, so a summary is a candidate if it contains *any*
+    query token (full multi-token overlap then ranks higher under BM25). Quoting
+    neutralises FTS5 query operators in user input; the trailing ``*`` outside
+    the quote is the prefix operator, so ``swed`` reaches "sweden". unicode61
+    case-folds, so no lowering is needed.
+
+    Returns ``None`` when the query has no usable token (empty, whitespace, or
+    pure punctuation) — the caller treats that as "no results".
+    """
+    terms = []
+    for tok in query.split():
+        if not any(c.isalnum() for c in tok):
+            continue  # a pure-punctuation token tokenizes to nothing
+        terms.append('"' + tok.replace('"', '""') + '"*')
+    return " OR ".join(terms) if terms else None
+
+
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
 SCHEMA = """
@@ -67,6 +88,17 @@ CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at);
+
+-- Inverted index over memory summaries, powering the keyword (sparse) leg of
+-- recall via FTS5 + BM25. Standalone (not external-content): it stores mem_id
+-- plus a copy of the summary, so it stays decoupled from memory_items' integer
+-- rowid and is kept in sync from the write paths in this module. Mirrors the
+-- active set only, so BM25 corpus statistics reflect live memories.
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+    mem_id UNINDEXED,
+    summary,
+    tokenize = 'unicode61'
+);
 """
 
 
@@ -97,6 +129,7 @@ class Database:
         self._lock = threading.RLock()
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self._backfill_fts()
 
     def _migrate(self):
         """Apply schema migrations idempotently."""
@@ -106,6 +139,30 @@ class Database:
                 self.conn.commit()
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+    def _backfill_fts(self):
+        """Populate the FTS index for any active memory it doesn't yet hold.
+
+        Self-healing and idempotent: it inserts only the active summaries missing
+        from ``memory_fts``, so it costs nothing once the index is current and it
+        seeds the index for databases that predate it. Cheap for a personal-size
+        corpus.
+        """
+        self.conn.execute(
+            "INSERT INTO memory_fts(mem_id, summary) "
+            "SELECT id, summary FROM memory_items "
+            "WHERE status = 'active' AND id NOT IN (SELECT mem_id FROM memory_fts)"
+        )
+        self.conn.commit()
+
+    def _fts_upsert(self, mem_id: str, summary: str) -> None:
+        """Refresh a memory's row in the FTS index (delete-then-insert)."""
+        self.conn.execute("DELETE FROM memory_fts WHERE mem_id = ?", (mem_id,))
+        self.conn.execute("INSERT INTO memory_fts(mem_id, summary) VALUES (?, ?)", (mem_id, summary))
+
+    def _fts_delete(self, mem_id: str) -> None:
+        """Drop a memory from the FTS index (archive / soft delete)."""
+        self.conn.execute("DELETE FROM memory_fts WHERE mem_id = ?", (mem_id,))
 
     def close(self):
         self.conn.close()
@@ -138,6 +195,7 @@ class Database:
                 item.updated_at.isoformat(),
             ),
         )
+        self._fts_upsert(item.id, item.summary)
         self.conn.commit()
 
     @_locked
@@ -181,67 +239,46 @@ class Database:
         return [self._row_to_item(row) for row in rows]
 
     @_locked
-    def search_by_keyword(self, query: str, top_k: int | None = None) -> list[MemoryItem]:
-        """Keyword search using SQLite LIKE — per-token OR-match, ranked by coverage.
+    def search_by_keyword_scored(self, query: str, top_k: int | None = None) -> list[tuple[MemoryItem, float]]:
+        """Keyword search over the FTS5 index, ranked by BM25.
 
-        Each whitespace token is matched independently; a summary is returned if
-        it contains *any* token, ordered by how many distinct tokens it covers
-        (full multi-token overlap first), then recency. A focused query whose
-        tokens all co-occur in one summary still ranks that summary at the top;
-        a clumsy multi-token query whose tokens are spread across separate
-        memories surfaces each contributor instead of collapsing to nothing.
+        Each whitespace token becomes a prefix term and the terms are OR-ed
+        together (see ``_fts_match_query``): a summary is a candidate if it
+        contains *any* query token, and BM25 ranks the candidates — a summary
+        covering more of the query, or matching rarer terms, scores higher, so a
+        focused query whose tokens co-occur lands on top while a clumsy query
+        whose tokens are spread across memories still surfaces each contributor
+        instead of collapsing to nothing. BM25 supplies term weighting (rarity,
+        term-frequency saturation, document-length normalization) directly.
 
-        An empty/whitespace-only query returns nothing. No stopword stripping —
-        that's the agent's concern. The OR widens the candidate pool; the
-        downstream rerank and distributional cut decide what's actually worth
-        keeping.
+        Returns ``(item, bm25)`` pairs in best-first order. SQLite's ``bm25()``
+        is negative, more-negative meaning a better match, so the raw value sorts
+        ascending; callers that want a magnitude negate it. An empty,
+        whitespace-only, or pure-punctuation query returns nothing. No stopword
+        stripping — that's the agent's concern; the downstream rerank and
+        distributional cut decide what's actually worth keeping.
         """
-        words = query.lower().split()
-        if not words:
+        match = _fts_match_query(query)
+        if match is None:
             return []
 
-        # WHERE keeps any summary that matches at least one token; the ORDER BY
-        # expression sums the per-token LIKE booleans into a coverage score so
-        # summaries covering more of the query rank first. The same LIKE
-        # patterns bind to both clauses — WHERE first in the SQL text, then the
-        # coverage sum — so the params are the pattern list repeated twice.
-        like_patterns = [f"%{w}%" for w in words]
-        where_clause = " OR ".join(["LOWER(summary) LIKE ?" for _ in words])
-        coverage_expr = " + ".join(["(LOWER(summary) LIKE ?)" for _ in words])
-
         sql = (
-            "SELECT * FROM memory_items "
-            f"WHERE status = 'active' AND ({where_clause}) "
-            f"ORDER BY ({coverage_expr}) DESC, created_at DESC"
+            "SELECT m.*, bm25(memory_fts) AS rank "
+            "FROM memory_fts JOIN memory_items m ON m.id = memory_fts.mem_id "
+            "WHERE memory_fts MATCH ? AND m.status = 'active' "
+            "ORDER BY rank"
         )
-        sql_params: list = like_patterns + like_patterns
+        params: list = [match]
         if top_k is not None:
             sql += " LIMIT ?"
-            sql_params.append(top_k)
+            params.append(top_k)
 
-        rows = self.conn.execute(sql, sql_params).fetchall()
-        return [self._row_to_item(row) for row in rows]
+        rows = self.conn.execute(sql, params).fetchall()
+        return [(self._row_to_item(row), row["rank"]) for row in rows]
 
-    def doc_frequencies(self, tokens: list[str]) -> tuple[dict[str, int], int]:
-        """Per-token active-memory document frequency, plus the active total.
-
-        Returns ``({token: count of active summaries containing it}, active_total)``
-        using the same substring LIKE semantics as ``search_by_keyword`` so the
-        frequency a token's match is weighted by is the frequency it was matched
-        on. Lets recall weight a keyword hit by term rarity (IDF): a match on a
-        rare, discriminative term is a strong signal; a match on a corpus-wide
-        common term (a frequent name, a filler word) is weak. One COUNT per
-        distinct token — cheap for the handful of tokens a query carries.
-        """
-        total = self.conn.execute("SELECT COUNT(*) FROM memory_items WHERE status = 'active'").fetchone()[0]
-        freqs: dict[str, int] = {}
-        for tok in {t.lower() for t in tokens if t}:
-            row = self.conn.execute(
-                "SELECT COUNT(*) FROM memory_items WHERE status = 'active' AND LOWER(summary) LIKE ?",
-                (f"%{tok}%",),
-            ).fetchone()
-            freqs[tok] = row[0] if row else 0
-        return freqs, total
+    def search_by_keyword(self, query: str, top_k: int | None = None) -> list[MemoryItem]:
+        """BM25-ranked keyword hits without their scores (see search_by_keyword_scored)."""
+        return [item for item, _ in self.search_by_keyword_scored(query, top_k=top_k)]
 
     @_locked
     def archive_item(self, item_id: str, reason: str | None = None) -> None:
@@ -249,6 +286,7 @@ class Database:
             "UPDATE memory_items SET status = 'archived', updated_at = ? WHERE id = ?",
             (datetime.now(timezone.utc).isoformat(), item_id),
         )
+        self._fts_delete(item_id)
         self.conn.commit()
 
     @_locked
@@ -262,6 +300,7 @@ class Database:
             "UPDATE memory_items SET summary = ?, updated_at = ? WHERE id = ?",
             (summary, now, item_id),
         )
+        self._fts_upsert(item_id, summary)
         self.conn.commit()
         return self.get_item(item_id)
 
