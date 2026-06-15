@@ -49,6 +49,7 @@ _MEM_FIELDS = (
     "access_count",
     "last_accessed",
     "daily_ref",
+    "storage_strength",
     "reinforcement_count",
     "last_reinforced",
     "raw_text",
@@ -72,6 +73,7 @@ def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
         access_count=d.get("access_count", 0),
         last_accessed=_dt(d.get("last_accessed")),
         daily_ref=d.get("daily_ref"),
+        storage_strength=d.get("storage_strength", 0.5),
         reinforcement_count=d.get("reinforcement_count", 0),
         last_reinforced=_dt(d.get("last_reinforced")),
         raw_text=d.get("raw_text"),
@@ -101,7 +103,7 @@ def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, A
     """
     cols = (
         "SELECT id, summary, memory_type, importance, status, access_count, "
-        "last_accessed, daily_ref, reinforcement_count, last_reinforced, "
+        "last_accessed, daily_ref, storage_strength, reinforcement_count, last_reinforced, "
         "raw_text, source_event_id, created_at, updated_at FROM memory_items"
     )
     if since:

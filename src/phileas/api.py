@@ -52,6 +52,7 @@ class MemoryItem(BaseModel):
     importance: int
     status: str
     access_count: int
+    storage_strength: float
     reinforcement_count: int
     last_reinforced: str | None
     raw_text: str | None

@@ -21,7 +21,7 @@ from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
-from phileas.scoring import compute_score, mmr_select
+from phileas.scoring import compute_score, mmr_select, retrieval_strength
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
@@ -469,6 +469,8 @@ class MemoryEngine:
             summary=summary,
             memory_type=cast(MemoryType, memory_type),
             importance=importance,
+            # Seed durable storage strength from importance; recall grows it from here.
+            storage_strength=importance / 10.0,
             daily_ref=daily_ref,
             source_event_id=source_event_id,
         )
@@ -1370,21 +1372,26 @@ class MemoryEngine:
         _mark("mmr")
 
         # ----------------------------------------------------------
-        # Final scoring with importance/recency as tiebreakers
+        # Final scoring with storage/retrieval strength as tiebreakers.
+        # retrieval_before is captured here, before record_retrieval resets
+        # last_accessed, so the difficulty-weighted storage gain reflects how
+        # decayed the memory was at the moment it was recalled.
         results = []
+        retrieval_before: dict[str, float] = {}
+        relevance_by_id: dict[str, float] = {}
         for sel in selected:
             item = filtered[sel["id"]]
             relevance = sel["relevance"]
+            relevance_by_id[item.id] = relevance
             days = _days_since(item.last_accessed, fallback=item.created_at)
-            # Weights and decay params are the scoring.py function defaults
-            # (the retired [scoring]/[reinforcement] config just re-supplied
-            # identical values) — single-sourced there now.
+            retrieval_before[item.id] = retrieval_strength(days, item.storage_strength)
+            # Weights and decay params are the scoring.py function defaults —
+            # single-sourced there.
             score = compute_score(
                 relevance,
-                item.importance,
+                item.storage_strength,
                 days,
                 item.access_count,
-                item.reinforcement_count,
             )
             results.append(_item_to_dict(item, score))
 
@@ -1409,10 +1416,17 @@ class MemoryEngine:
         results.sort(key=_sort_key)
         _mark("final_score")
 
-        # Bump access counts
+        # Record the retrieval: grow storage strength (difficulty-weighted by the
+        # captured retrieval_before, relevance-gated), count the access, and
+        # refresh accessibility.
         for r in results:
-            self.db.bump_access(r["id"])
-        _mark("bump_access")
+            mem_id = r["id"]
+            self.db.record_retrieval(
+                mem_id,
+                retrieval_before.get(mem_id, 1.0),
+                relevance_by_id.get(mem_id, 0.0),
+            )
+        _mark("record_retrieval")
 
         op_extra(results=len(results))
         if results:
