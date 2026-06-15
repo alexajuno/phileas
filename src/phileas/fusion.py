@@ -32,6 +32,18 @@ import os
 RRF_K = 60.0  # rank-flattening constant; larger = consensus matters more than being any list's top-1
 FUSION_METHODS = ("floor", "rrf")
 
+RERANK_MODES = ("off", "rank")
+# The reranker is the final precision judgment, not a consensus vote, so its
+# top hit should dominate — a much sharper rank decay than fusion's k=60. k=10
+# keeps the reranked head tight while still letting rank 2-3 survive a 0.7x cut.
+RERANK_K = 10.0
+# Cap on how many fused candidates the cross-encoder reranks. Set generously so a
+# single-user corpus reranks essentially its whole gathered set — a small cap
+# buries the low-cosine rescue target (the "Sweden" case) below the reranked head
+# and the reranker never sees it. This is a latency/coverage knob, not a relevance
+# claim; tune it per deployment (corpus size, hardware) rather than hardcoding.
+RERANK_POOL = 1000
+
 
 def rank_by_score(scores: dict[str, float], *, high_is_better: bool = True) -> dict[str, int]:
     """Turn a ``{id: score}`` map into ``{id: 1-based rank}`` (competition ranking).
@@ -71,6 +83,54 @@ def rrf_fuse(rankings: list[dict[str, int]], *, k: float = RRF_K) -> dict[str, f
         for cid, rank in ranking.items():
             fused[cid] = fused.get(cid, 0.0) + 1.0 / (k + rank)
     return fused
+
+
+def rank_consume(order: list[str], *, k: float = RERANK_K) -> dict[str, float]:
+    """Turn a reranker's ordered ids into max-normalized ``[0, 1]`` relevance by rank.
+
+    The cross-encoder ranks personal-memory text reliably but its absolute
+    sigmoid does not — on our corpus a correct answer can top the list at a
+    sigmoid of only ~0.55. So consume the reranker the way RRF consumes any
+    signal: by rank alone. ``1/(k + rank)`` divided by the top score. Smaller
+    ``k`` makes the reranker's #1 dominate (a tight result); larger ``k``
+    flattens it so more of the reranked head survives the cut. ``order`` is
+    best-first; an empty list returns ``{}``.
+    """
+    scored = {cid: 1.0 / (k + (i + 1)) for i, cid in enumerate(order)}
+    if not scored:
+        return {}
+    top = max(scored.values())
+    return {cid: s / top for cid, s in scored.items()}
+
+
+def resolve_rerank(default: str = "off") -> tuple[str, float, int]:
+    """Resolve the post-fusion rerank stage from ``PHILEAS_RERANK`` (else ``default``).
+
+    Accepts ``"rank"``, ``"rank:<k>"``, or ``"rank:<k>:<pool>"`` — ``k`` overrides
+    the rank-decay constant ``RERANK_K`` and ``pool`` the number of fused
+    candidates reranked (``RERANK_POOL``). ``"off"`` skips reranking. Unknown
+    modes fall back to ``default``; garbled numbers fall back to their defaults.
+    Read only here so the consumption stays a pure function of its arguments.
+    """
+    raw = os.environ.get("PHILEAS_RERANK", "").strip()
+    if not raw:
+        return default, RERANK_K, RERANK_POOL
+    parts = raw.split(":")
+    name = parts[0].strip()
+    if name not in RERANK_MODES:
+        return default, RERANK_K, RERANK_POOL
+    k, pool = RERANK_K, RERANK_POOL
+    if len(parts) > 1:
+        try:
+            k = float(parts[1])
+        except ValueError:
+            pass
+    if len(parts) > 2:
+        try:
+            pool = int(parts[2])
+        except ValueError:
+            pass
+    return name, k, pool
 
 
 def resolve_fusion(default: str = "floor") -> tuple[str, float]:

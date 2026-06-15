@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from phileas.fusion import RRF_K, rank_by_score, resolve_fusion, rrf_fuse
+from phileas.fusion import (
+    RERANK_K,
+    RERANK_POOL,
+    RRF_K,
+    rank_by_score,
+    rank_consume,
+    resolve_fusion,
+    resolve_rerank,
+    rrf_fuse,
+)
 
 
 def test_rank_by_score_high_is_better():
@@ -76,3 +85,44 @@ def test_resolve_fusion(monkeypatch, env, expected):
     else:
         monkeypatch.delenv("PHILEAS_FUSION", raising=False)
     assert resolve_fusion(default="floor") == expected
+
+
+def test_rank_consume_max_normalized_descending():
+    # Best-first order -> top pinned to 1.0, strictly decreasing, never 0.0 (so a
+    # reranked tail item is still preferred over a non-reranked one, which the
+    # engine scales below this band).
+    rel = rank_consume(["a", "b", "c"], k=10)
+    assert rel["a"] == pytest.approx(1.0)
+    assert rel["a"] > rel["b"] > rel["c"] > 0.0
+
+
+def test_rank_consume_k_controls_sharpness():
+    # Smaller k => the #1 dominates (rank 2 falls further below the top); larger k
+    # flattens the head so more of it survives a ratio cut.
+    sharp = rank_consume(["a", "b"], k=2)
+    flat = rank_consume(["a", "b"], k=60)
+    assert sharp["b"] < flat["b"]
+
+
+def test_rank_consume_empty():
+    assert rank_consume([]) == {}
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ("", ("off", RERANK_K, RERANK_POOL)),
+        ("rank", ("rank", RERANK_K, RERANK_POOL)),
+        ("rank:5", ("rank", 5.0, RERANK_POOL)),
+        ("rank:5:100", ("rank", 5.0, 100)),
+        ("off", ("off", RERANK_K, RERANK_POOL)),
+        ("bogus", ("off", RERANK_K, RERANK_POOL)),  # unknown mode -> default
+        ("rank:bad:nope", ("rank", RERANK_K, RERANK_POOL)),  # garbled -> defaults
+    ],
+)
+def test_resolve_rerank(monkeypatch, env, expected):
+    if env:
+        monkeypatch.setenv("PHILEAS_RERANK", env)
+    else:
+        monkeypatch.delenv("PHILEAS_RERANK", raising=False)
+    assert resolve_rerank(default="off") == expected

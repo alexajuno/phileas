@@ -17,7 +17,7 @@ from typing import cast, get_args
 
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
-from phileas.fusion import rank_by_score, resolve_fusion, rrf_fuse
+from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
@@ -1135,6 +1135,31 @@ class MemoryEngine:
             top = max(raw.values())
             for mem_id in filtered:
                 relevance_map[mem_id] = raw[mem_id] / top if top > 1e-12 else 0.5
+
+            # Optional post-fusion rerank (PHILEAS_RERANK). Fusion decides candidacy;
+            # the cross-encoder makes the final precision call over the fused head —
+            # including the keyword/structural hits the floor path routes around. It
+            # repairs the dense leg's mistakes: a low-cosine exact-term match (the
+            # "Sweden" case) that RRF buries gets re-judged with the query in view and
+            # lifted back to the top. Consumed by RANK, not absolute score — its
+            # ranking on personal text is reliable where its sigmoid is not.
+            rerank_mode, rr_k, rr_pool = resolve_rerank()
+            if rerank_mode == "rank":
+                from phileas.reranker import rerank
+
+                pool_ids = sorted(filtered, key=lambda m: relevance_map[m], reverse=True)[:rr_pool]
+                order = rerank(query, [(m, filtered[m].summary) for m in pool_ids])
+                ce_rel = rank_consume([mid for mid, _ in order], k=rr_k)
+                # The reranked head takes its rank-based relevance; the tail (beyond
+                # the pool) is scaled strictly below the lowest reranked score so a
+                # non-reranked candidate can't outrank a reranked one, while keeping
+                # its fused order within the tail.
+                tail_ceiling = min(ce_rel.values()) if ce_rel else 0.0
+                for mem_id in filtered:
+                    if mem_id in ce_rel:
+                        relevance_map[mem_id] = ce_rel[mem_id]
+                    else:
+                        relevance_map[mem_id] = relevance_map[mem_id] * tail_ceiling
             _mark("rerank")
         else:
             # ----- Floor fusion -----
