@@ -17,6 +17,7 @@ from typing import cast, get_args
 
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
+from phileas.fusion import rank_by_score, resolve_fusion, rrf_fuse
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
@@ -1091,75 +1092,115 @@ class MemoryEngine:
         # emotional memories near zero, drowning them out.
         # Non-keyword hits still go through cross-encoder reranking.
         # ----------------------------------------------------------
-        from phileas.reranker import rerank
-
-        # Candidates validated by keyword match or graph traversal
-        # bypass cross-encoder — their relevance is structural
-        structurally_matched = keyword_ids | graph_ids
-
-        # Cosine similarity for structurally-matched candidates
+        # Cosine over the candidate pool — the dense relevance signal both
+        # fusion paths consume (the RRF dense list; the floor path's base scale).
         cosine_hits = self.vector.search(query, top_k=_pool)
         cosine_map = {mid: sim for mid, sim in cosine_hits}
         _mark("cosine_full")
 
-        # Cross-encoder for candidates not already validated by
-        # keyword match or graph traversal
-        ce_candidates = [
-            (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
-        ]
-        if ce_candidates:
-            reranked = rerank(query, ce_candidates)
-            raw_ce = {mem_id: score for mem_id, score in reranked}
-            ce_scores = list(raw_ce.values())
-            min_score = min(ce_scores) if ce_scores else 0
-            max_score = max(ce_scores) if ce_scores else 1
-            score_range = max_score - min_score
-            if score_range > 0.01:
-                norm_ce = {mid: (s - min_score) / score_range for mid, s in raw_ce.items()}
-            else:
-                norm_ce = {mid: 0.5 for mid in raw_ce}
-        else:
-            norm_ce = {}
-        _mark("rerank")
-
-        # Build unified relevance map
+        fusion_method, rrf_k = resolve_fusion(default="rrf")
         relevance_map: dict[str, float] = {}
-        for mem_id in filtered:
-            cosine = cosine_map.get(mem_id, 0.0)
-            if mem_id in day_ids:
-                # Day entity match is an exact structural constraint —
-                # the memory happened on the queried date. High relevance.
-                relevance_map[mem_id] = max(cosine, 0.85)
-            elif mem_id in referent_ids:
-                # LLM reasoned about this referent specifically. Floor
-                # deliberately above the 1.0 ceiling of min-max-normalised
-                # cross-encoder scores — otherwise unrelated CE hits
-                # routinely outrank the resolved person's memories on
-                # normalisation artefacts alone.
-                relevance_map[mem_id] = max(cosine, 0.95)
-            elif mem_id in keyword_ids:
-                # Summary directly contains query terms — a structural signal as
-                # strong as the match's BM25 score. Floor by that score: a memory
-                # matching a discriminative term (a place, a proper noun) scores
-                # high and beats graph/semantic noise, while a memory matching
-                # only a corpus-common token (a frequent name, a filler word)
-                # scores low, falls back to its cosine, and can't crowd out the
-                # real answer at a pinned score. This is what lets a rare
-                # exact-term match (low cosine, e.g. "Sweden") survive while a
-                # common-term flood doesn't. bm25() is negative; negate for a
-                # magnitude, then saturate against BM25_FLOOR_SCALE into [0, 1].
-                strength = min(1.0, -keyword_bm25.get(mem_id, 0.0) / BM25_FLOOR_SCALE)
-                relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * strength)
-            elif mem_id in graph_ids:
-                # Graph-expanded but no keyword match. The hop already gated on
-                # query relevance (only the entity's standout memories entered),
-                # so membership has served its purpose — candidacy. Rank by query
-                # cosine and don't floor: a flat membership floor would pin a
-                # weakly-relevant entity memory above a strong semantic hit and
-                # refill the result with an entity's near-history.
-                relevance_map[mem_id] = cosine
+
+        if fusion_method == "rrf":
+            # ----- Reciprocal Rank Fusion (full rank-consensus) -----
+            # Fuse every signal as a ranked list and keep only rank, never the
+            # raw score — sidestepping the cosine-vs-BM25 currency mismatch
+            # entirely (no BM25_FLOOR_SCALE, no per-signal weight to tune). Dense
+            # (cosine) and sparse (BM25) contribute graded ranks; the structural
+            # signals (day, referent, graph) contribute rank-1 memberships, so a
+            # candidate confirmed by several signals wins on consensus rather than
+            # being floored up — a structural hit no longer auto-survives, it has
+            # to place well too.
+            #
+            # Renormalize by the TOP fused score, not min-max. Two near-equally-
+            # relevant candidates must stay near-equal so the cut keeps both and
+            # the later context scoring can still reorder them ("demote, don't
+            # drop"). Min-max pins the weakest candidate to exactly 0.0 — on a
+            # small or bunched candidate set (e.g. two keyword-only near-
+            # duplicates at adjacent ranks) that annihilates a genuine match
+            # before context scoring ever sees it. Dividing by the top pins only
+            # the best to 1.0 and preserves the cosine-scale assumptions MMR, the
+            # context nudge and compute_score depend on.
+            dense_rank = rank_by_score({m: cosine_map[m] for m in filtered if m in cosine_map}, high_is_better=True)
+            sparse_rank = rank_by_score(
+                {m: keyword_bm25[m] for m in filtered if m in keyword_bm25}, high_is_better=False
+            )
+            membership = [
+                {m: 1 for m in day_ids if m in filtered},
+                {m: 1 for m in referent_ids if m in filtered},
+                {m: 1 for m in graph_ids if m in filtered},
+            ]
+            fused = rrf_fuse([dense_rank, sparse_rank, *membership], k=rrf_k)
+            raw = {m: fused.get(m, 0.0) for m in filtered}
+            top = max(raw.values())
+            for mem_id in filtered:
+                relevance_map[mem_id] = raw[mem_id] / top if top > 1e-12 else 0.5
+            _mark("rerank")
+        else:
+            # ----- Floor fusion -----
+            from phileas.reranker import rerank
+
+            # Candidates validated by keyword match or graph traversal
+            # bypass cross-encoder — their relevance is structural
+            structurally_matched = keyword_ids | graph_ids
+
+            # Cross-encoder for candidates not already validated by
+            # keyword match or graph traversal
+            ce_candidates = [
+                (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
+            ]
+            if ce_candidates:
+                reranked = rerank(query, ce_candidates)
+                raw_ce = {mem_id: score for mem_id, score in reranked}
+                ce_scores = list(raw_ce.values())
+                min_score = min(ce_scores) if ce_scores else 0
+                max_score = max(ce_scores) if ce_scores else 1
+                score_range = max_score - min_score
+                if score_range > 0.01:
+                    norm_ce = {mid: (s - min_score) / score_range for mid, s in raw_ce.items()}
+                else:
+                    norm_ce = {mid: 0.5 for mid in raw_ce}
             else:
-                relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
+                norm_ce = {}
+            _mark("rerank")
+
+            # Build unified relevance map
+            for mem_id in filtered:
+                cosine = cosine_map.get(mem_id, 0.0)
+                if mem_id in day_ids:
+                    # Day entity match is an exact structural constraint —
+                    # the memory happened on the queried date. High relevance.
+                    relevance_map[mem_id] = max(cosine, 0.85)
+                elif mem_id in referent_ids:
+                    # LLM reasoned about this referent specifically. Floor
+                    # deliberately above the 1.0 ceiling of min-max-normalised
+                    # cross-encoder scores — otherwise unrelated CE hits
+                    # routinely outrank the resolved person's memories on
+                    # normalisation artefacts alone.
+                    relevance_map[mem_id] = max(cosine, 0.95)
+                elif mem_id in keyword_ids:
+                    # Summary directly contains query terms — a structural signal as
+                    # strong as the match's BM25 score. Floor by that score: a memory
+                    # matching a discriminative term (a place, a proper noun) scores
+                    # high and beats graph/semantic noise, while a memory matching
+                    # only a corpus-common token (a frequent name, a filler word)
+                    # scores low, falls back to its cosine, and can't crowd out the
+                    # real answer at a pinned score. This is what lets a rare
+                    # exact-term match (low cosine, e.g. "Sweden") survive while a
+                    # common-term flood doesn't. bm25() is negative; negate for a
+                    # magnitude, then saturate against BM25_FLOOR_SCALE into [0, 1].
+                    strength = min(1.0, -keyword_bm25.get(mem_id, 0.0) / BM25_FLOOR_SCALE)
+                    relevance_map[mem_id] = max(cosine, KEYWORD_STRUCT_FLOOR * strength)
+                elif mem_id in graph_ids:
+                    # Graph-expanded but no keyword match. The hop already gated on
+                    # query relevance (only the entity's standout memories entered),
+                    # so membership has served its purpose — candidacy. Rank by query
+                    # cosine and don't floor: a flat membership floor would pin a
+                    # weakly-relevant entity memory above a strong semantic hit and
+                    # refill the result with an entity's near-history.
+                    relevance_map[mem_id] = cosine
+                else:
+                    relevance_map[mem_id] = norm_ce.get(mem_id, 0.0)
 
         # Relevance cut — the result-size decision. Keep the memories that stand
         # out in THIS query's relevance spread (the distributional elbow), not a
@@ -1171,10 +1212,16 @@ class MemoryEngine:
         # min_keep retains the single best item so a flat/weak spread still answers
         # rather than returning empty.
         gate_ids = list(filtered.keys())
+        # RRF relevance is max-normalized rank-fusion, not absolute cosine, so the
+        # 0.05 garbage-gate floor has no fixed meaning on it — let the relative cut
+        # decide alone (min_keep still guarantees an answer). The floor only bites
+        # under lenient cuts (gap/absolute); the default ratio cut at 0.7×top is
+        # stricter than 0.05 either way.
+        _hard_floor = 0.0 if fusion_method == "rrf" else RELEVANCE_HARD_FLOOR
         keep_pos = set(
             standout_keep(
                 [relevance_map.get(m, 0.0) for m in gate_ids],
-                hard_floor=RELEVANCE_HARD_FLOOR,
+                hard_floor=_hard_floor,
                 min_keep=RELEVANCE_MIN_KEEP,
                 method=_cut_method,
                 **_cut_params,
