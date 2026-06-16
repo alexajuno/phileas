@@ -642,14 +642,15 @@ class Database:
     # --- Internal ---
 
     @_locked
-    def record_retrieval(self, item_id: str, retrieval_before: float, relevance: float) -> None:
-        """Record a successful recall.
+    def record_retrieval(self, item_id: str, retrieval_before: float, relevance: float) -> float:
+        """Record a successful recall; return the storage strength gained.
 
         Grows storage strength — difficulty-weighted by how decayed the memory
         was (``retrieval_before``) and gated by ``relevance`` — counts the
         access, and refreshes accessibility by resetting last_accessed so
         retrieval strength recovers toward 1. The caller computes
-        ``retrieval_before`` before this reset.
+        ``retrieval_before`` before this reset; the returned delta lets it report
+        per-recall growth without recomputing.
         """
         now = datetime.now(timezone.utc).isoformat()
         delta = delta_storage(relevance, retrieval_before, gain=RECALL_GAIN)
@@ -659,6 +660,63 @@ class Database:
             (delta, now, item_id),
         )
         self.conn.commit()
+        return delta
+
+    @_locked
+    def storage_health(self, fading_threshold: float = 0.25) -> dict:
+        """Snapshot of the active store's strength distribution and guardrails.
+
+        - storage_p50/p90/max — is durability accumulating, or flat at the seed?
+        - fading_count — active memories whose retrieval strength has decayed
+          below ``fading_threshold`` (candidates the model is letting go).
+        - recalls_top5pct_share — fraction of all recalls held by the busiest 5%
+          of memories; the ossification guardrail (rises toward 1 if a handful
+          dominate).
+        - reinforced_24h — strengthening events (recall + re-study) in the last day.
+        """
+        rows = self.conn.execute(
+            "SELECT storage_strength, access_count, last_accessed, created_at, last_reinforced "
+            "FROM memory_items WHERE status = 'active'"
+        ).fetchall()
+        if not rows:
+            return {
+                "active": 0,
+                "storage_p50": 0.0,
+                "storage_p90": 0.0,
+                "storage_max": 0.0,
+                "fading_count": 0,
+                "fading_threshold": fading_threshold,
+                "recalls_top5pct_share": 0.0,
+                "reinforced_24h": 0,
+            }
+
+        strengths = sorted(r["storage_strength"] for r in rows)
+
+        def _pct(p: float) -> float:
+            return round(strengths[min(len(strengths) - 1, int(p * len(strengths)))], 3)
+
+        fading = sum(
+            1
+            for r in rows
+            if retrieval_strength(_days_since_iso(r["last_accessed"] or r["created_at"]), r["storage_strength"])
+            < fading_threshold
+        )
+        accesses = sorted((r["access_count"] for r in rows), reverse=True)
+        total_acc = sum(accesses)
+        top_k = max(1, len(accesses) // 20)
+        top_share = round(sum(accesses[:top_k]) / total_acc, 3) if total_acc else 0.0
+        reinforced_24h = sum(1 for r in rows if r["last_reinforced"] and _days_since_iso(r["last_reinforced"]) < 1.0)
+
+        return {
+            "active": len(rows),
+            "storage_p50": _pct(0.5),
+            "storage_p90": _pct(0.9),
+            "storage_max": round(strengths[-1], 3),
+            "fading_count": fading,
+            "fading_threshold": fading_threshold,
+            "recalls_top5pct_share": top_share,
+            "reinforced_24h": reinforced_24h,
+        }
 
     @_locked
     def reinforce_item(self, item_id: str) -> None:

@@ -21,7 +21,7 @@ from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType
-from phileas.scoring import compute_score, mmr_select, retrieval_strength
+from phileas.scoring import mmr_select, retrieval_strength, score_components
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
@@ -1379,28 +1379,24 @@ class MemoryEngine:
         results = []
         retrieval_before: dict[str, float] = {}
         relevance_by_id: dict[str, float] = {}
+        components_by_id: dict[str, dict[str, float]] = {}
         for sel in selected:
             item = filtered[sel["id"]]
             relevance = sel["relevance"]
             relevance_by_id[item.id] = relevance
             days = _days_since(item.last_accessed, fallback=item.created_at)
             retrieval_before[item.id] = retrieval_strength(days, item.storage_strength)
-            # Weights and decay params are the scoring.py function defaults —
-            # single-sourced there.
-            score = compute_score(
-                relevance,
-                item.storage_strength,
-                days,
-                item.access_count,
-            )
-            results.append(_item_to_dict(item, score))
+            # Weights/decay are the scoring.py defaults — single-sourced there.
+            comps = score_components(relevance, item.storage_strength, days, item.access_count)
+            components_by_id[item.id] = comps
+            results.append(_item_to_dict(item, sum(comps.values())))
 
-        # Referent-resolved memories rank first regardless of the
-        # compute_score blend. Otherwise importance/reinforcement on
-        # unrelated semantic hits routinely outweighs the referent
-        # floor, burying the exact memory the LLM just identified.
-        # Within the referent block, the resolver's rank leads (rank 1
-        # = most-confident pick), then compute_score breaks ties.
+        # Referent-resolved memories rank first regardless of the score
+        # blend. Otherwise storage/recency on unrelated semantic hits
+        # routinely outweighs the referent floor, burying the exact
+        # memory the LLM just identified. Within the referent block, the
+        # resolver's rank leads (rank 1 = most-confident pick), then the
+        # blended score breaks ties.
         def _sort_key(r: dict) -> tuple:
             mem_id = r["id"]
             rank = referent_rank.get(mem_id)
@@ -1418,10 +1414,11 @@ class MemoryEngine:
 
         # Record the retrieval: grow storage strength (difficulty-weighted by the
         # captured retrieval_before, relevance-gated), count the access, and
-        # refresh accessibility.
+        # refresh accessibility. Sum the per-item gains for monitoring.
+        storage_delta_sum = 0.0
         for r in results:
             mem_id = r["id"]
-            self.db.record_retrieval(
+            storage_delta_sum += self.db.record_retrieval(
                 mem_id,
                 retrieval_before.get(mem_id, 1.0),
                 relevance_by_id.get(mem_id, 0.0),
@@ -1430,7 +1427,19 @@ class MemoryEngine:
 
         op_extra(results=len(results))
         if results:
-            op_extra(top_score=round(results[0]["score"], 3))
+            # Per-recall telemetry: which signal decided the top result, how much
+            # durability this recall built, and how decayed the surfaced set was.
+            top = results[0]
+            comps = components_by_id.get(top["id"], {})
+            rb = [retrieval_before[r["id"]] for r in results if r["id"] in retrieval_before]
+            op_extra(
+                top_score=round(top["score"], 3),
+                top_components={k: round(v, 3) for k, v in comps.items()},
+                decided_by=max(comps, key=comps.get) if comps else None,
+                storage_delta_sum=round(storage_delta_sum, 4),
+                retrieval_before_mean=round(sum(rb) / len(rb), 3) if rb else None,
+                retrieval_before_min=round(min(rb), 3) if rb else None,
+            )
 
         _elapsed_ms = (perf_counter() - _t0) * 1000
         try:
@@ -2001,4 +2010,5 @@ class MemoryEngine:
             "event_vector_count": self.vector.event_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],
+            "storage_health": self.db.storage_health(),
         }
