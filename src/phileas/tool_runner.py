@@ -222,9 +222,19 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
         f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
         f"  created={result['created_at']}  updated={result['updated_at']}",
         f"  daily_ref={result.get('daily_ref') or '—'}",
-        f"  source_event_id={result.get('source_event_id') or '—'}  (call thread() on this for the conversation)",
-        f"  entities: {ent_names or '—'}",
     ]
+    # Provenance: the raw turn this memory was distilled from, and the thread it
+    # sits in. thread(thread_id) reads back the whole conversation.
+    st = result.get("source_turn")
+    if st:
+        snippet = " ".join((st.get("text") or "").split())
+        if len(snippet) > 240:
+            snippet = snippet[:239].rstrip() + "…"
+        lines.append(f"  from turn [{id8(st['event_id'])}]: {snippet}")
+        lines.append(f"  thread={result.get('thread_id') or '—'}  (call thread() on it for the full conversation)")
+    else:
+        lines.append(f"  source_event_id={result.get('source_event_id') or '—'}")
+    lines.append(f"  entities: {ent_names or '—'}")
     # Scoping (AA-119): only render when present — an unscoped memory is
     # globally valid and the line would be noise on the vast majority.
     scopes = result.get("scopes") or []
@@ -253,21 +263,27 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
     return {"items": [result], "text": "\n".join(lines)}
 
 
-def thread(engine, entities_fn: EntitiesFn, *, event_id: str) -> ToolResult:
-    result = engine.thread(event_id)
+def thread(engine, entities_fn: EntitiesFn, *, thread_id: str) -> ToolResult:
+    result = engine.thread(thread_id)
     if result is None:
-        return {"items": [], "text": f"Event {event_id} not found."}
+        return {"items": [], "text": f"Thread {thread_id} not found."}
 
-    lines = [
-        f"Event {result['event_id']} (received {result['received_at']}):",
-        "",
-        result["text"],
-        "",
-        f"Extracted memories ({len(result['memories'])}):",
-    ]
-    for m in result["memories"]:
-        lines.append(f"  [{m['id']}] [{m['type']}] {m['summary']}")
-    return {"items": result["memories"], "text": "\n".join(lines)}
+    turns = result["turns"]
+    head = f"Thread {result['thread_id']}"
+    if result.get("label"):
+        head += f" — {result['label']}"
+    head += f" ({len(turns)} turn(s)):"
+    lines = [head]
+    items: list[dict] = []
+    for n, turn in enumerate(turns, 1):
+        when = (turn.get("received_at") or "")[:19]
+        lines.append("")
+        lines.append(f"── turn {n} · [{id8(turn['event_id'])}] · {when} ──")
+        lines.append(turn["text"])
+        for m in turn["memories"]:
+            lines.append(f"    → [{id8(m['id'])}] [{m['type']}] {m['summary']}")
+            items.append(m)
+    return {"items": items, "text": "\n".join(lines)}
 
 
 def scopes(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:

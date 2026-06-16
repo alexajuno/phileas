@@ -10,7 +10,6 @@ import chromadb
 
 DEFAULT_CHROMA_PATH = Path.home() / ".phileas" / "chroma"
 COLLECTION_NAME = "memories"
-RAW_COLLECTION_NAME = "raw_memories"
 EVENTS_COLLECTION_NAME = "events"
 
 
@@ -56,14 +55,17 @@ class VectorStore:
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        self._raw_collection = self._client.get_or_create_collection(
-            name=RAW_COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
-        )
         self._events_collection = self._client.get_or_create_collection(
             name=EVENTS_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
+        # One-time cleanup: an earlier build kept a per-memory verbatim collection
+        # alongside the events one. Provenance now flows through events, so drop
+        # the leftover collection if a prior version left it on disk.
+        try:
+            self._client.delete_collection("raw_memories")
+        except Exception:
+            pass
 
     def close(self):
         pass  # ChromaDB PersistentClient doesn't need explicit close
@@ -148,30 +150,6 @@ class VectorStore:
 
     def count(self) -> int:
         return self._collection.count()
-
-    # --- Raw text collection ---
-
-    def add_raw(self, memory_id: str, raw_text: str, metadata: dict | None = None) -> None:
-        """Store raw verbatim text for a memory."""
-        kwargs: dict = {"ids": [memory_id], "documents": [raw_text]}
-        if metadata:
-            kwargs["metadatas"] = [metadata]
-        self._raw_collection.upsert(**kwargs)
-
-    def search_raw(self, query: str, top_k: int = 5) -> list[tuple[str, float]]:
-        """Search raw text by semantic similarity. Returns [(memory_id, score)]."""
-        if self._raw_collection.count() == 0:
-            return []
-        results = self._raw_collection.query(query_texts=[query], n_results=min(top_k, self._raw_collection.count()))
-        ids = results["ids"][0] if results["ids"] else []
-        distances = results["distances"][0] if results["distances"] else []
-        return [(id_, 1.0 - dist) for id_, dist in zip(ids, distances)]
-
-    def delete_raw(self, memory_id: str) -> None:
-        self._raw_collection.delete(ids=[memory_id])
-
-    def raw_count(self) -> int:
-        return self._raw_collection.count()
 
     # --- Events collection (verbatim conversation chunks, keyed by event_id) ---
 

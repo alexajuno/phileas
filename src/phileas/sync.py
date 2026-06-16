@@ -52,7 +52,6 @@ _MEM_FIELDS = (
     "storage_strength",
     "reinforcement_count",
     "last_reinforced",
-    "raw_text",
     "source_event_id",
     "created_at",
     "updated_at",
@@ -76,7 +75,6 @@ def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
         storage_strength=d.get("storage_strength", 0.5),
         reinforcement_count=d.get("reinforcement_count", 0),
         last_reinforced=_dt(d.get("last_reinforced")),
-        raw_text=d.get("raw_text"),
         source_event_id=d.get("source_event_id"),
         created_at=_dt(d["created_at"]),
         updated_at=_dt(d["updated_at"]),
@@ -104,7 +102,7 @@ def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, A
     cols = (
         "SELECT id, summary, memory_type, importance, status, access_count, "
         "last_accessed, daily_ref, storage_strength, reinforcement_count, last_reinforced, "
-        "raw_text, source_event_id, created_at, updated_at FROM memory_items"
+        "source_event_id, created_at, updated_at FROM memory_items"
     )
     if since:
         rows = engine.db.conn.execute(cols + " WHERE updated_at > ?", (since,)).fetchall()
@@ -115,7 +113,16 @@ def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, A
         events_src = engine.db.get_all_events()
 
     memories = [{f: row[f] for f in _MEM_FIELDS} for row in rows]
-    events = [{"id": e.id, "text": e.text, "received_at": e.received_at.isoformat()} for e in events_src]
+    events = [
+        {
+            "id": e.id,
+            "text": e.text,
+            "received_at": e.received_at.isoformat(),
+            "source_kind": e.source_kind,
+            "thread_id": e.thread_id,
+        }
+        for e in events_src
+    ]
 
     # Only the exported memories' links — keep the bundle small.
     all_links = engine.graph.all_about_edges()
@@ -188,7 +195,15 @@ def import_bundle(engine: MemoryEngine, bundle: dict[str, Any]) -> dict[str, int
 
     n_events = 0
     for e in bundle.get("events", []):
-        engine.db.save_event(Event(id=e["id"], text=e["text"], received_at=datetime.fromisoformat(e["received_at"])))
+        engine.db.save_event(
+            Event(
+                id=e["id"],
+                text=e["text"],
+                received_at=datetime.fromisoformat(e["received_at"]),
+                source_kind=e.get("source_kind", "agent"),
+                thread_id=e.get("thread_id"),
+            )
+        )
         engine.vector.add_event(e["id"], e["text"])
         n_events += 1
 
@@ -199,8 +214,6 @@ def import_bundle(engine: MemoryEngine, bundle: dict[str, Any]) -> dict[str, int
         item = _item_from_dict(d)
         engine.db.save_item(item)
         engine.vector.add(item.id, item.summary, metadata={"memory_type": item.memory_type})
-        if item.raw_text:
-            engine.vector.add_raw(item.id, item.raw_text)
         for ent in links.get(item.id, []):
             name, etype = ent.get("name"), ent.get("type")
             if name and etype:

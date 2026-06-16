@@ -55,7 +55,6 @@ class MemoryItem(BaseModel):
     storage_strength: float
     reinforcement_count: int
     last_reinforced: str | None
-    raw_text: str | None
     daily_ref: str | None
     created_at: str | None
     updated_at: str | None

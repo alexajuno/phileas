@@ -321,10 +321,10 @@ def hydrate(memory_id: str):
 
 
 @click.command("thread")
-@click.argument("event_id")
-def thread(event_id: str):
-    """Verbatim source event plus every memory extracted from it."""
-    _run_tool("thread", {"event_id": event_id})
+@click.argument("thread_id")
+def thread(thread_id: str):
+    """A conversation: its raw turns in order, each with the memories it produced."""
+    _run_tool("thread", {"thread_id": thread_id})
 
 
 @click.command("scopes")

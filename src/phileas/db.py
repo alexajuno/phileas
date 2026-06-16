@@ -5,15 +5,19 @@ that can be rebuilt from this database.
 """
 
 import functools
+import logging
 import math
 import re
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from phileas.models import Event, MemoryItem
+from phileas.models import Event, MemoryItem, Thread
 from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength
+
+log = logging.getLogger(__name__)
 
 
 def _days_since_iso(ts: str | None) -> float:
@@ -97,6 +101,20 @@ CREATE TABLE IF NOT EXISTS events (
     received_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS threads (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    source_kind TEXT,
+    label TEXT,
+    client_key TEXT
+);
+
+-- A client's stable conversation key maps to at most one thread, so a resumed
+-- or compacted session re-attaches to the thread it already opened. Partial so
+-- threads opened without a key (no continuity) don't collide on NULL.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_client_key
+    ON threads(client_key) WHERE client_key IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
@@ -136,6 +154,11 @@ MIGRATIONS = [
     # pre-existing rows can be seeded once from importance + reinforcement_count
     # by _backfill_storage_strength; new rows write a real value at save time.
     "ALTER TABLE memory_items ADD COLUMN storage_strength REAL NOT NULL DEFAULT -1.0",
+    # Conversation threads: tag each raw turn with the conversation it belongs to.
+    # A thread is the ordered run of turns sharing this id. Backfilled to the
+    # turn's own id (a one-turn thread) by _backfill_event_threads.
+    "ALTER TABLE events ADD COLUMN thread_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, received_at)",
 ]
 
 
@@ -147,6 +170,8 @@ class Database:
         self._lock = threading.RLock()
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self._backfill_event_provenance()
+        self._backfill_event_threads()
         self._backfill_storage_strength()
         self._backfill_fts()
 
@@ -158,6 +183,57 @@ class Database:
                 self.conn.commit()
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+    def _backfill_event_provenance(self):
+        """Lift legacy verbatim snippets onto the event provenance path, once.
+
+        An earlier build stored a memory's verbatim source inline on the row. The
+        source of a memory is now a row in ``events`` that ``source_event_id``
+        points at — the same handle ``thread`` and the recall event path resolve.
+        For each row that still carries an inline snippet without an event link,
+        synthesize an event from the snippet and link it, then retire the column.
+
+        Pure SQL so it runs before any read and needs no vector store. The
+        synthesized events embed lazily — the snippet text is preserved in
+        ``events.text``, which is all ``thread`` and ``hydrate`` read. Idempotent:
+        once the column is gone, there is nothing to do.
+        """
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(memory_items)")}
+        if "raw_text" not in cols:
+            return
+        fossils = self.conn.execute(
+            "SELECT id, raw_text, created_at FROM memory_items "
+            "WHERE raw_text IS NOT NULL AND raw_text != '' AND source_event_id IS NULL"
+        ).fetchall()
+        for row in fossils:
+            event_id = str(uuid.uuid4())
+            self.conn.execute(
+                "INSERT INTO events (id, text, received_at, source_kind) VALUES (?, ?, ?, ?)",
+                (event_id, row["raw_text"], row["created_at"], "backfill"),
+            )
+            self.conn.execute(
+                "UPDATE memory_items SET source_event_id = ? WHERE id = ?",
+                (event_id, row["id"]),
+            )
+        self.conn.execute("ALTER TABLE memory_items DROP COLUMN raw_text")
+        self.conn.commit()
+        if fossils:
+            log.info("lifted %d verbatim snippet(s) onto the event path", len(fossils))
+
+    def _backfill_event_threads(self):
+        """Seat every untagged turn in its own one-turn thread, once.
+
+        Turns predating the conversation layer carry no ``thread_id``. Each
+        becomes a singleton thread keyed by its own id, so ``thread`` and the
+        recall event path resolve uniformly whether a turn arrived alone or as
+        part of a multi-turn conversation. New turns write a real value at save
+        time, so this only ever touches the backlog. Idempotent.
+        """
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(events)")}
+        if "thread_id" not in cols:
+            return
+        self.conn.execute("UPDATE events SET thread_id = id WHERE thread_id IS NULL")
+        self.conn.commit()
 
     def _backfill_storage_strength(self):
         """Seed storage_strength for rows that predate the two-strength model.
@@ -216,8 +292,8 @@ class Database:
                (id, summary, memory_type, importance, status,
                 access_count, last_accessed, daily_ref,
                 storage_strength, reinforcement_count, last_reinforced,
-                raw_text, source_event_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                source_event_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -230,7 +306,6 @@ class Database:
                 item.storage_strength,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
-                item.raw_text,
                 item.source_event_id,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
@@ -438,7 +513,7 @@ class Database:
     _WEB_COLS = (
         "id, summary, memory_type, importance, status, "
         "access_count, storage_strength, reinforcement_count, last_reinforced, "
-        "raw_text, daily_ref, created_at, updated_at"
+        "daily_ref, created_at, updated_at"
     )
 
     @staticmethod
@@ -453,7 +528,6 @@ class Database:
             "storage_strength": row["storage_strength"],
             "reinforcement_count": row["reinforcement_count"],
             "last_reinforced": row["last_reinforced"],
-            "raw_text": row["raw_text"],
             "daily_ref": row["daily_ref"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -478,17 +552,17 @@ class Database:
 
     @_locked
     def web_search(self, query: str, limit: int = 100) -> list[dict]:
-        """Keyword search over summary/raw_text — up to 8 whitespace terms,
-        LIKE-AND, backslash-escaped."""
+        """Keyword search over summary — up to 8 whitespace terms, LIKE-AND,
+        backslash-escaped."""
         terms = (query or "").split()[:8]
         if not terms:
             return []
         clauses: list[str] = []
         params: list[str | int] = []
         for term in terms:
-            clauses.append("(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\')")
+            clauses.append("summary LIKE ? ESCAPE '\\'")
             like = "%" + re.sub(r"([\\%_])", r"\\\1", term) + "%"
-            params.extend([like, like])
+            params.append(like)
         params.append(limit)
         rows = self.conn.execute(
             f"""SELECT {self._WEB_COLS} FROM memory_items
@@ -764,7 +838,6 @@ class Database:
             storage_strength=row["storage_strength"] if "storage_strength" in row.keys() else 0.5,
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
-            raw_text=row["raw_text"] if "raw_text" in row.keys() else None,
             source_event_id=row["source_event_id"] if "source_event_id" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -775,9 +848,15 @@ class Database:
     @_locked
     def save_event(self, event: Event) -> None:
         self.conn.execute(
-            """INSERT OR REPLACE INTO events (id, text, received_at, source_kind)
-               VALUES (?, ?, ?, ?)""",
-            (event.id, event.text, event.received_at.isoformat(), event.source_kind),
+            """INSERT OR REPLACE INTO events (id, text, received_at, source_kind, thread_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                event.id,
+                event.text,
+                event.received_at.isoformat(),
+                event.source_kind,
+                event.thread_id or event.id,
+            ),
         )
         self.conn.commit()
 
@@ -792,36 +871,77 @@ class Database:
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
-    @_locked
-    def get_all_events(self, limit: int | None = None) -> list[Event]:
-        """All events in insertion order — used by the embed-backfill script."""
-        sql = "SELECT id, text, received_at, source_kind FROM events ORDER BY received_at ASC"
-        params: tuple = ()
-        if limit is not None:
-            sql += " LIMIT ?"
-            params = (limit,)
-        rows = self.conn.execute(sql, params).fetchall()
-        return [
-            Event(
-                id=row["id"],
-                text=row["text"],
-                received_at=datetime.fromisoformat(row["received_at"]),
-                source_kind=row["source_kind"] or "unknown",
-            )
-            for row in rows
-        ]
-
-    @_locked
-    def get_event(self, event_id: str) -> Event | None:
-        row = self.conn.execute(
-            "SELECT id, text, received_at, source_kind FROM events WHERE id = ?",
-            (event_id,),
-        ).fetchone()
-        if not row:
-            return None
+    def _row_to_event(self, row: sqlite3.Row) -> Event:
         return Event(
             id=row["id"],
             text=row["text"],
             received_at=datetime.fromisoformat(row["received_at"]),
             source_kind=row["source_kind"] or "unknown",
+            thread_id=(row["thread_id"] if "thread_id" in row.keys() else None) or row["id"],
         )
+
+    @_locked
+    def get_all_events(self, limit: int | None = None) -> list[Event]:
+        """All events in insertion order — used by the embed-backfill script."""
+        sql = "SELECT id, text, received_at, source_kind, thread_id FROM events ORDER BY received_at ASC"
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    @_locked
+    def get_event(self, event_id: str) -> Event | None:
+        row = self.conn.execute(
+            "SELECT id, text, received_at, source_kind, thread_id FROM events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return self._row_to_event(row)
+
+    @_locked
+    def get_events_for_thread(self, thread_id: str) -> list[Event]:
+        """All raw turns in a thread, oldest first — the conversation in order."""
+        rows = self.conn.execute(
+            "SELECT id, text, received_at, source_kind, thread_id FROM events "
+            "WHERE thread_id = ? ORDER BY received_at ASC",
+            (thread_id,),
+        ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    # --- Threads (conversations: ordered runs of raw turns) ---
+
+    def _row_to_thread(self, row: sqlite3.Row) -> Thread:
+        return Thread(
+            id=row["id"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            source_kind=row["source_kind"] or "agent",
+            label=row["label"],
+            client_key=row["client_key"] if "client_key" in row.keys() else None,
+        )
+
+    @_locked
+    def save_thread(self, thread: Thread) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO threads (id, created_at, source_kind, label, client_key) VALUES (?, ?, ?, ?, ?)",
+            (thread.id, thread.created_at.isoformat(), thread.source_kind, thread.label, thread.client_key),
+        )
+        self.conn.commit()
+
+    @_locked
+    def get_thread(self, thread_id: str) -> Thread | None:
+        row = self.conn.execute(
+            "SELECT id, created_at, source_kind, label, client_key FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+        return self._row_to_thread(row) if row else None
+
+    @_locked
+    def get_thread_by_client_key(self, client_key: str) -> Thread | None:
+        row = self.conn.execute(
+            "SELECT id, created_at, source_kind, label, client_key FROM threads WHERE client_key = ?",
+            (client_key,),
+        ).fetchone()
+        return self._row_to_thread(row) if row else None

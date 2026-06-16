@@ -20,7 +20,6 @@ export type MemoryItem = {
   storage_strength: number;
   reinforcement_count: number;
   last_reinforced: string | null;
-  raw_text: string | null;
   tags: string[];
   daily_ref: string | null;
   source_session_id: string | null;

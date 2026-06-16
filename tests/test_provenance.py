@@ -83,7 +83,8 @@ def test_memorize_happy_path_threads_back(srv):
 
     thread = srv.engine.thread(event_id)
     assert thread is not None
-    assert any("minimal diffs" in m["summary"] for m in thread["memories"])
+    memories = [m for turn in thread["turns"] for m in turn["memories"]]
+    assert any("minimal diffs" in m["summary"] for m in memories)
 
 
 # -- memorize_batch ----------------------------------------------------------

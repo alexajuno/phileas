@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ChevronDown, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { ForgetMemoryDialog } from "@/components/forget-memory-dialog";
@@ -26,10 +26,8 @@ export function MemoryCard({
   dayBadge,
   onForgotten,
 }: Props) {
-  const [open, setOpen] = useState(false);
   const [forgetOpen, setForgetOpen] = useState(false);
   const tone = toneFor(memory.memory_type);
-  const hasRaw = Boolean(memory.raw_text);
   const terms = highlightTerms && highlightTerms.length > 0 ? highlightTerms : null;
 
   return (
@@ -98,7 +96,7 @@ export function MemoryCard({
         {terms ? highlight(memory.summary, terms) : memory.summary}
       </p>
 
-      {(memory.tags.length > 0 || hasRaw) && (
+      {memory.tags.length > 0 && (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           {memory.tags.map((t) => (
             <Badge
@@ -109,25 +107,6 @@ export function MemoryCard({
               {terms ? highlight(t, terms) : t}
             </Badge>
           ))}
-          {hasRaw && (
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              className={cn(
-                "ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
-                "text-[11px] text-muted-foreground transition-colors",
-                "hover:text-foreground",
-              )}
-            >
-              raw
-              <ChevronDown
-                className={cn(
-                  "h-3 w-3 transition-transform",
-                  open && "rotate-180",
-                )}
-              />
-            </button>
-          )}
         </div>
       )}
 
@@ -138,20 +117,6 @@ export function MemoryCard({
           onOpenChange={setForgetOpen}
           onForgotten={onForgotten}
         />
-      )}
-
-      {open && hasRaw && (
-        <pre
-          className={cn(
-            "mt-3 max-h-64 overflow-auto rounded-lg border border-border/60",
-            "bg-muted/40 p-3 font-mono text-[11.5px] leading-relaxed",
-            "text-foreground/90 whitespace-pre-wrap",
-          )}
-        >
-          {terms && memory.raw_text
-            ? highlight(memory.raw_text, terms)
-            : memory.raw_text}
-        </pre>
       )}
     </article>
   );

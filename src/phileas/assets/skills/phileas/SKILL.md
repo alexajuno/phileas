@@ -40,11 +40,11 @@ That line is `[id8] [type] date · summary · entity tags`. The summary is the w
 
 When you genuinely need more than a pointer, drill in — cheapest to most expensive:
 
-- `hydrate(id8)` — the full record of **one** memory: exact timestamps, importance/status/counts, the full `source_event_id`, and linked entities. The inverse of the pointer trim.
-- `thread(event_id)` — the verbatim originating conversation + every sibling memory from that turn. Get `event_id` from `hydrate` first. The deepest, most expensive view.
+- `hydrate(id8)` — the full record of **one** memory: exact timestamps, importance/status/counts, its source turn (the raw it was distilled from), its `thread_id`, and linked entities. The inverse of the pointer trim.
+- `thread(thread_id)` — the conversation a memory came from: its raw turns in order, each with the memories it produced. Get `thread_id` from `hydrate` first. The deepest, most expensive view.
 - `about(name)` — everything tied to an entity (also bounded).
 
-Rule of thumb: scan pointers → hydrate the one or two that matter → thread only if you need the raw conversation. Each hop up the ladder costs more context, so climb it deliberately.
+Rule of thumb: scan pointers → hydrate the one or two that matter → thread only if you need the surrounding conversation. Each hop up the ladder costs more context, so climb it deliberately.
 
 ### Use the context
 
@@ -54,18 +54,19 @@ Treat recalled memories as background context, not as content to recite. Referen
 
 Inline `memorize` (and `memorize_batch` for multiple facts from one turn).
 
-### Writes are two steps — capture the source first
+### Writes are three steps — open a thread, capture the turn, then memorize
 
-Every memory points back at the raw turn it was distilled from, so a write is two calls:
+A memory points back at the raw turn it was distilled from, and that turn belongs to a conversation thread. So:
 
-1. `ingest_text(text=<the verbatim source you're about to distill>)` — stores and embeds that raw text as an *event*, and returns its `event_id`.
-2. `memorize(summary=..., source_event_id=<that event_id>)` — records the memory, linked to its source.
+1. `start_thread(client_key="claude_code:<session_id>")` — **once at the start of the conversation.** It returns a `thread_id`; keep it and reuse it for every capture below. Passing the session id as `client_key` makes it resume-safe: after a context compaction or a `--resume`, calling `start_thread` again with the same key continues the same thread instead of splitting the conversation. (No session id to hand? Call it once and just reuse the returned `thread_id`.)
+2. `ingest_text(text=<the verbatim turn>, thread_id=<that thread_id>)` — stores and embeds the raw turn as an *event* in the thread, and returns its `event_id`.
+3. `memorize(summary=..., source_event_id=<that event_id>)` — records the memory, linked to the turn it came from.
 
-`source_event_id` is required; a `memorize` that can't name a real event is refused. That link is what lets `thread(event_id)` replay the verbatim conversation behind a memory, and what keeps a memory anchored to the evidence it came from.
+`source_event_id` is required; a `memorize` that can't name a real event is refused. That link is what lets `thread(thread_id)` replay the conversation behind a memory, and what keeps a memory anchored to the evidence it came from.
 
-Capture once per source passage. When one passage yields several facts, call `ingest_text` a single time and reuse the one `event_id` — pass it as the batch-level `source_event_id` to `memorize_batch`, or repeat it across each `memorize`. Don't mint a fresh event per fact drawn from the same turn.
+A thread is only as complete as the turns you capture, and that's your call. Phileas hands you the calls; you decide what a conversation is worth — ingest the turns that carry something to remember under the one `thread_id` so `thread()` reads back as the conversation rather than scattered fragments, and let the rest pass. Some conversations earn a full thread, some a single pinned memory, some nothing at all. When a single turn yields several facts, call `ingest_text` once and reuse its `event_id` across each `memorize` (or as the batch-level `source_event_id` for `memorize_batch`) — don't mint a fresh event per fact from the same turn.
 
-`ingest_text` takes a `source_kind` that defaults to `"agent"` — live capture by you, the in-session model. Leave it at the default.
+`ingest_text` and `start_thread` take a `source_kind` that defaults to `"agent"` — live capture by you, the in-session model. Leave it at the default.
 
 ### What to save
 
@@ -115,7 +116,7 @@ Before calling `memorize`, do a quick `recall` on the core entity or topic. If a
 
 ### Language
 
-**Always write `summary` (and any `raw_text` you pass) in English, even when the source turn is in Vietnamese or mixed language.** Translate the user's words; preserve proper nouns (people, places, projects, @mentions, brand names, and Vietnamese terms with no clean English equivalent — keep those in italics or quotes).
+**Always write `summary` (and the verbatim text you pass to `ingest_text`) in English, even when the source turn is in Vietnamese or mixed language.** Translate the user's words; preserve proper nouns (people, places, projects, @mentions, brand names, and Vietnamese terms with no clean English equivalent — keep those in italics or quotes).
 
 *Why:* Phileas embeds with `all-MiniLM-L6-v2`, an English-centric model. Vietnamese-vs-Vietnamese similarity peaks around 0.40–0.49, below the 0.5 recall floor — so non-English memories store cleanly but never surface in recall.
 
