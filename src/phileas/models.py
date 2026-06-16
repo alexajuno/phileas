@@ -36,6 +36,7 @@ class MemoryItem:
     access_count: int = 0
     last_accessed: datetime | None = None
     daily_ref: str | None = None
+    storage_strength: float = 0.5  # durable depth (Bjork); seeded from importance, grown by recall + re-study
     reinforcement_count: int = 0  # how many similar memories arrived after this one
     last_reinforced: datetime | None = None
     raw_text: str | None = None  # verbatim source text (conversation snippet, etc.)

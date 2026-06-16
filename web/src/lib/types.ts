@@ -17,6 +17,7 @@ export type MemoryItem = {
   importance: number;
   status: string;
   access_count: number;
+  storage_strength: number;
   reinforcement_count: number;
   last_reinforced: string | null;
   raw_text: string | null;

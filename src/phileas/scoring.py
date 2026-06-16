@@ -1,100 +1,92 @@
-"""Memory scoring: relevance, importance, recency decay, access frequency, MMR.
+"""Memory scoring: relevance, storage/retrieval strength, access frequency, MMR.
+
+Two-strength model (Bjork's New Theory of Disuse):
+  retrieval strength — current accessibility; decays since last access, drives surfacing
+  storage strength   — durable depth; seeded from importance, grows on successful recall
 
 Final scoring formula (post-rerank):
-  final = (relevance × 0.55) + (importance/10 × 0.15) + (reinforcement × 0.15)
-        + (recency × 0.10) + (access × 0.05)
+  final = (relevance × 0.55) + (storage × 0.30) + (retrieval × 0.10) + (access × 0.05)
 """
 
 import math
 
+# --- Two-strength dynamics --------------------------------------------------
 
-def recency_score(
-    days_since_access: float,
-    importance: int = 5,
-    reinforcement_count: int = 0,
-    *,
-    base_decay: float = 0.01,
-    decay_halving: float = 0.5,
-    halving_interval: int = 3,
-    min_decay: float = 0.001,
-) -> float:
-    """Exponential decay based on time since last access.
+# Half-life (days) of retrieval strength at storage_strength == 0. Calibrated so
+# a default-importance memory (importance 5 → storage 0.5) starts near a ~64-day
+# half-life; recall extends it from there.
+BASE_HALFLIFE_DAYS = 45.0
 
-    Decay rate adapts to reinforcement count:
-      decay = max(min_decay, base_decay * halving^(reinforcement_count / halving_interval))
+# Each unit of storage strength doubles the half-life (halflife = H0 · 2**SS),
+# clamped so heavily-recalled memories are effectively permanent.
+HALFLIFE_CAP_DAYS = 3650.0
 
-    With defaults: 0 reinforcements → 0.01 (50% at ~70d),
-    3 → 0.005 (50% at ~140d), 9+ → 0.001 (near-permanent).
+# Difficulty gain: storage gained on a fully-relevant recall of a fully-decayed
+# memory. Re-study (a similar memory arriving) uses the smaller RESTUDY_GAIN —
+# the testing effect says retrieving strengthens more than re-encountering.
+RECALL_GAIN = 0.4
+RESTUDY_GAIN = 0.15
 
-    High-importance memories (>= 9) get min_decay as a floor guarantee.
+
+def halflife_days(storage_strength: float) -> float:
+    """Retrieval-strength half-life in days, lengthening with storage strength."""
+    return min(HALFLIFE_CAP_DAYS, BASE_HALFLIFE_DAYS * 2.0**storage_strength)
+
+
+def retrieval_strength(days_since_access: float, storage_strength: float = 0.5) -> float:
+    """Current accessibility in (0, 1]: exponential decay since last access.
+
+    The decay rate shrinks as storage strength grows, so well-stored memories
+    stay accessible far longer. A freshly accessed memory (days == 0) returns 1.0.
     """
-    if importance >= 9:
-        # High-importance: decay rate capped at min_decay (slow decay
-        # guaranteed), but reinforcement can push it even lower (slower).
-        raw = base_decay * decay_halving ** (reinforcement_count / halving_interval)
-        decay_rate = min(raw, min_decay)
-    else:
-        decay_rate = max(min_decay, base_decay * decay_halving ** (reinforcement_count / halving_interval))
-    return math.exp(-decay_rate * days_since_access)
+    decay_rate = math.log(2.0) / halflife_days(storage_strength)
+    return math.exp(-decay_rate * max(0.0, days_since_access))
 
 
-def reinforcement_score(reinforcement_count: int, saturation: int = 10) -> float:
-    """Reinforcement signal: log-scaled, saturates at `saturation` reinforcements.
+def delta_storage(relevance: float, retrieval_before: float, *, gain: float = RECALL_GAIN) -> float:
+    """Storage strength gained from one retrieval event.
 
-    Returns 0.0 for unreinforced, ~0.5 at saturation/3, ~1.0 at saturation.
-    Uses log scale so early reinforcements matter most.
+    Difficulty-weighted by (1 − retrieval_before): a memory that had decayed
+    gains a lot, one that was still fresh gains almost nothing. Relevance-gated
+    so a marginally relevant hit that merely surfaced accrues little durability.
     """
-    if reinforcement_count <= 0:
-        return 0.0
-    return min(1.0, math.log(reinforcement_count + 1) / math.log(saturation + 1))
+    srt_rel = min(1.0, max(0.0, relevance))
+    srt_rs = min(1.0, max(0.0, retrieval_before))
+    return gain * srt_rel * (1.0 - srt_rs)
+
+
+def storage_strength_norm(storage_strength: float) -> float:
+    """Map unbounded storage strength to [0, 1) for scoring: 1 − 2**(−SS)."""
+    return 1.0 - 2.0 ** (-max(0.0, storage_strength))
 
 
 def compute_score(
     relevance: float,
-    importance: int,
+    storage_strength: float,
     days_since_access: float,
     access_count: int,
-    reinforcement_count: int = 0,
     *,
     relevance_weight: float = 0.55,
-    importance_weight: float = 0.15,
-    recency_weight: float = 0.10,
+    storage_weight: float = 0.30,
+    retrieval_weight: float = 0.10,
     access_weight: float = 0.05,
-    reinforcement_weight: float = 0.15,
-    base_decay: float = 0.01,
-    decay_halving: float = 0.5,
-    halving_interval: int = 3,
-    min_decay: float = 0.001,
 ) -> float:
     """Combined scoring for retrieval ranking.
 
-    Five signals:
+    Four signals:
       relevance (55%) — semantic match from reranker/cosine
-      importance (15%) — 1-10 scale
-      reinforcement (15%) — how many similar memories arrived (pattern strength)
-      recency (10%) — exponential decay since last access
-      access (5%) — how often recalled
+      storage   (30%) — durable depth: seeded from importance, grown by recall
+      retrieval (10%) — current accessibility; decays since last access
+      access    (5%)  — raw recall frequency, log-scaled
 
-    Reinforcement-based decay also applies to recency: frequently
-    reinforced memories fade slower.
+    Storage strength also slows retrieval decay, so durable memories keep both a
+    high storage component and a high retrieval component for longer.
     """
-    rel_component = relevance * relevance_weight
-    imp_component = (importance / 10.0) * importance_weight
-    rec_component = (
-        recency_score(
-            days_since_access,
-            importance,
-            reinforcement_count,
-            base_decay=base_decay,
-            decay_halving=decay_halving,
-            halving_interval=halving_interval,
-            min_decay=min_decay,
-        )
-        * recency_weight
-    )
-    acc_component = (math.log(access_count + 1) / 5.0) * access_weight
-    reinf_component = reinforcement_score(reinforcement_count) * reinforcement_weight
-    return rel_component + imp_component + rec_component + acc_component + reinf_component
+    srt_rel = relevance * relevance_weight
+    srt_store = storage_strength_norm(storage_strength) * storage_weight
+    srt_retr = retrieval_strength(days_since_access, storage_strength) * retrieval_weight
+    srt_acc = (math.log(access_count + 1) / 5.0) * access_weight
+    return srt_rel + srt_store + srt_retr + srt_acc
 
 
 def mmr_select(

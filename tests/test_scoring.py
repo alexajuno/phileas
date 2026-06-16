@@ -1,80 +1,97 @@
 """Tests for memory scoring."""
 
-from phileas.scoring import compute_score, mmr_select, recency_score, reinforcement_score
+from phileas.scoring import (
+    RECALL_GAIN,
+    RESTUDY_GAIN,
+    compute_score,
+    delta_storage,
+    halflife_days,
+    mmr_select,
+    retrieval_strength,
+    storage_strength_norm,
+)
+
+# --- retrieval strength (decay) ---------------------------------------------
 
 
-def test_recency_score_recent():
-    score = recency_score(days_since_access=0, importance=5)
-    assert score > 0.99
+def test_retrieval_strength_recent():
+    assert retrieval_strength(days_since_access=0, storage_strength=0.5) > 0.99
 
 
-def test_recency_score_old():
-    score = recency_score(days_since_access=70, importance=5)
-    assert 0.4 < score < 0.6
+def test_retrieval_strength_at_halflife():
+    h = halflife_days(0.5)
+    assert abs(retrieval_strength(h, storage_strength=0.5) - 0.5) < 0.01
 
 
-def test_recency_score_high_importance_slow_decay():
-    low = recency_score(days_since_access=200, importance=3)
-    high = recency_score(days_since_access=200, importance=9)
+def test_higher_storage_decays_slower():
+    low = retrieval_strength(200, storage_strength=0.2)
+    high = retrieval_strength(200, storage_strength=3.0)
     assert high > low
 
 
-def test_high_importance_reinforcement_makes_decay_slower():
-    """Reinforcement should make high-importance memories decay even slower than min_decay."""
-    no_reinf = recency_score(days_since_access=200, importance=9, reinforcement_count=0)
-    high_reinf = recency_score(days_since_access=200, importance=9, reinforcement_count=10)
-    assert high_reinf > no_reinf
+def test_halflife_grows_with_storage_and_is_capped():
+    assert halflife_days(2.0) > halflife_days(0.5) > halflife_days(0.0)
+    assert halflife_days(100.0) <= 3650.0
 
 
-def test_reinforcement_score_zero():
-    assert reinforcement_score(0) == 0.0
+# --- storage strength growth (difficulty-weighted reinforcement) ------------
 
 
-def test_reinforcement_score_saturates():
-    score = reinforcement_score(10, saturation=10)
-    assert score > 0.95
+def test_delta_storage_difficulty_weighted():
+    """A decayed memory gains far more storage than a fresh one."""
+    decayed = delta_storage(relevance=1.0, retrieval_before=0.0)
+    fresh = delta_storage(relevance=1.0, retrieval_before=0.99)
+    assert decayed > fresh
+    assert abs(decayed - RECALL_GAIN) < 1e-9  # α · 1 · (1 − 0)
+    assert fresh < 0.01
 
 
-def test_reinforcement_score_log_scale():
-    low = reinforcement_score(1)
-    mid = reinforcement_score(5)
-    high = reinforcement_score(10)
-    assert 0 < low < mid < high
+def test_delta_storage_relevance_gated():
+    """A marginally relevant hit accrues little durability even when decayed."""
+    relevant = delta_storage(relevance=1.0, retrieval_before=0.0)
+    marginal = delta_storage(relevance=0.1, retrieval_before=0.0)
+    assert relevant > marginal
 
 
-def test_reinforced_beats_unreinforced():
-    reinforced = compute_score(
-        relevance=0.5, importance=5, days_since_access=100, access_count=1, reinforcement_count=8
-    )
-    unreinforced = compute_score(
-        relevance=0.5, importance=5, days_since_access=100, access_count=1, reinforcement_count=0
-    )
-    assert reinforced > unreinforced
+def test_recall_gain_exceeds_restudy():
+    recall = delta_storage(1.0, 0.0, gain=RECALL_GAIN)
+    restudy = delta_storage(1.0, 0.0, gain=RESTUDY_GAIN)
+    assert recall > restudy > 0
 
 
-def test_compute_score():
-    score = compute_score(relevance=0.8, importance=8, days_since_access=0, access_count=5)
-    assert score > 0
-    assert score <= 1.1  # can slightly exceed 1.0 with reinforcement
+def test_storage_norm_saturates():
+    assert storage_strength_norm(0.0) == 0.0
+    assert 0 < storage_strength_norm(0.5) < storage_strength_norm(2.0) < 1.0
 
 
-def test_high_importance_beats_low():
-    high = compute_score(relevance=0.5, importance=10, days_since_access=0, access_count=1)
-    low = compute_score(relevance=0.5, importance=2, days_since_access=0, access_count=1)
+# --- combined scoring -------------------------------------------------------
+
+
+def test_compute_score_in_range():
+    score = compute_score(relevance=0.8, storage_strength=0.8, days_since_access=0, access_count=5)
+    assert 0 < score <= 1.1
+
+
+def test_high_storage_beats_low():
+    high = compute_score(relevance=0.5, storage_strength=2.0, days_since_access=0, access_count=1)
+    low = compute_score(relevance=0.5, storage_strength=0.2, days_since_access=0, access_count=1)
     assert high > low
 
 
-def test_recent_beats_old_same_importance():
-    recent = compute_score(relevance=0.5, importance=5, days_since_access=1, access_count=1)
-    old = compute_score(relevance=0.5, importance=5, days_since_access=365, access_count=1)
+def test_recent_beats_old_same_storage():
+    recent = compute_score(relevance=0.5, storage_strength=0.5, days_since_access=1, access_count=1)
+    old = compute_score(relevance=0.5, storage_strength=0.5, days_since_access=365, access_count=1)
     assert recent > old
 
 
-def test_relevance_dominates_importance():
-    """High relevance + low importance should beat low relevance + high importance."""
-    relevant = compute_score(relevance=0.9, importance=4, days_since_access=0, access_count=0)
-    important = compute_score(relevance=0.3, importance=10, days_since_access=0, access_count=0)
-    assert relevant > important
+def test_relevance_dominates_storage():
+    """High relevance + low storage should beat low relevance + high storage."""
+    relevant = compute_score(relevance=0.9, storage_strength=0.4, days_since_access=0, access_count=0)
+    durable = compute_score(relevance=0.3, storage_strength=2.0, days_since_access=0, access_count=0)
+    assert relevant > durable
+
+
+# --- MMR --------------------------------------------------------------------
 
 
 def test_mmr_select_basic():

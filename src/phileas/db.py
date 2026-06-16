@@ -5,6 +5,7 @@ that can be rebuilt from this database.
 """
 
 import functools
+import math
 import re
 import sqlite3
 import threading
@@ -12,6 +13,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from phileas.models import Event, MemoryItem
+from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength
+
+
+def _days_since_iso(ts: str | None) -> float:
+    """Days since an ISO-8601 timestamp string (0.0 if missing)."""
+    if not ts:
+        return 0.0
+    dt = datetime.fromisoformat(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)
 
 
 def _locked(method):
@@ -66,6 +78,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
+    storage_strength REAL NOT NULL DEFAULT 0.5,
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
     created_at TEXT NOT NULL,
@@ -118,6 +131,11 @@ MIGRATIONS = [
     # health can track per-source recency (in-session "agent" traffic can't
     # mask a dead "claude_code" capture path).
     "ALTER TABLE events ADD COLUMN source_kind TEXT",
+    # Two-strength model: durable storage strength, distinct from the volatile
+    # retrieval strength derived from last_accessed. Added with a -1 sentinel so
+    # pre-existing rows can be seeded once from importance + reinforcement_count
+    # by _backfill_storage_strength; new rows write a real value at save time.
+    "ALTER TABLE memory_items ADD COLUMN storage_strength REAL NOT NULL DEFAULT -1.0",
 ]
 
 
@@ -129,6 +147,7 @@ class Database:
         self._lock = threading.RLock()
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self._backfill_storage_strength()
         self._backfill_fts()
 
     def _migrate(self):
@@ -139,6 +158,27 @@ class Database:
                 self.conn.commit()
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+    def _backfill_storage_strength(self):
+        """Seed storage_strength for rows that predate the two-strength model.
+
+        The migration adds the column with a -1 sentinel. Rows still carrying it
+        are reconstructed once from the legacy signals — importance sets the
+        floor, prior reinforcements add a log-scaled bonus — so existing
+        durability ordering is preserved. New rows write a real value at save
+        time and never match the sentinel, so this is idempotent.
+        """
+        rows = self.conn.execute(
+            "SELECT id, importance, reinforcement_count FROM memory_items WHERE storage_strength < 0"
+        ).fetchall()
+        for row in rows:
+            seeded = row["importance"] / 10.0 + 0.3 * math.log(1 + row["reinforcement_count"])
+            self.conn.execute(
+                "UPDATE memory_items SET storage_strength = ? WHERE id = ?",
+                (seeded, row["id"]),
+            )
+        if rows:
+            self.conn.commit()
 
     def _backfill_fts(self):
         """Populate the FTS index for any active memory it doesn't yet hold.
@@ -175,9 +215,9 @@ class Database:
             """INSERT OR REPLACE INTO memory_items
                (id, summary, memory_type, importance, status,
                 access_count, last_accessed, daily_ref,
-                reinforcement_count, last_reinforced,
+                storage_strength, reinforcement_count, last_reinforced,
                 raw_text, source_event_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
@@ -187,6 +227,7 @@ class Database:
                 item.access_count,
                 item.last_accessed.isoformat() if item.last_accessed else None,
                 item.daily_ref,
+                item.storage_strength,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
                 item.raw_text,
@@ -315,19 +356,11 @@ class Database:
             access_count=item.access_count,
             last_accessed=item.last_accessed,
             daily_ref=item.daily_ref,
+            storage_strength=item.storage_strength,
             created_at=item.created_at,
         )
         self.save_item(snapshot)
         return snapshot.id
-
-    @_locked
-    def bump_access(self, item_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
-            "UPDATE memory_items SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-            (now, item_id),
-        )
-        self.conn.commit()
 
     @_locked
     def get_counts(self) -> dict:
@@ -404,7 +437,7 @@ class Database:
 
     _WEB_COLS = (
         "id, summary, memory_type, importance, status, "
-        "access_count, reinforcement_count, last_reinforced, "
+        "access_count, storage_strength, reinforcement_count, last_reinforced, "
         "raw_text, daily_ref, created_at, updated_at"
     )
 
@@ -417,6 +450,7 @@ class Database:
             "importance": row["importance"],
             "status": row["status"],
             "access_count": row["access_count"],
+            "storage_strength": row["storage_strength"],
             "reinforcement_count": row["reinforcement_count"],
             "last_reinforced": row["last_reinforced"],
             "raw_text": row["raw_text"],
@@ -608,12 +642,48 @@ class Database:
     # --- Internal ---
 
     @_locked
+    def record_retrieval(self, item_id: str, retrieval_before: float, relevance: float) -> None:
+        """Record a successful recall.
+
+        Grows storage strength — difficulty-weighted by how decayed the memory
+        was (``retrieval_before``) and gated by ``relevance`` — counts the
+        access, and refreshes accessibility by resetting last_accessed so
+        retrieval strength recovers toward 1. The caller computes
+        ``retrieval_before`` before this reset.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        delta = delta_storage(relevance, retrieval_before, gain=RECALL_GAIN)
+        self.conn.execute(
+            "UPDATE memory_items SET storage_strength = storage_strength + ?, "
+            "access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+            (delta, now, item_id),
+        )
+        self.conn.commit()
+
+    @_locked
     def reinforce_item(self, item_id: str) -> None:
-        """Increment reinforcement_count and update last_reinforced timestamp."""
+        """Record a re-study event: a similar memory arrived.
+
+        Grows storage strength by the smaller re-study gain (the testing effect
+        favours retrieving over re-encountering), counts the reinforcement, and
+        refreshes accessibility. Difficulty weighting comes from the item's
+        current retrieval strength, derived here from last_accessed + storage.
+        """
+        row = self.conn.execute(
+            "SELECT storage_strength, last_accessed, created_at FROM memory_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        if row is None:
+            return
+        days = _days_since_iso(row["last_accessed"] or row["created_at"])
+        rs_before = retrieval_strength(days, row["storage_strength"])
+        delta = delta_storage(1.0, rs_before, gain=RESTUDY_GAIN)
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
-            "UPDATE memory_items SET reinforcement_count = reinforcement_count + 1, last_reinforced = ? WHERE id = ?",
-            (now, item_id),
+            "UPDATE memory_items SET storage_strength = storage_strength + ?, "
+            "reinforcement_count = reinforcement_count + 1, last_reinforced = ?, "
+            "last_accessed = ? WHERE id = ?",
+            (delta, now, now, item_id),
         )
         self.conn.commit()
 
@@ -633,6 +703,7 @@ class Database:
             access_count=row["access_count"],
             last_accessed=last_accessed,
             daily_ref=row["daily_ref"],
+            storage_strength=row["storage_strength"] if "storage_strength" in row.keys() else 0.5,
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
             raw_text=row["raw_text"] if "raw_text" in row.keys() else None,
