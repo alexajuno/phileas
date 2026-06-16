@@ -49,7 +49,6 @@ class MemoryItem(BaseModel):
     id: str
     summary: str
     memory_type: str
-    importance: int
     status: str
     access_count: int
     storage_strength: float

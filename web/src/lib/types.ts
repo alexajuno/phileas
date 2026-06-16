@@ -14,7 +14,6 @@ export type MemoryItem = {
   id: string;
   summary: string;
   memory_type: MemoryType | string;
-  importance: number;
   status: string;
   access_count: number;
   storage_strength: number;

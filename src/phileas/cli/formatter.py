@@ -60,7 +60,6 @@ def print_memories(items: list[dict], title: str = "Memories") -> None:
     table = Table(title=title)
     table.add_column("ID", style="dim", max_width=8)
     table.add_column("Type", style="cyan")
-    table.add_column("Imp", justify="right")
     table.add_column("Summary")
     table.add_column("Score", justify="right", style="green")
 
@@ -69,7 +68,6 @@ def print_memories(items: list[dict], title: str = "Memories") -> None:
         table.add_row(
             item["id"][:8],
             item.get("type", ""),
-            str(item.get("importance", "")),
             item.get("summary", ""),
             score_str,
         )
@@ -86,7 +84,6 @@ def print_memory_detail(item: dict) -> None:
     table.add_row("ID", item.get("id", ""))
     table.add_row("Summary", item.get("summary", ""))
     table.add_row("Type", item.get("memory_type", ""))
-    table.add_row("Importance", str(item.get("importance", "")))
     table.add_row("Status", item.get("status", ""))
     table.add_row("Access count", str(item.get("access_count", 0)))
     table.add_row("Daily ref", item.get("daily_ref", "") or "")

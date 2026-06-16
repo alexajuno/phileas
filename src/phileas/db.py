@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from phileas.models import Event, MemoryItem, Thread
-from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength
+from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength, seed_storage_strength
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +77,6 @@ CREATE TABLE IF NOT EXISTS memory_items (
     id TEXT PRIMARY KEY,
     summary TEXT NOT NULL,
     memory_type TEXT NOT NULL,
-    importance INTEGER NOT NULL DEFAULT 5,
     status TEXT NOT NULL DEFAULT 'active',
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
@@ -151,7 +150,7 @@ MIGRATIONS = [
     "ALTER TABLE events ADD COLUMN source_kind TEXT",
     # Two-strength model: durable storage strength, distinct from the volatile
     # retrieval strength derived from last_accessed. Added with a -1 sentinel so
-    # pre-existing rows can be seeded once from importance + reinforcement_count
+    # pre-existing rows can be seeded once from memory type + reinforcement_count
     # by _backfill_storage_strength; new rows write a real value at save time.
     "ALTER TABLE memory_items ADD COLUMN storage_strength REAL NOT NULL DEFAULT -1.0",
     # Conversation threads: tag each raw turn with the conversation it belongs to.
@@ -159,6 +158,9 @@ MIGRATIONS = [
     # turn's own id (a one-turn thread) by _backfill_event_threads.
     "ALTER TABLE events ADD COLUMN thread_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, received_at)",
+    # Durability is earned through use and seeded from memory type; the standalone
+    # 1-10 score it once depended on is gone.
+    "ALTER TABLE memory_items DROP COLUMN importance",
 ]
 
 
@@ -239,16 +241,16 @@ class Database:
         """Seed storage_strength for rows that predate the two-strength model.
 
         The migration adds the column with a -1 sentinel. Rows still carrying it
-        are reconstructed once from the legacy signals — importance sets the
-        floor, prior reinforcements add a log-scaled bonus — so existing
-        durability ordering is preserved. New rows write a real value at save
-        time and never match the sentinel, so this is idempotent.
+        are reconstructed once from the type seed plus a log-scaled bonus for
+        prior reinforcements, so a memory that has already proven its worth keeps
+        its durability lead. New rows write a real value at save time and never
+        match the sentinel, so this is idempotent.
         """
         rows = self.conn.execute(
-            "SELECT id, importance, reinforcement_count FROM memory_items WHERE storage_strength < 0"
+            "SELECT id, memory_type, reinforcement_count FROM memory_items WHERE storage_strength < 0"
         ).fetchall()
         for row in rows:
-            seeded = row["importance"] / 10.0 + 0.3 * math.log(1 + row["reinforcement_count"])
+            seeded = seed_storage_strength(row["memory_type"]) + 0.3 * math.log(1 + row["reinforcement_count"])
             self.conn.execute(
                 "UPDATE memory_items SET storage_strength = ? WHERE id = ?",
                 (seeded, row["id"]),
@@ -289,16 +291,15 @@ class Database:
     def save_item(self, item: MemoryItem) -> None:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
-               (id, summary, memory_type, importance, status,
+               (id, summary, memory_type, status,
                 access_count, last_accessed, daily_ref,
                 storage_strength, reinforcement_count, last_reinforced,
                 source_event_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
                 item.summary,
                 item.memory_type,
-                item.importance,
                 item.status,
                 item.access_count,
                 item.last_accessed.isoformat() if item.last_accessed else None,
@@ -426,7 +427,6 @@ class Database:
         snapshot = MemoryItem(
             summary=item.summary,
             memory_type=item.memory_type,
-            importance=item.importance,
             status="archived",
             access_count=item.access_count,
             last_accessed=item.last_accessed,
@@ -511,7 +511,7 @@ class Database:
     # here would raise `no such column` on a rebuilt store.
 
     _WEB_COLS = (
-        "id, summary, memory_type, importance, status, "
+        "id, summary, memory_type, status, "
         "access_count, storage_strength, reinforcement_count, last_reinforced, "
         "daily_ref, created_at, updated_at"
     )
@@ -522,7 +522,6 @@ class Database:
             "id": row["id"],
             "summary": row["summary"],
             "memory_type": row["memory_type"],
-            "importance": row["importance"],
             "status": row["status"],
             "access_count": row["access_count"],
             "storage_strength": row["storage_strength"],
@@ -578,10 +577,9 @@ class Database:
         start_iso: str | None = None,
         end_iso: str | None = None,
         memory_type: str | None = None,
-        min_importance: int | None = None,
     ) -> list[dict]:
         """Filtered export — mirrors queries.ts:fetchMemoriesForExport. Bounds are
-        client-computed UTC ISO; min_importance only filters when > 1."""
+        client-computed UTC ISO."""
         clauses = ["status = 'active'"]
         params: list[str | int] = []
         if start_iso:
@@ -593,9 +591,6 @@ class Database:
         if memory_type:
             clauses.append("memory_type = ?")
             params.append(memory_type)
-        if min_importance and min_importance > 1:
-            clauses.append("importance >= ?")
-            params.append(min_importance)
         rows = self.conn.execute(
             f"""SELECT {self._WEB_COLS} FROM memory_items
                 WHERE {" AND ".join(clauses)}
@@ -645,7 +640,7 @@ class Database:
             return []
         placeholders = ",".join("?" for _ in ids)
         rows = self.conn.execute(
-            f"""SELECT id, summary, memory_type, importance, created_at
+            f"""SELECT id, summary, memory_type, created_at
                 FROM memory_items WHERE id IN ({placeholders})""",
             ids,
         ).fetchall()
@@ -654,7 +649,6 @@ class Database:
                 "id": r["id"],
                 "summary": r["summary"],
                 "memory_type": r["memory_type"],
-                "importance": r["importance"],
                 "created_at": r["created_at"],
             }
             for r in rows
@@ -693,7 +687,7 @@ class Database:
         if not ev:
             return None
         mems = self.conn.execute(
-            """SELECT id, summary, memory_type, importance, created_at
+            """SELECT id, summary, memory_type, created_at
                FROM memory_items
                WHERE source_event_id = ? AND status = 'active'
                ORDER BY created_at ASC""",
@@ -706,7 +700,6 @@ class Database:
                     "id": m["id"],
                     "summary": m["summary"],
                     "memory_type": m["memory_type"],
-                    "importance": m["importance"],
                     "created_at": m["created_at"],
                 }
                 for m in mems
@@ -830,7 +823,6 @@ class Database:
             id=row["id"],
             summary=row["summary"],
             memory_type=row["memory_type"],
-            importance=row["importance"],
             status=row["status"],
             access_count=row["access_count"],
             last_accessed=last_accessed,

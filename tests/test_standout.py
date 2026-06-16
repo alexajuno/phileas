@@ -117,35 +117,35 @@ def test_repeatable():
     assert standout_keep(s, hard_floor=0.25, method="gap") == standout_keep(s, hard_floor=0.25, method="gap")
 
 
-# --- recall_recent (Site 3) legacy-preserving combo ------------------------
-# absolute floor + fallback_top + max_keep must match select_recent's
-# filter -> (fallback to all if none) -> top_per_day slice, exactly.
+# --- absolute mode: floor + fallback_top + max_keep ------------------------
+# The primitive's flat-threshold path: keep the prefix at/above a floor, fall
+# back to the top-N when nothing clears it, and cap the kept count.
 
 
-def _select_recent_like(importances, *, min_importance, top_per_day):
+def _absolute_cut(scores, *, floor, cap):
     return _kept_vals(
-        importances,
+        scores,
         hard_floor=0.0,
         min_keep=0,
-        max_keep=top_per_day,
+        max_keep=cap,
         method="absolute",
-        floor=float(min_importance),
-        fallback_top=top_per_day,
+        floor=float(floor),
+        fallback_top=cap,
     )
 
 
-def test_site3_partial_clearance_keeps_only_clearing():
-    # [8,6] clear importance>=5; the rest are dropped (not bumped up).
-    assert _select_recent_like([8, 6, 3, 2, 1], min_importance=5, top_per_day=10) == [8, 6]
+def test_absolute_partial_clearance_keeps_only_clearing():
+    # [8,6] clear the floor of 5; the rest are dropped (not bumped up).
+    assert _absolute_cut([8, 6, 3, 2, 1], floor=5, cap=10) == [8, 6]
 
 
-def test_site3_no_clearance_falls_back_to_top_per_day():
-    assert _select_recent_like([3, 2, 1], min_importance=5, top_per_day=10) == [3, 2, 1]
+def test_absolute_no_clearance_falls_back_to_cap():
+    assert _absolute_cut([3, 2, 1], floor=5, cap=10) == [3, 2, 1]
 
 
-def test_site3_overflow_capped_at_top_per_day():
-    imp = [9, 8, 7, 6, 5, 5, 5, 5, 5, 5, 5, 5]  # 12 clear, cap at 10
-    assert len(_select_recent_like(imp, min_importance=5, top_per_day=10)) == 10
+def test_absolute_overflow_capped():
+    scores = [9, 8, 7, 6, 5, 5, 5, 5, 5, 5, 5, 5]  # 12 clear, cap at 10
+    assert len(_absolute_cut(scores, floor=5, cap=10)) == 10
 
 
 # --- env switch ------------------------------------------------------------

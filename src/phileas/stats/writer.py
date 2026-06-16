@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS ingest_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
     memory_type TEXT,
-    importance INTEGER,
     entity_count INTEGER,
     deduped INTEGER NOT NULL,
     source TEXT
@@ -147,7 +146,6 @@ class MetricsWriter:
     def record_ingest(
         self,
         memory_type: str | None,
-        importance: int | None,
         entity_count: int,
         deduped: bool,
         source: str,
@@ -157,9 +155,9 @@ class MetricsWriter:
         try:
             self._conn.execute(
                 """INSERT INTO ingest_events
-                   (created_at, memory_type, importance, entity_count, deduped, source)
-                   VALUES (?,?,?,?,?,?)""",
-                (self._now(), memory_type, importance, entity_count, int(deduped), source),
+                   (created_at, memory_type, entity_count, deduped, source)
+                   VALUES (?,?,?,?,?)""",
+                (self._now(), memory_type, entity_count, int(deduped), source),
             )
         except Exception as e:
             log.debug("record_ingest failed", extra={"err": str(e)})

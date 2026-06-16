@@ -52,7 +52,6 @@ export type LinkedMemoryRow = {
   id: string;
   summary: string;
   memory_type: string;
-  importance: number;
   created_at: string;
 };
 
@@ -128,7 +127,7 @@ export function fetchIngestionEvent(id: string): {
 
   const memories = db
     .prepare<[string], LinkedMemoryRow>(
-      `SELECT id, summary, memory_type, importance, created_at
+      `SELECT id, summary, memory_type, created_at
          FROM memory_items
         WHERE source_event_id = ?
           AND status = 'active'

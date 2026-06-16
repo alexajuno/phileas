@@ -116,7 +116,7 @@ engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 #
 # The main agent context sees cheap *pointers* — id8 + type + (date) + summary
 # + entity tags — never a metadata tail or an unbounded result dump. What's
-# dropped is the uuid tail and importance/score/event/time-of-day; summaries
+# dropped is the uuid tail and score/event/time-of-day; summaries
 # longer than recall.pointer_summary_chars are clipped with an ellipsis
 # (AA-112 layer 1; 0 = show whole). Full detail is one explicit
 # hydrate()/thread()/about() drill-in away. The pure formatting + output
@@ -241,7 +241,6 @@ def memorize(
     summary: str,
     source_event_id: str,
     memory_type: str = "knowledge",
-    importance: int = 5,
     daily_ref: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
@@ -267,7 +266,6 @@ def memorize(
             the value returned by `ingest_text(text=<verbatim source>)`. Recall
             hydrates the memory with its originating thread through this link.
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
-        importance: Importance score 1-10 (10 = most important).
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
         entities: List or JSON string of {"name": str, "type": str, "description"?: str} objects.
             description is an optional one-line disambiguator — written once at
@@ -288,7 +286,6 @@ def memorize(
     result = engine.memorize(
         summary=summary,
         memory_type=memory_type,
-        importance=importance,
         daily_ref=daily_ref,
         entities=parsed_entities,
         relationships=parsed_relationships,
@@ -319,7 +316,6 @@ def memorize_batch(memories: list | str, source_event_id: str | None = None) -> 
         memories: List or JSON string of memory objects. Each object has:
             - summary (required): What to remember (1-2 sentences).
             - memory_type: One of "profile", "event", "knowledge", "behavior", "reflection". Default "knowledge".
-            - importance: 1-10. Default 5.
             - daily_ref: YYYY-MM-DD. Defaults to today.
             - entities: List of {"name": str, "type": str, "description"?: str}.
             - relationships: List of {"from_name", "from_type", "edge", "to_name", "to_type"}.
@@ -363,7 +359,6 @@ def memorize_batch(memories: list | str, source_event_id: str | None = None) -> 
         result = engine.memorize(
             summary=summary,
             memory_type=mem.get("memory_type", "knowledge"),
-            importance=mem.get("importance", 5),
             daily_ref=mem.get("daily_ref"),
             entities=parsed_entities,
             relationships=parsed_relationships,
@@ -382,7 +377,6 @@ def memorize_batch(memories: list | str, source_event_id: str | None = None) -> 
 def recall(
     query: str,
     memory_type: str | None = None,
-    min_importance: int | None = None,
     top_k: int = 30,
     context: str | None = None,
 ) -> str:
@@ -405,14 +399,13 @@ def recall(
     Args:
         query: Focused term query (1–4 words, one concept).
         memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
-        min_importance: Only return memories with importance >= this value.
         top_k: Max memories to return (default 30). Increase for broader recall.
         context: Optional active context (e.g. "bug-fix work", "phileas"). When set,
             memories scoped to that context (or a parent of it) are boosted, and
             memories scoped to a disjoint/excluded/expired context are ranked down
             but not dropped. Omit for unscoped, globally-valid recall.
     """
-    items = engine.recall(query, top_k=top_k, memory_type=memory_type, min_importance=min_importance, context=context)
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, context=context)
     if not items:
         return "No relevant memories found."
 
@@ -442,7 +435,7 @@ def hydrate(memory_id: str) -> str:
 
     Recall-family tools return *pointers* (`[id8] [type] date · summary · entities`)
     to keep the main context cheap. When you need what a pointer trims off —
-    exact timestamps, importance/status/access counts, the full source_event_id
+    exact timestamps, status/access counts, the full source_event_id
     (then call `thread` on it for the originating conversation), and linked
     entities — pass the pointer's id8 (or the full uuid) here.
 
@@ -657,8 +650,8 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
 
 
 @_instrumented_tool()
-def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5) -> str:
-    """Return top memories per day for the last N days, grouped newest-day first.
+def recall_recent(days: int = 7, top_per_day: int = 10) -> str:
+    """Return each day's memories for the last N days, grouped newest-day first.
 
     Use for genuinely topic-less time queries: 'recently', 'yesterday',
     'last chat', 'last night', 'last session', 'last time we talked'. If the
@@ -671,19 +664,14 @@ def recall_recent(days: int = 7, top_per_day: int = 10, min_importance: int = 5)
 
     Args:
         days: How many days back to look (default 7).
-        top_per_day: Max memories to show per day (default 10), sorted by importance.
-        min_importance: Only include memories at or above this importance (default 5).
-                        If no memories pass the threshold for a day, all are shown.
+        top_per_day: Max memories to show per day (default 10), newest first.
     """
     _t0 = perf_counter()
-    result = tool_runner.recall_recent(
-        engine, _entities_for, days=days, top_per_day=top_per_day, min_importance=min_importance
-    )
+    result = tool_runner.recall_recent(engine, _entities_for, days=days, top_per_day=top_per_day)
     _trace_recent(
         items=result["items"],
         days=days,
         top_per_day=top_per_day,
-        min_importance=min_importance,
         latency_ms=(perf_counter() - _t0) * 1000,
         bounds=result.get("bounds"),
     )
@@ -695,7 +683,7 @@ def serendipity(n: int = 3, exclude_ids: list | str | None = None) -> str:
     """Pull N high-signal memories deliberately NOT gated on query relevance.
 
     The budgeted serendipity window (AA-106): a small wildcard slot chosen by
-    importance × graph-connection and rotated daily. Reach for it to surface
+    storage strength × graph-connection and rotated daily. Reach for it to surface
     cross-topic context the current task wouldn't retrieve — the "the *you* that
     moves between projects" moments. Keep n small (it's a designed, capped cost,
     not a search). Pass the pointer ids already in your context as exclude_ids so
@@ -712,7 +700,6 @@ def _trace_recent(
     items: list[dict],
     days: int,
     top_per_day: int,
-    min_importance: int,
     latency_ms: float,
     bounds: dict | None = None,
 ) -> None:
@@ -733,7 +720,6 @@ def _trace_recent(
             extra={
                 "days": days,
                 "top_per_day": top_per_day,
-                "min_importance": min_importance,
                 **(bounds or {}),
             },
         )

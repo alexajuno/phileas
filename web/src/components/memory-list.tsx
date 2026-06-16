@@ -15,7 +15,6 @@ type Props = {
   initialDay: string;
   initialItems: MemoryItem[];
   initialType: string | null;
-  initialMin: number;
 };
 
 const POLL_MS = 20_000;
@@ -23,16 +22,13 @@ const POLL_MS = 20_000;
 function buildQuery({
   day,
   type,
-  min,
 }: {
   day: string;
   type: string | null;
-  min: number;
 }): string {
   const params = new URLSearchParams();
   if (day !== todayLocal()) params.set("day", day);
   if (type) params.set("type", type);
-  if (min > 1) params.set("min", String(min));
   const q = params.toString();
   return q ? `?${q}` : window.location.pathname;
 }
@@ -41,12 +37,10 @@ export function MemoryList({
   initialDay,
   initialItems,
   initialType,
-  initialMin,
 }: Props) {
   const [day, setDayState] = useState(initialDay);
   const [items, setItems] = useState<MemoryItem[]>(initialItems);
   const [selectedType, setSelectedTypeState] = useState<string | null>(initialType);
-  const [minImportance, setMinImportanceState] = useState<number>(initialMin);
   const [error, setError] = useState<string | null>(null);
   const [lastLoaded, setLastLoaded] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,7 +52,7 @@ export function MemoryList({
   const isToday = day === today;
 
   const syncUrl = useCallback(
-    (next: { day: string; type: string | null; min: number }) => {
+    (next: { day: string; type: string | null }) => {
       if (typeof window === "undefined") return;
       window.history.replaceState(null, "", buildQuery(next));
     },
@@ -69,8 +63,7 @@ export function MemoryList({
     (d: string) => {
       setDayState(d);
       setSelectedTypeState(null);
-      setMinImportanceState(1);
-      syncUrl({ day: d, type: null, min: 1 });
+      syncUrl({ day: d, type: null });
     },
     [syncUrl],
   );
@@ -78,17 +71,9 @@ export function MemoryList({
   const setSelectedType = useCallback(
     (t: string | null) => {
       setSelectedTypeState(t);
-      syncUrl({ day, type: t, min: minImportance });
+      syncUrl({ day, type: t });
     },
-    [day, minImportance, syncUrl],
-  );
-
-  const setMinImportance = useCallback(
-    (m: number) => {
-      setMinImportanceState(m);
-      syncUrl({ day, type: selectedType, min: m });
-    },
-    [day, selectedType, syncUrl],
+    [day, syncUrl],
   );
 
   const load = useCallback(
@@ -165,13 +150,8 @@ export function MemoryList({
   }, [isToday, day, load]);
 
   const visibleItems = useMemo(
-    () =>
-      items.filter(
-        (m) =>
-          (!selectedType || m.memory_type === selectedType) &&
-          m.importance >= minImportance,
-      ),
-    [items, selectedType, minImportance],
+    () => items.filter((m) => !selectedType || m.memory_type === selectedType),
+    [items, selectedType],
   );
 
   const handleForgotten = useCallback((id: string) => {
@@ -187,11 +167,10 @@ export function MemoryList({
 
   const clearFilters = useCallback(() => {
     setSelectedTypeState(null);
-    setMinImportanceState(1);
-    syncUrl({ day, type: null, min: 1 });
+    syncUrl({ day, type: null });
   }, [day, syncUrl]);
 
-  const filtersActive = selectedType !== null || minImportance > 1;
+  const filtersActive = selectedType !== null;
   const filtersHideAll =
     items.length > 0 && visibleItems.length === 0 && filtersActive;
 
@@ -212,7 +191,7 @@ export function MemoryList({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <DayNav day={day} onChange={setDay} />
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-          <ExportMenu day={day} type={selectedType} min={minImportance} />
+          <ExportMenu day={day} type={selectedType} />
           {loading && <span className="animate-pulse">loading…</span>}
           {!loading && isToday && lastLoaded && (
             <span className="inline-flex items-center gap-1.5">
@@ -233,8 +212,6 @@ export function MemoryList({
         items={items}
         selectedType={selectedType}
         onSelect={setSelectedType}
-        minImportance={minImportance}
-        onMinChange={setMinImportance}
       />
 
       {error && (

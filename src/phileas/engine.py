@@ -21,7 +21,7 @@ from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Thread
-from phileas.scoring import mmr_select, retrieval_strength, score_components
+from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
@@ -146,7 +146,6 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
         "id": item.id,
         "summary": item.summary,
         "type": item.memory_type,
-        "importance": item.importance,
         "score": score,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "source_event_id": item.source_event_id,
@@ -353,7 +352,7 @@ class MemoryEngine:
         """Resolve a pointer id (full uuid or 8-char prefix) to a full record.
 
         The inverse of the pointer trim: returns everything the cheap pointer
-        line drops — exact timestamps, importance/status/access counts, the
+        line drops — exact timestamps, status/access counts, the
         *full* source_event_id (the handle for `thread`), and linked entities.
         Powers the "inspect this one memory" drill-in (AA-106).
 
@@ -414,7 +413,6 @@ class MemoryEngine:
             "id": item.id,
             "summary": item.summary,
             "type": item.memory_type,
-            "importance": item.importance,
             "status": item.status,
             "access_count": item.access_count,
             "reinforcement_count": item.reinforcement_count,
@@ -434,11 +432,12 @@ class MemoryEngine:
 
         The budgeted serendipity window: surfaces cross-topic context the current
         task would never retrieve, producing the "oh, that connects" moments by
-        design rather than by accident. Selection = importance × graph-connection
-        (how many entities a memory touches), drawn from a high-signal band and
-        rotated by calendar day so the wildcard varies day to day but is stable
-        within a day. ``exclude_ids`` (full ids or id8 prefixes) drops memories
-        already in the caller's context.
+        design rather than by accident. Selection = storage strength × graph-
+        connection (how many entities a memory touches) — durable, well-connected
+        memories worth being reminded of out of nowhere — drawn from a high-signal
+        band and rotated by calendar day so the wildcard varies day to day but is
+        stable within a day. ``exclude_ids`` (full ids or id8 prefixes) drops
+        memories already in the caller's context.
         """
         import random
         from datetime import date as _date
@@ -453,10 +452,10 @@ class MemoryEngine:
         if not pool:
             return []
 
-        # Cheap pre-filter by importance, then score the band by graph-connection.
+        # Cheap pre-filter by durability, then score the band by graph-connection.
         pool.sort(
             key=lambda it: (
-                -(it.importance or 0),
+                -(it.storage_strength or 0.0),
                 -(it.created_at.timestamp() if it.created_at else 0),
             )
         )
@@ -468,7 +467,7 @@ class MemoryEngine:
 
         def _score(it: MemoryItem) -> float:
             degree = len(ents.get(it.id, []))
-            return (it.importance or 0) * (1.0 + 0.5 * degree)
+            return (it.storage_strength or 0.0) * (1.0 + 0.5 * degree)
 
         pool.sort(key=_score, reverse=True)
         band = pool[: max(n * 5, 15)]
@@ -487,7 +486,6 @@ class MemoryEngine:
         self,
         summary: str,
         memory_type: str = "knowledge",
-        importance: int | None = None,
         daily_ref: str | None = None,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
@@ -514,7 +512,6 @@ class MemoryEngine:
         """
         op_extra(
             memory_type=memory_type,
-            importance=importance,
             entity_count=len(entities or []),
             relationship_count=len(relationships or []),
             context_count=len(contexts or []),
@@ -524,21 +521,15 @@ class MemoryEngine:
         if daily_ref is None:
             daily_ref = date.today().isoformat()
 
-        # 2. Default importance when caller didn't provide one. Agent-driven
-        # callers should always supply `importance`; this fallback exists
-        # for legacy paths that don't yet.
-        if importance is None:
-            importance = 5
-
-        # 3. Create and persist MemoryItem (summary only — raw lives in events)
+        # 2. Create and persist MemoryItem (summary only — raw lives in events)
         # `memory_type` is `str` at the public boundary (MCP/CLI/daemon callers
         # pass arbitrary strings); narrow to `MemoryType` for the dataclass.
         item = MemoryItem(
             summary=summary,
             memory_type=cast(MemoryType, memory_type),
-            importance=importance,
-            # Seed durable storage strength from importance; recall grows it from here.
-            storage_strength=importance / 10.0,
+            # Seed durable storage strength from the memory type; recall and
+            # reinforcement grow it from here.
+            storage_strength=seed_storage_strength(memory_type),
             daily_ref=daily_ref,
             source_event_id=source_event_id,
         )
@@ -636,7 +627,6 @@ class MemoryEngine:
         try:
             self._metrics.record_ingest(
                 memory_type=memory_type,
-                importance=importance,
                 entity_count=len(entities or []),
                 deduped=False,
                 source="engine",
@@ -680,7 +670,6 @@ class MemoryEngine:
         query: str,
         top_k: int | None = None,
         memory_type: str | None = None,
-        min_importance: int | None = None,
         context: str | None = None,
     ) -> list[dict]:
         """Three-stage retrieval: gather → rerank → MMR select.
@@ -695,7 +684,7 @@ class MemoryEngine:
         excluded, or expired-validity ones in stage 2. When omitted, no scope
         edges are read and the result is byte-identical to the pre-context path.
 
-        Returns list of dicts with id, summary, type, importance, score.
+        Returns list of dicts with id, summary, type, score.
         """
         from time import perf_counter
 
@@ -722,7 +711,6 @@ class MemoryEngine:
             query=query,
             top_k=_effective_top_k,
             memory_type=memory_type,
-            min_importance=min_importance,
             context=context,
         )
 
@@ -1124,8 +1112,6 @@ class MemoryEngine:
             if item.status != "active":
                 continue
             if memory_type and item.memory_type != memory_type:
-                continue
-            if min_importance is not None and item.importance < min_importance:
                 continue
             filtered[mem_id] = item
         _mark("filter")
@@ -1553,7 +1539,6 @@ class MemoryEngine:
             extra={
                 "top_k": _effective_top_k,
                 "memory_type": memory_type,
-                "min_importance": min_importance,
                 "top_score": round(results[0]["score"], 3) if results else None,
                 "result_gather_histogram": gather_histogram,
                 "result_unique_path_counts": unique_path_counts,
@@ -1955,9 +1940,19 @@ class MemoryEngine:
         if type_filter is not None:
             items = [it for it in items if it.memory_type in type_filter]
 
+        # A query-less browse has no relevance signal to rank by, so order by the
+        # emergent triple: graph centrality first (the load-bearing facts about an
+        # entity — what everything else hangs off), then durability (worth proven
+        # through recall), then recency (currency for facts that change).
+        try:
+            srt_ents = self.graph.get_entities_for_memories([it.id for it in items])
+        except Exception:
+            srt_ents = {}
+
         items.sort(
             key=lambda it: (
-                -it.importance,
+                -len(srt_ents.get(it.id, [])),
+                -(it.storage_strength or 0.0),
                 -(it.updated_at.timestamp() if it.updated_at else 0),
             )
         )

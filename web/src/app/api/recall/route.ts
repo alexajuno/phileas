@@ -19,7 +19,6 @@ type RecallHit = {
   id: string;
   summary: string;
   type: string;
-  importance: number;
   score: number;
   created_at: string | null;
 };
@@ -30,7 +29,6 @@ type Body = {
   query?: unknown;
   top_k?: unknown;
   memory_type?: unknown;
-  min_importance?: unknown;
 };
 
 function clampTopK(v: unknown): number {
@@ -63,16 +61,9 @@ export async function POST(request: NextRequest) {
     typeof body.memory_type === "string" && body.memory_type
       ? body.memory_type
       : undefined;
-  const min_importance =
-    typeof body.min_importance === "number"
-      ? body.min_importance
-      : Number.parseInt(String(body.min_importance ?? ""), 10);
 
   const params: Record<string, unknown> = { query, top_k };
   if (memory_type) params.memory_type = memory_type;
-  if (Number.isFinite(min_importance) && min_importance > 0) {
-    params.min_importance = min_importance;
-  }
 
   const t0 = performance.now();
   let hits: RecallHit[];

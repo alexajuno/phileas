@@ -35,7 +35,6 @@ const TOOLS: ToolSpec[] = [
     fields: [
       { key: "days", label: "days", type: "int", default: 7 },
       { key: "top_per_day", label: "top_per_day", type: "int", default: 10 },
-      { key: "min_importance", label: "min_importance", type: "int", default: 5 },
     ],
   },
   {

@@ -1,7 +1,7 @@
 """Distributional retrieval cut — "what stands out for *this* query?".
 
 Recall gathers candidates with a score per item (cosine similarity, normalized
-cross-encoder relevance, or importance). The question of which to keep used to be
+cross-encoder relevance, or storage strength). The question of which to keep used to be
 answered by absolute magic numbers (``score >= 0.5``) that have no principled
 basis and break when the score distribution shifts. This module answers it
 *relatively*: given one query's own candidate scores, return the indices that

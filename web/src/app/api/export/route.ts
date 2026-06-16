@@ -10,7 +10,6 @@ type ExportRow = {
   id: string;
   name: string;
   memory_type: string;
-  importance: number;
   created_at: string;
 };
 
@@ -19,7 +18,6 @@ function toExportRow(m: MemoryItem): ExportRow {
     id: m.id,
     name: m.summary,
     memory_type: m.memory_type,
-    importance: m.importance,
     created_at: m.created_at,
   };
 }
@@ -40,7 +38,7 @@ function toMarkdown(items: MemoryItem[]): string {
     lines.push(`## ${day}`, "");
     for (const m of byDay.get(day)!) {
       const summary = m.summary.replace(/\s+/g, " ").trim();
-      lines.push(`- **${summary}** _(${m.memory_type} · importance ${m.importance})_`);
+      lines.push(`- **${summary}** _(${m.memory_type})_`);
     }
     lines.push("");
   }
@@ -66,15 +64,10 @@ export async function GET(request: NextRequest) {
   }
 
   const type = sp.get("type") ?? undefined;
-  const minRaw = sp.get("min");
-  const minImportance = minRaw ? Number.parseInt(minRaw, 10) : undefined;
-  if (minImportance !== undefined && (!Number.isFinite(minImportance) || minImportance < 1 || minImportance > 10)) {
-    return NextResponse.json({ error: "min must be between 1 and 10" }, { status: 400 });
-  }
 
   let items: MemoryItem[];
   try {
-    items = fetchMemoriesForExport({ from, to, type, minImportance });
+    items = fetchMemoriesForExport({ from, to, type });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = message.includes("unable to open") ? 503 : 500;

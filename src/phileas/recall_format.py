@@ -18,8 +18,6 @@ verify via `phileas stats bounds` before trusting it):
 
 from __future__ import annotations
 
-from phileas.standout import standout_keep
-
 # Recall output bounds — never hand-tuned; the rationale for each layer lives in
 # the module docstring above (the count cap vs. the output-size cap). Set a
 # constant to 0 to disable that layer.
@@ -50,7 +48,7 @@ def pointer_line(
 ) -> str:
     """One memory as ``[id8] [type] <date> · <summary> · <entity tags>``.
 
-    The uuid tail and the importance/score/event/time-of-day metadata are
+    The uuid tail and the score/event/time-of-day metadata are
     dropped. ``max_summary_chars`` > 0 clips the summary with an ellipsis
     (AA-112 layer 1) — the full body stays one hydrate() away; 0 shows it
     whole. ``show_date`` is False for day-grouped callers (recall_recent)
@@ -85,16 +83,19 @@ def select_recent(
     by_day: dict[str, list[dict]],
     *,
     top_per_day: int,
-    min_importance: int,
     recent_max: int,
 ) -> tuple[list[tuple[str, int, list[dict]]], list[dict], bool]:
-    """Pick each day's top memories newest-first under a hard global cap.
+    """Pick each day's memories newest-first under a hard global cap.
 
     Returns ``(per_day, selected, truncated)`` where ``per_day`` is a list of
     ``(day, day_total, top_items)``. The global ``recent_max`` cap is what stops
-    a heavy low-importance day from overflowing the context (AA-106 — this path
-    blew up at 81k chars). The per-day fallback, when nothing clears
-    ``min_importance``, still caps at ``top_per_day``.
+    a heavy day from overflowing the context (AA-106 — this path blew up at 81k
+    chars); ``top_per_day`` bounds each day.
+
+    Placeholder ranking: intra-day order is plain recency and the cut is the
+    newest ``top_per_day``. The proper "catch me up" selection — what to keep
+    when a day overflows, weighing durability and centrality rather than arrival
+    order — is deferred work tracked in the issue tracker.
     """
     per_day: list[tuple[str, int, list[dict]]] = []
     selected: list[dict] = []
@@ -104,22 +105,10 @@ def select_recent(
             truncated = True
             break
         day_items = by_day[day]
-        # The shared distributional-cut primitive in its absolute mode: keep the
-        # day's memories at/above min_importance (capped at top_per_day), falling
-        # back to the day's top top_per_day when none clear the bar. Integer
-        # importance has no meaningful intra-day cliff, so the relative cut is
-        # disabled here (method="absolute") — this routes the saturation logic
-        # through the shared primitive without changing behaviour.
-        keep = standout_keep(
-            [float(i.get("importance") or 0) for i in day_items],
-            hard_floor=0.0,
-            min_keep=0,
-            max_keep=top_per_day,
-            method="absolute",
-            floor=float(min_importance),
-            fallback_top=top_per_day,
-        )
-        top = sorted((day_items[k] for k in keep), key=lambda x: x.get("importance") or 0, reverse=True)
+        top = sorted(day_items, key=lambda x: x.get("created_at") or "", reverse=True)
+        if len(top) > top_per_day:
+            top = top[:top_per_day]
+            truncated = True
         remaining = recent_max - len(selected)
         if len(top) > remaining:
             top = top[:remaining]

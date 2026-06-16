@@ -310,7 +310,6 @@ export function IngestionView({
                           <span className="rounded bg-muted px-1.5 py-0.5 font-mono">
                             {m.memory_type}
                           </span>
-                          <span>importance {m.importance}</span>
                           <span className="ml-auto font-mono">
                             {formatAbsTime(m.created_at)}
                           </span>

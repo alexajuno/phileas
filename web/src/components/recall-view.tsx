@@ -22,13 +22,11 @@ type Props = {
   initialQuery: string;
   initialTopK: number;
   initialType: string;
-  initialMinImportance: number;
 };
 
 const TOP_K_MIN = 1;
 const TOP_K_MAX = 100;
 const TOP_K_DEFAULT = 30;
-const IMP_MAX = 10;
 
 const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "any type" },
@@ -48,12 +46,10 @@ export function RecallView({
   initialQuery,
   initialTopK,
   initialType,
-  initialMinImportance,
 }: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [topK, setTopK] = useState(initialTopK);
   const [memoryType, setMemoryType] = useState(initialType);
-  const [minImportance, setMinImportance] = useState(initialMinImportance);
   const [items, setItems] = useState<RecallResult[]>([]);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,13 +64,12 @@ export function RecallView({
   }, []);
 
   const syncUrl = useCallback(
-    (q: string, k: number, t: string, m: number) => {
+    (q: string, k: number, t: string) => {
       if (typeof window === "undefined") return;
       const params = new URLSearchParams();
       if (q) params.set("q", q);
       if (k !== TOP_K_DEFAULT) params.set("k", String(k));
       if (t) params.set("t", t);
-      if (m > 0) params.set("m", String(m));
       const search = params.toString();
       const next = `${window.location.pathname}${search ? `?${search}` : ""}`;
       window.history.replaceState(null, "", next);
@@ -88,7 +83,7 @@ export function RecallView({
     const reqId = ++reqIdRef.current;
     setLoading(true);
     setError(null);
-    syncUrl(trimmed, topK, memoryType, minImportance);
+    syncUrl(trimmed, topK, memoryType);
     try {
       const res = await fetch("/api/recall", {
         method: "POST",
@@ -97,7 +92,6 @@ export function RecallView({
           query: trimmed,
           top_k: topK,
           memory_type: memoryType || undefined,
-          min_importance: minImportance > 0 ? minImportance : undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -121,7 +115,7 @@ export function RecallView({
     } finally {
       if (reqId === reqIdRef.current) setLoading(false);
     }
-  }, [query, topK, memoryType, minImportance, syncUrl]);
+  }, [query, topK, memoryType, syncUrl]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -170,26 +164,6 @@ export function RecallView({
               step={1}
               value={topK}
               onChange={(e) => setTopK(Number.parseInt(e.target.value, 10))}
-              className="w-40 accent-foreground"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">
-              min_importance{" "}
-              <span className="tabular-nums text-foreground">
-                {minImportance}
-              </span>
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={IMP_MAX}
-              step={1}
-              value={minImportance}
-              onChange={(e) =>
-                setMinImportance(Number.parseInt(e.target.value, 10))
-              }
               className="w-40 accent-foreground"
             />
           </label>

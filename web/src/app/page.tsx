@@ -8,7 +8,6 @@ export const dynamic = "force-dynamic";
 type SearchParams = Promise<{
   day?: string | string[];
   type?: string | string[];
-  min?: string | string[];
 }>;
 
 function firstString(v: string | string[] | undefined): string | undefined {
@@ -32,13 +31,6 @@ export default async function Page({
   const requestedType = firstString(sp.type);
   const initialType =
     requestedType && requestedType.length > 0 ? requestedType : null;
-
-  const requestedMin = firstString(sp.min);
-  const parsedMin = requestedMin ? Number.parseInt(requestedMin, 10) : NaN;
-  const initialMin =
-    Number.isFinite(parsedMin) && parsedMin >= 1 && parsedMin <= 10
-      ? parsedMin
-      : 1;
 
   let items: Awaited<ReturnType<typeof fetchMemoriesForDay>> = [];
   let error: string | null = null;
@@ -66,7 +58,6 @@ export default async function Page({
           initialDay={day}
           initialItems={items}
           initialType={initialType}
-          initialMin={initialMin}
         />
       )}
     </div>

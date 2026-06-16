@@ -215,8 +215,8 @@ def test_in_context_boost_outranks_disjoint(tmp_dir: Path):
     _seed_corpus(eng)
     # Distinct summaries (both keyword-match "minimal") so the ranking is driven
     # by the context delta, not coupled to embedding/MMR diversity behaviour.
-    in_ctx = _seed(eng, "minimal diffs preferred here", importance=5)
-    disjoint = _seed(eng, "minimal diffs are fine elsewhere", importance=5)
+    in_ctx = _seed(eng, "minimal diffs preferred here")
+    disjoint = _seed(eng, "minimal diffs are fine elsewhere")
     eng.graph.add_scope(in_ctx, "bug-fix work")
     eng.graph.add_scope(disjoint, "AI router project")
 
@@ -230,8 +230,8 @@ def test_lifting_parent_scope_found_from_child_context(tmp_dir: Path):
     """A memory scoped to a parent context is boosted when querying a child."""
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    lifted = _seed(eng, "convention about diffs", importance=5)
-    disjoint = _seed(eng, "convention for something else", importance=5)
+    lifted = _seed(eng, "convention about diffs")
+    disjoint = _seed(eng, "convention for something else")
     eng.graph.add_scope(lifted, "phileas")  # parent context
     eng.graph.add_scope(disjoint, "unrelated area")
     eng.graph.create_edge("Context", "phileas recall work", "PART_OF", "Context", "phileas")
@@ -245,8 +245,8 @@ def test_lifting_parent_scope_found_from_child_context(tmp_dir: Path):
 def test_excluded_in_context_demoted_below_peer(tmp_dir: Path):
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    excluded = _seed(eng, "srt prefix rule one", importance=5)
-    normal = _seed(eng, "srt prefix rule two", importance=5)
+    excluded = _seed(eng, "srt prefix rule one")
+    normal = _seed(eng, "srt prefix rule two")
     eng.graph.add_scope(excluded, "bug-fix work", polarity="excluded")
 
     # Without context, the two tie (excluded ignored).
@@ -262,8 +262,8 @@ def test_excluded_in_context_demoted_below_peer(tmp_dir: Path):
 def test_expired_validity_retrievable_but_ranked_down(tmp_dir: Path):
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    fresh = _seed(eng, "router ownership current", importance=5)
-    expired = _seed(eng, "router ownership past", importance=5)
+    fresh = _seed(eng, "router ownership current")
+    expired = _seed(eng, "router ownership past")
     eng.graph.add_scope(fresh, "ai team")
     eng.graph.add_scope(expired, "ai team", valid_to="2020-01-01")
 
