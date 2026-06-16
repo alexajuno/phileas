@@ -60,7 +60,7 @@ def storage_strength_norm(storage_strength: float) -> float:
     return 1.0 - 2.0 ** (-max(0.0, storage_strength))
 
 
-def compute_score(
+def score_components(
     relevance: float,
     storage_strength: float,
     days_since_access: float,
@@ -70,23 +70,38 @@ def compute_score(
     storage_weight: float = 0.30,
     retrieval_weight: float = 0.10,
     access_weight: float = 0.05,
-) -> float:
-    """Combined scoring for retrieval ranking.
+) -> dict[str, float]:
+    """The four weighted signals that sum to the final score.
 
-    Four signals:
       relevance (55%) — semantic match from reranker/cosine
       storage   (30%) — durable depth: seeded from importance, grown by recall
       retrieval (10%) — current accessibility; decays since last access
       access    (5%)  — raw recall frequency, log-scaled
 
+    Returned separately (not just summed) so monitoring can see which signal
+    decided a ranking — argmax of these is the recall's `decided_by`.
+    """
+    return {
+        "relevance": relevance * relevance_weight,
+        "storage": storage_strength_norm(storage_strength) * storage_weight,
+        "retrieval": retrieval_strength(days_since_access, storage_strength) * retrieval_weight,
+        "access": (math.log(access_count + 1) / 5.0) * access_weight,
+    }
+
+
+def compute_score(
+    relevance: float,
+    storage_strength: float,
+    days_since_access: float,
+    access_count: int,
+    **weights: float,
+) -> float:
+    """Combined scoring for retrieval ranking: the sum of `score_components`.
+
     Storage strength also slows retrieval decay, so durable memories keep both a
     high storage component and a high retrieval component for longer.
     """
-    srt_rel = relevance * relevance_weight
-    srt_store = storage_strength_norm(storage_strength) * storage_weight
-    srt_retr = retrieval_strength(days_since_access, storage_strength) * retrieval_weight
-    srt_acc = (math.log(access_count + 1) / 5.0) * access_weight
-    return srt_rel + srt_store + srt_retr + srt_acc
+    return sum(score_components(relevance, storage_strength, days_since_access, access_count, **weights).values())
 
 
 def mmr_select(
