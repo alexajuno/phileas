@@ -64,7 +64,7 @@ A memory points back at the raw turn it was distilled from, and that turn belong
 
 `source_event_id` is required; a `memorize` that can't name a real event is refused. That link is what lets `thread(thread_id)` replay the conversation behind a memory, and what keeps a memory anchored to the evidence it came from.
 
-A thread is only as complete as the turns you capture. **While this skill is active, ingest every turn worth remembering** under the one `thread_id` — that's what makes `thread()` read back as the conversation rather than scattered fragments. When a single turn yields several facts, call `ingest_text` once and reuse its `event_id` across each `memorize` (or as the batch-level `source_event_id` for `memorize_batch`) — don't mint a fresh event per fact from the same turn.
+A thread is only as complete as the turns you capture, and that's your call. Phileas hands you the calls; you decide what a conversation is worth — ingest the turns that carry something to remember under the one `thread_id` so `thread()` reads back as the conversation rather than scattered fragments, and let the rest pass. Some conversations earn a full thread, some a single pinned memory, some nothing at all. When a single turn yields several facts, call `ingest_text` once and reuse its `event_id` across each `memorize` (or as the batch-level `source_event_id` for `memorize_batch`) — don't mint a fresh event per fact from the same turn.
 
 `ingest_text` and `start_thread` take a `source_kind` that defaults to `"agent"` — live capture by you, the in-session model. Leave it at the default.
 
