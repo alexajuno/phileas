@@ -4,7 +4,8 @@ Pure storage + retrieval. Claude Code is the brain — it extracts memories
 via skills/agents and calls these tools to store and retrieve them.
 
 Tools:
-  - ingest_text: capture verbatim source text as an event; returns its event_id
+  - start_thread: open/resume a conversation thread; returns its thread_id
+  - ingest_text: capture a verbatim turn as an event in a thread; returns its event_id
   - memorize: store a pre-extracted memory (must reference a source event_id)
   - recall: retrieve relevant memories
   - forget: archive a memory
@@ -76,15 +77,15 @@ mcp = FastMCP(
         "cross-topic context the task wouldn't retrieve. Opt-in; keep n small.\n"
         "\n"
         "Drill-in ladder (hydrate lazily — each step costs more):\n"
-        "- hydrate(id8): full record of ONE memory — exact timestamps, counts, the full "
-        "source_event_id, linked entities. The inverse of the pointer trim.\n"
-        "- thread(event_id): the verbatim originating conversation + sibling memories. Get the "
-        "event_id from hydrate first. The deepest, most expensive view.\n"
+        "- hydrate(id8): full record of ONE memory — exact timestamps, counts, its source turn "
+        "(the raw it was distilled from) and thread_id, linked entities. The inverse of the pointer trim.\n"
+        "- thread(thread_id): the conversation a memory came from — its raw turns in order, each with "
+        "the memories it produced. Get the thread_id from hydrate. The deepest, most expensive view.\n"
         "- memorize(): store new memories; prefer memorize_batch() for multiple at once.\n"
-        "  WRITES ARE TWO STEPS: first ingest_text(text=<verbatim source you're distilling>) "
-        "to capture the raw turn and get an event_id, then memorize(..., source_event_id=that). "
-        "One ingest_text per passage; reuse its id across a batch. A memory with no source event "
-        "is refused — that link is what lets thread() show where the memory came from."
+        "  Writes are three steps: start_thread() once per conversation for a thread_id; then per turn "
+        "ingest_text(text=<verbatim>, thread_id=that) to capture the raw and get an event_id, then "
+        "memorize(..., source_event_id=that). A memory with no source event is refused — that link is "
+        "what lets thread() show where the memory came from."
     ),
 )
 
@@ -421,16 +422,18 @@ def recall(
 
 
 @_instrumented_tool()
-def thread(event_id: str) -> str:
-    """Return the verbatim text of an ingested event plus every memory extracted from it.
+def thread(thread_id: str) -> str:
+    """Return a conversation: its raw turns in order, each with the memories it produced.
 
-    Use as a follow-up when a memory's source_event_id surfaces something
-    interesting and you want the full surrounding conversation context.
+    Follow a memory back to where it came from — `hydrate` gives you a memory's
+    `thread_id`; pass it here to read the whole surrounding conversation. The raw
+    turns are the spine; memories hang off the turn they were distilled from.
 
     Args:
-        event_id: The event UUID (from a memory's source_event_id field).
+        thread_id: A thread id (from start_thread / hydrate), or an event id —
+            either resolves to its conversation.
     """
-    return tool_runner.thread(engine, _entities_for, event_id=event_id)["text"]
+    return tool_runner.thread(engine, _entities_for, thread_id=thread_id)["text"]
 
 
 @_instrumented_tool()
@@ -834,34 +837,62 @@ def mark_session_done(session_path: str) -> str:
 
 
 @_instrumented_tool()
-def ingest_text(text: str, source_kind: str = "agent") -> dict:
-    """Capture verbatim source text as an event, the first step of memorizing.
+def start_thread(label: str | None = None, client_key: str | None = None, source_kind: str = "agent") -> dict:
+    """Open (or resume) a conversation thread — the frame a run of turns lives in.
 
-    A memory must reference the raw text it was distilled from. Call this with
-    the exact words you are about to summarize (the user's message, the relevant
-    turn, a quoted passage), then pass the returned `event_id` to `memorize` /
-    `memorize_batch` as `source_event_id`. The raw text is stored and embedded,
-    so `thread(event_id)` can later show the conversation a memory came from.
+    Call this at the start of a conversation, then pass the returned `thread_id`
+    to every `ingest_text` for that conversation so the turns read back in order
+    via `thread(thread_id)`.
 
-    One call per source chunk: if a batch of memories all come from the same
-    passage, capture it once and reuse the id across them.
+    Pass a stable `client_key` (e.g. "claude_code:<session_id>") to make this
+    idempotent: a resumed or compacted session that calls again with the same
+    key continues the same thread instead of fragmenting. The `resumed` flag in
+    the result says which happened.
 
     Args:
-        text: The verbatim source text (not a summary). Stored as-is.
+        label: Optional human-readable name for the conversation.
+        client_key: Stable client identity to resume on. Omit for a fresh thread.
+        source_kind: Which surface this came from. Default "agent".
+
+    Returns:
+        {"thread_id": str, "started_at": ISO-8601, "resumed": bool, ...}
+    """
+    return engine.start_thread(label=label, source_kind=source_kind, client_key=client_key)
+
+
+@_instrumented_tool()
+def ingest_text(text: str, thread_id: str | None = None, source_kind: str = "agent") -> dict:
+    """Capture a verbatim turn as an event, the first step of memorizing.
+
+    Call this with the exact words you are about to summarize (the user's
+    message, the relevant turn, a quoted passage), then pass the returned
+    `event_id` to `memorize` / `memorize_batch` as `source_event_id`.
+
+    Pass the `thread_id` from `start_thread` so every turn of one conversation
+    reads back as a single ordered thread via `thread(thread_id)`. Omit it and
+    the turn becomes its own one-turn thread.
+
+    One call per turn: if several memories all come from the same turn, capture
+    it once and reuse the `event_id` across them.
+
+    Args:
+        text: The verbatim turn (not a summary). Stored as-is.
+        thread_id: Conversation this turn belongs to (from `start_thread`).
         source_kind: Which surface this came from. Default "agent" (you, mid-session).
 
     Returns:
-        {"event_id": str, "received_at": ISO-8601, "source_kind": str}
+        {"event_id": str, "thread_id": str, "received_at": ISO-8601, "source_kind": str}
     """
     from phileas.models import Event
 
     text = (text or "").strip()
     if not text:
         raise ValueError("ingest_text requires non-empty verbatim text.")
-    event = Event(text=text, source_kind=source_kind)
+    event = Event(text=text, source_kind=source_kind, thread_id=thread_id)
     engine.save_event(event)
     return {
         "event_id": event.id,
+        "thread_id": event.thread_id,
         "received_at": event.received_at.isoformat(),
         "source_kind": event.source_kind,
     }

@@ -20,7 +20,7 @@ from phileas.db import Database
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
-from phileas.models import MemoryItem, MemoryType
+from phileas.models import MemoryItem, MemoryType, Thread
 from phileas.scoring import mmr_select, retrieval_strength, score_components
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
@@ -39,8 +39,8 @@ MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
 # the relative cut over each query's own score spread; these are only low backstops
 # — a garbage gate, never the cut itself. Kept well below the ~0.38 cosine band real
 # English matches land in, so lowering one can't re-introduce the absolute-floor bug.
-COSINE_HARD_FLOOR = 0.25  # backstop for semantic/raw cosine hits (Paths 2/5)
-EVENT_HARD_FLOOR = 0.20  # event chunks score lower under cosine (Path 6)
+COSINE_HARD_FLOOR = 0.25  # backstop for semantic cosine hits (Path 2)
+EVENT_HARD_FLOOR = 0.20  # event chunks score lower under cosine (Path 5)
 COSINE_MIN_KEEP = 0  # semantic paths are additive to keyword/graph — force nothing in
 RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
 RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
@@ -265,7 +265,7 @@ class MemoryEngine:
 
         Wraps `db.save_event` + `vector.add_event` so callers (the daemon ingest
         path, tests, the backfill script) get the embed for free. The event
-        text is what powers Path 6 / `thread()` retrieval.
+        text is what powers Path 5 / `thread()` retrieval.
         """
         self.db.save_event(event)
         try:
@@ -277,23 +277,76 @@ class MemoryEngine:
             )
 
     # ------------------------------------------------------------------
-    # thread (event + sibling memories)
+    # threads (conversations: ordered runs of raw turns)
     # ------------------------------------------------------------------
 
-    def thread(self, event_id: str) -> dict | None:
-        """Return an event's full text plus every memory extracted from it.
+    def start_thread(
+        self,
+        label: str | None = None,
+        source_kind: str = "agent",
+        client_key: str | None = None,
+    ) -> dict:
+        """Open or resume a conversation. Tag the turns you ingest with the
+        returned id so they read back as one ordered thread.
 
-        Powers the "show me the conversation this came from" affordance.
+        Idempotent on ``client_key`` (a stable client identity like
+        ``"claude_code:<session_id>"``): if a thread already carries that key it
+        is returned — so a resumed or compacted session continues the same
+        thread instead of fragmenting. Omit ``client_key`` to always open a
+        fresh thread with no continuity.
         """
-        event = self.db.get_event(event_id)
-        if event is None:
-            return None
-        memories = self.db.get_memories_for_event(event_id)
+        if client_key:
+            existing = self.db.get_thread_by_client_key(client_key)
+            if existing is not None:
+                return {
+                    "thread_id": existing.id,
+                    "started_at": existing.created_at.isoformat(),
+                    "source_kind": existing.source_kind,
+                    "label": existing.label,
+                    "resumed": True,
+                }
+        thread = Thread(source_kind=source_kind, label=label, client_key=client_key)
+        self.db.save_thread(thread)
         return {
-            "event_id": event.id,
-            "text": event.text,
-            "received_at": event.received_at.isoformat() if event.received_at else None,
-            "memories": [_item_to_dict(m) for m in memories],
+            "thread_id": thread.id,
+            "started_at": thread.created_at.isoformat(),
+            "source_kind": source_kind,
+            "label": label,
+            "resumed": False,
+        }
+
+    def thread(self, handle: str) -> dict | None:
+        """Return a conversation: its raw turns in order, each with the memories
+        it produced.
+
+        ``handle`` is a thread_id, or an event_id (a memory's source_event_id),
+        which resolves to the thread that turn sits in. The raw turns are the
+        spine; the memories hang off the turn they were distilled from.
+        """
+        turns = self.db.get_events_for_thread(handle)
+        thread_id = handle
+        if not turns:
+            event = self.db.get_event(handle)
+            if event is None:
+                return None
+            thread_id = event.thread_id or event.id
+            turns = self.db.get_events_for_thread(thread_id) or [event]
+        meta = self.db.get_thread(thread_id)
+        turn_dicts = [
+            {
+                "event_id": ev.id,
+                "text": ev.text,
+                "received_at": ev.received_at.isoformat() if ev.received_at else None,
+                "source_kind": ev.source_kind,
+                "memories": [_item_to_dict(m) for m in self.db.get_memories_for_event(ev.id)],
+            }
+            for ev in turns
+        ]
+        return {
+            "thread_id": thread_id,
+            "label": meta.label if meta else None,
+            "source_kind": meta.source_kind if meta else (turns[0].source_kind if turns else None),
+            "turns": turn_dicts,
         }
 
     def hydrate(self, memory_id: str) -> dict | None:
@@ -344,6 +397,19 @@ class MemoryEngine:
             contradictions = self.graph.get_contradictions_for_memory(item.id)
         except Exception as e:
             log.debug("hydrate contradiction lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
+        # Provenance: the raw turn this memory was distilled from, and the thread
+        # (conversation) it sits in. `thread(thread_id)` reads back the full run.
+        source_turn: dict | None = None
+        thread_id: str | None = None
+        if item.source_event_id:
+            event = self.db.get_event(item.source_event_id)
+            if event is not None:
+                thread_id = event.thread_id or event.id
+                source_turn = {
+                    "event_id": event.id,
+                    "text": event.text,
+                    "received_at": event.received_at.isoformat() if event.received_at else None,
+                }
         return {
             "id": item.id,
             "summary": item.summary,
@@ -356,6 +422,8 @@ class MemoryEngine:
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
             "source_event_id": item.source_event_id,
+            "thread_id": thread_id,
+            "source_turn": source_turn,
             "entities": entities,
             "scopes": scopes,
             "contradictions": contradictions,
@@ -674,7 +742,6 @@ class MemoryEngine:
         path3_ids: set[str] = set()  # Path 3: entity lookup + 1-hop neighbours
         path3b_ids: set[str] = set()  # Path 3b: memory-pivot expansion
         path4_ids: set[str] = set()  # Path 4: semantic-to-graph bridge
-        raw_text_ids: set[str] = set()  # track raw-text matched candidates
         event_thread_ids: set[str] = set()  # track event-text sibling fanout
         context_ids: set[str] = set()  # AA-119: candidates boosted by active context
         context_info: dict | None = None  # AA-119: resolved/expanded active context
@@ -684,7 +751,7 @@ class MemoryEngine:
         # ----------------------------------------------------------
 
         # One distributional cut method, shared by the cosine entry gates
-        # (Paths 2/5/6) and the post-rerank relevance cut. PHILEAS_STANDOUT can
+        # (Paths 2/5) and the post-rerank relevance cut. PHILEAS_STANDOUT can
         # override it for a benchmark sweep. The default is `ratio` — keep what's
         # within a fraction of the top score. It is a HEAD-selector: with no
         # top_k cap the result size is the cut's job, and ratio keeps the
@@ -996,7 +1063,7 @@ class MemoryEngine:
         # on a keyword candidate floods day_ids with unrelated results.
         #
         # Capped by recall.path4_max_seeds. Non-graph candidates (keyword /
-        # semantic / raw_text / event_thread) come first — those are the
+        # semantic / event_thread) come first — those are the
         # seeds Path 4 was actually designed for, producing new bridges
         # Path 3b couldn't have. graph_ids seeds fill any remaining headroom,
         # though their bridges duplicate Path 3b's by construction.
@@ -1025,28 +1092,12 @@ class MemoryEngine:
                     )
         _mark("graph_path4_bridge")
 
-        # Path 5: raw text search (verbatim conversation snippets)
-        # Searches the raw_memories ChromaDB collection — catches details
-        # lost during summarization (names, places, specific phrases).
-        raw_hits = self.vector.search_raw(query, top_k=_pool)
-        for k in standout_keep(
-            [sim for _, sim in raw_hits],
-            hard_floor=COSINE_HARD_FLOOR,
-            min_keep=COSINE_MIN_KEEP,
-            method=_cut_method,
-            **_cut_params,
-        ):
-            mem_id, _sim = raw_hits[k]
-            raw_text_ids.add(mem_id)
-            if mem_id not in candidates:
-                item = self.db.get_item(mem_id)
-                if item:
-                    candidates[mem_id] = item
-        _mark("raw_text")
-
-        # Path 6: event-text search → sibling-memory fanout.
+        # Path 5: event-text search → sibling-memory fanout.
         # An event hit drags in every memory extracted from that event,
-        # tagged hop=1 (one structural step from the matching event).
+        # tagged hop=1 (one structural step from the matching event). This is
+        # also where the verbatim source rejoins retrieval: summarization drops
+        # details (names, places, exact phrasing) that the event text keeps, so
+        # a query matching those surfaces the memories distilled from that turn.
         # Verbatim event passages themselves are not memory rows, so they
         # are not added to `candidates` here — only the sibling memories are.
         # Lower backstop than memory search: long event chunks score lower
@@ -1477,8 +1528,6 @@ class MemoryEngine:
                 s.append("path3b")
             if mid in path4_ids:
                 s.append("path4")
-            if mid in raw_text_ids:
-                s.append("raw_text")
             if mid in event_thread_ids:
                 s.append("event_thread")
             if mid in context_ids:
@@ -1629,10 +1678,6 @@ class MemoryEngine:
                 "vector delete failed during forget",
                 extra={"op": "forget", "data": {"id": memory_id, "error": str(e)}},
             )
-        try:
-            self.vector.delete_raw(memory_id)
-        except Exception:
-            pass  # Raw text may not exist for this memory
 
         return f"Memory {memory_id} archived."
 
@@ -1792,14 +1837,13 @@ class MemoryEngine:
 
         if resolution == "supersede":
             self.db.archive_item(other.id)
-            for delete in (self.vector.delete, self.vector.delete_raw):
-                try:
-                    delete(other.id)
-                except Exception as e:
-                    log.debug(
-                        "vector delete failed during supersede",
-                        extra={"op": "resolve_contradiction", "data": {"id": other.id, "error": str(e)}},
-                    )
+            try:
+                self.vector.delete(other.id)
+            except Exception as e:
+                log.debug(
+                    "vector delete failed during supersede",
+                    extra={"op": "resolve_contradiction", "data": {"id": other.id, "error": str(e)}},
+                )
             self.graph.link_memory_to_memory(survivor.id, "SUPERSEDES", other.id)
             return f"Superseded [{other.id[:8]}] (archived) with [{survivor.id[:8]}] — linked SUPERSEDES."
 
@@ -2006,7 +2050,6 @@ class MemoryEngine:
         return {
             **counts,
             "vector_count": self.vector.count(),
-            "raw_vector_count": self.vector.raw_count(),
             "event_vector_count": self.vector.event_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],

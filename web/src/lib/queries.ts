@@ -22,7 +22,7 @@ export function fetchMemoriesForDay(day: string): MemoryItem[] {
     .prepare<[string, string], Row>(
       `SELECT id, summary, memory_type, importance, status,
               access_count, reinforcement_count, last_reinforced,
-              raw_text, tags, daily_ref, source_session_id,
+              tags, daily_ref, source_session_id,
               created_at, updated_at
          FROM memory_items
         WHERE status = 'active'
@@ -46,15 +46,15 @@ export function searchMemories(rawQuery: string, limit = 100): MemoryItem[] {
   const params: string[] = [];
   for (const t of terms) {
     clauses.push(
-      "(summary LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')",
+      "(summary LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')",
     );
     const like = `%${t.replace(/([\\%_])/g, "\\$1")}%`;
-    params.push(like, like, like);
+    params.push(like, like);
   }
 
   const sql = `SELECT id, summary, memory_type, importance, status,
                       access_count, reinforcement_count, last_reinforced,
-                      raw_text, tags, daily_ref, source_session_id,
+                      tags, daily_ref, source_session_id,
                       created_at, updated_at
                  FROM memory_items
                 WHERE status = 'active'
@@ -100,7 +100,7 @@ export function fetchMemoriesForExport(filters: ExportFilters): MemoryItem[] {
 
   const sql = `SELECT id, summary, memory_type, importance, status,
                       access_count, reinforcement_count, last_reinforced,
-                      raw_text, tags, daily_ref, source_session_id,
+                      tags, daily_ref, source_session_id,
                       created_at, updated_at
                  FROM memory_items
                 WHERE ${clauses.join(" AND ")}
@@ -117,7 +117,7 @@ export function fetchMemoriesByIds(ids: string[]): MemoryItem[] {
   const placeholders = ids.map(() => "?").join(",");
   const sql = `SELECT id, summary, memory_type, importance, status,
                       access_count, reinforcement_count, last_reinforced,
-                      raw_text, tags, daily_ref, source_session_id,
+                      tags, daily_ref, source_session_id,
                       created_at, updated_at
                  FROM memory_items
                 WHERE status = 'active'

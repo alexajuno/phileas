@@ -41,9 +41,6 @@ class _StubVector:
     def search(self, query, top_k=None):
         return list(self._semantic)
 
-    def search_raw(self, query, top_k=None):
-        return []
-
     def search_events(self, query, top_k=None):
         return []
 

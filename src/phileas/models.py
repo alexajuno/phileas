@@ -39,7 +39,6 @@ class MemoryItem:
     storage_strength: float = 0.5  # durable depth (Bjork); seeded from importance, grown by recall + re-study
     reinforcement_count: int = 0  # how many similar memories arrived after this one
     last_reinforced: datetime | None = None
-    raw_text: str | None = None  # verbatim source text (conversation snippet, etc.)
     source_event_id: str | None = None  # FK to events.id — ingested turn this memory was extracted from
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
@@ -54,3 +53,21 @@ class Event:
     received_at: datetime = field(default_factory=_now)
     source_kind: str = "agent"  # which surface captured this raw text: "agent" (in-session
     # memorize), "claude_code" (session poller), "reflection" (synthesis basis), …
+    thread_id: str | None = None  # conversation this turn belongs to; a thread is the
+    # ordered run of turns sharing this id. Defaults to the turn's own id — a one-turn thread.
+
+    def __post_init__(self) -> None:
+        if self.thread_id is None:
+            self.thread_id = self.id
+
+
+@dataclass
+class Thread:
+    """A conversation — an ordered run of raw turns (events) sharing this id."""
+
+    id: str = field(default_factory=_uuid)
+    created_at: datetime = field(default_factory=_now)
+    source_kind: str = "agent"
+    label: str | None = None
+    client_key: str | None = None  # stable client identity (e.g. "claude_code:<session_id>");
+    # start_thread is get-or-create on this, so a resumed/compacted session continues one thread.

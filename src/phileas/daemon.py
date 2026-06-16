@@ -618,15 +618,19 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
 
         return import_bundle(engine, params["bundle"])
     elif method == "ingest":
-        # Store the raw turn as an event for thread() recall. No LLM call here.
+        # Store the raw turn as an event in its conversation thread. No LLM call here.
         text = params.get("text", "")
         if not text:
             return {"queued": False, "reason": "empty text"}
         from phileas.models import Event
 
-        event = Event(text=text, source_kind=params.get("source_kind", "claude_code"))
+        event = Event(
+            text=text,
+            source_kind=params.get("source_kind", "claude_code"),
+            thread_id=params.get("thread_id"),
+        )
         engine.save_event(event)
-        return {"queued": True, "event_id": event.id}
+        return {"queued": True, "event_id": event.id, "thread_id": event.thread_id}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.

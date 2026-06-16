@@ -9,7 +9,6 @@ export const dynamic = "force-dynamic";
 type ExportRow = {
   id: string;
   name: string;
-  body: string | null;
   memory_type: string;
   importance: number;
   created_at: string;
@@ -19,7 +18,6 @@ function toExportRow(m: MemoryItem): ExportRow {
   return {
     id: m.id,
     name: m.summary,
-    body: m.raw_text,
     memory_type: m.memory_type,
     importance: m.importance,
     created_at: m.created_at,
@@ -43,10 +41,6 @@ function toMarkdown(items: MemoryItem[]): string {
     for (const m of byDay.get(day)!) {
       const summary = m.summary.replace(/\s+/g, " ").trim();
       lines.push(`- **${summary}** _(${m.memory_type} · importance ${m.importance})_`);
-      if (m.raw_text) {
-        const body = m.raw_text.trim().replace(/\n/g, "\n  ");
-        lines.push(`  ${body}`);
-      }
     }
     lines.push("");
   }
