@@ -87,31 +87,6 @@ def test_restudy_grows_storage_less_than_recall(sqlite_path):
     assert RESTUDY_GAIN < RECALL_GAIN
 
 
-# --- migration backfill -----------------------------------------------------
-
-
-def test_storage_backfill_seeds_sentinel_rows_once(sqlite_path):
-    db = Database(path=sqlite_path)
-    item = _save(db, summary="a", memory_type="profile")
-    # Simulate a pre-migration row: -1 sentinel + prior reinforcements.
-    db.conn.execute(
-        "UPDATE memory_items SET storage_strength = -1.0, reinforcement_count = 3 WHERE id = ?",
-        (item.id,),
-    )
-    db.conn.commit()
-
-    db._backfill_storage_strength()
-    import math
-
-    expected = seed_storage_strength("profile") + 0.3 * math.log(1 + 3)
-    seeded = db.get_item(item.id).storage_strength
-    assert seeded == expected
-
-    # Idempotent: a second pass leaves a real (non-sentinel) value untouched.
-    db._backfill_storage_strength()
-    assert db.get_item(item.id).storage_strength == seeded
-
-
 # --- engine wiring ----------------------------------------------------------
 
 

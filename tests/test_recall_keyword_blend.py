@@ -143,7 +143,7 @@ def test_backfill_reindexes_existing_rows(tmp_path: Path):
     cfg = load_config(home=tmp_path)
     db = Database(path=cfg.db_path)
     mid = _seed(db, "memory mentioning kangaroo")
-    # Simulate a stale/absent index, then reopen to trigger _backfill_fts.
+    # Simulate a stale/absent index, then reopen to trigger _reconcile_fts.
     db.conn.execute("DELETE FROM memory_fts")
     db.conn.commit()
     db.close()

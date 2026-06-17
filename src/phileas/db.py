@@ -6,16 +6,14 @@ that can be rebuilt from this database.
 
 import functools
 import logging
-import math
 import re
 import sqlite3
 import threading
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from phileas.models import Event, MemoryItem, Thread
-from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength, seed_storage_strength
+from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +79,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
+    source_event_id TEXT REFERENCES events(id),
     storage_strength REAL NOT NULL DEFAULT 0.5,
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
@@ -94,10 +93,15 @@ CREATE TABLE IF NOT EXISTS processed_sessions (
     processed_at TEXT NOT NULL
 );
 
+-- A raw turn. ``source_kind`` records the surface that captured it, so health
+-- can track per-source recency. ``thread_id`` is the conversation it belongs
+-- to: a thread is the ordered run of turns sharing this id.
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
-    received_at TEXT NOT NULL
+    received_at TEXT NOT NULL,
+    source_kind TEXT,
+    thread_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS threads (
@@ -118,6 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at);
+CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, received_at);
 
 -- Inverted index over memory summaries, powering the keyword (sparse) leg of
 -- recall via FTS5 + BM25. Standalone (not external-content): it stores mem_id
@@ -132,38 +137,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
 """
 
 
-MIGRATIONS = [
-    "ALTER TABLE memory_items ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE memory_items ADD COLUMN last_reinforced TEXT",
-    "ALTER TABLE memory_items ADD COLUMN raw_text TEXT",
-    "ALTER TABLE memory_items ADD COLUMN source_event_id TEXT REFERENCES events(id)",
-    "DROP INDEX IF EXISTS idx_items_tier",
-    "ALTER TABLE memory_items DROP COLUMN tier",
-    "DROP INDEX IF EXISTS idx_events_status",
-    "ALTER TABLE events DROP COLUMN extraction_status",
-    "ALTER TABLE events DROP COLUMN extraction_error",
-    "ALTER TABLE events DROP COLUMN memory_count",
-    "ALTER TABLE memory_items DROP COLUMN consolidated_into",
-    # Provenance: tag each raw event with the surface that captured it, so
-    # health can track per-source recency (in-session "agent" traffic can't
-    # mask a dead "claude_code" capture path).
-    "ALTER TABLE events ADD COLUMN source_kind TEXT",
-    # Two-strength model: durable storage strength, distinct from the volatile
-    # retrieval strength derived from last_accessed. Added with a -1 sentinel so
-    # pre-existing rows can be seeded once from memory type + reinforcement_count
-    # by _backfill_storage_strength; new rows write a real value at save time.
-    "ALTER TABLE memory_items ADD COLUMN storage_strength REAL NOT NULL DEFAULT -1.0",
-    # Conversation threads: tag each raw turn with the conversation it belongs to.
-    # A thread is the ordered run of turns sharing this id. Backfilled to the
-    # turn's own id (a one-turn thread) by _backfill_event_threads.
-    "ALTER TABLE events ADD COLUMN thread_id TEXT",
-    "CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, received_at)",
-    # Durability is earned through use and seeded from memory type; the standalone
-    # 1-10 score it once depended on is gone.
-    "ALTER TABLE memory_items DROP COLUMN importance",
-]
-
-
 class Database:
     def __init__(self, path: Path = DEFAULT_DB_PATH):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,100 +144,15 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self.conn.executescript(SCHEMA)
-        self._migrate()
-        self._backfill_event_provenance()
-        self._backfill_event_threads()
-        self._backfill_storage_strength()
-        self._backfill_fts()
+        self._reconcile_fts()
 
-    def _migrate(self):
-        """Apply schema migrations idempotently."""
-        for sql in MIGRATIONS:
-            try:
-                self.conn.execute(sql)
-                self.conn.commit()
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-    def _backfill_event_provenance(self):
-        """Lift legacy verbatim snippets onto the event provenance path, once.
-
-        An earlier build stored a memory's verbatim source inline on the row. The
-        source of a memory is now a row in ``events`` that ``source_event_id``
-        points at — the same handle ``thread`` and the recall event path resolve.
-        For each row that still carries an inline snippet without an event link,
-        synthesize an event from the snippet and link it, then retire the column.
-
-        Pure SQL so it runs before any read and needs no vector store. The
-        synthesized events embed lazily — the snippet text is preserved in
-        ``events.text``, which is all ``thread`` and ``hydrate`` read. Idempotent:
-        once the column is gone, there is nothing to do.
-        """
-        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(memory_items)")}
-        if "raw_text" not in cols:
-            return
-        fossils = self.conn.execute(
-            "SELECT id, raw_text, created_at FROM memory_items "
-            "WHERE raw_text IS NOT NULL AND raw_text != '' AND source_event_id IS NULL"
-        ).fetchall()
-        for row in fossils:
-            event_id = str(uuid.uuid4())
-            self.conn.execute(
-                "INSERT INTO events (id, text, received_at, source_kind) VALUES (?, ?, ?, ?)",
-                (event_id, row["raw_text"], row["created_at"], "backfill"),
-            )
-            self.conn.execute(
-                "UPDATE memory_items SET source_event_id = ? WHERE id = ?",
-                (event_id, row["id"]),
-            )
-        self.conn.execute("ALTER TABLE memory_items DROP COLUMN raw_text")
-        self.conn.commit()
-        if fossils:
-            log.info("lifted %d verbatim snippet(s) onto the event path", len(fossils))
-
-    def _backfill_event_threads(self):
-        """Seat every untagged turn in its own one-turn thread, once.
-
-        Turns predating the conversation layer carry no ``thread_id``. Each
-        becomes a singleton thread keyed by its own id, so ``thread`` and the
-        recall event path resolve uniformly whether a turn arrived alone or as
-        part of a multi-turn conversation. New turns write a real value at save
-        time, so this only ever touches the backlog. Idempotent.
-        """
-        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(events)")}
-        if "thread_id" not in cols:
-            return
-        self.conn.execute("UPDATE events SET thread_id = id WHERE thread_id IS NULL")
-        self.conn.commit()
-
-    def _backfill_storage_strength(self):
-        """Seed storage_strength for rows that predate the two-strength model.
-
-        The migration adds the column with a -1 sentinel. Rows still carrying it
-        are reconstructed once from the type seed plus a log-scaled bonus for
-        prior reinforcements, so a memory that has already proven its worth keeps
-        its durability lead. New rows write a real value at save time and never
-        match the sentinel, so this is idempotent.
-        """
-        rows = self.conn.execute(
-            "SELECT id, memory_type, reinforcement_count FROM memory_items WHERE storage_strength < 0"
-        ).fetchall()
-        for row in rows:
-            seeded = seed_storage_strength(row["memory_type"]) + 0.3 * math.log(1 + row["reinforcement_count"])
-            self.conn.execute(
-                "UPDATE memory_items SET storage_strength = ? WHERE id = ?",
-                (seeded, row["id"]),
-            )
-        if rows:
-            self.conn.commit()
-
-    def _backfill_fts(self):
-        """Populate the FTS index for any active memory it doesn't yet hold.
+    def _reconcile_fts(self) -> None:
+        """Seed the FTS index for any active memory it doesn't yet hold.
 
         Self-healing and idempotent: it inserts only the active summaries missing
         from ``memory_fts``, so it costs nothing once the index is current and it
-        seeds the index for databases that predate it. Cheap for a personal-size
-        corpus.
+        rebuilds an index that drifted out from under the database. Cheap for a
+        personal-size corpus, so it runs on every open.
         """
         self.conn.execute(
             "INSERT INTO memory_fts(mem_id, summary) "
