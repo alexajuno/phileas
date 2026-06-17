@@ -572,10 +572,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             items = engine.db.get_items_by_type(memory_type)[:limit]
         else:
             items = engine.db.get_active_items()[:limit]
-        return [
-            {"id": i.id, "summary": i.summary, "type": i.memory_type, "importance": i.importance, "score": 0}
-            for i in items
-        ]
+        return [{"id": i.id, "summary": i.summary, "type": i.memory_type, "score": 0} for i in items]
     elif method == "show":
         item = engine.db.get_item(params["memory_id"])
         if not item:
@@ -584,7 +581,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             "id": item.id,
             "summary": item.summary,
             "memory_type": item.memory_type,
-            "importance": item.importance,
             "status": item.status,
             "access_count": item.access_count,
             "daily_ref": item.daily_ref,
@@ -598,7 +594,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 "id": i.id,
                 "summary": i.summary,
                 "memory_type": i.memory_type,
-                "importance": i.importance,
                 "status": i.status,
                 "access_count": i.access_count,
                 "daily_ref": i.daily_ref,
@@ -758,7 +753,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             start_iso=params.get("start"),
             end_iso=params.get("end"),
             memory_type=params.get("type"),
-            min_importance=params.get("min_importance"),
         )
     elif method == "memories_by_ids":
         return engine.db.web_memories_by_ids(params.get("ids", []))

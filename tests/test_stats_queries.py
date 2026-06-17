@@ -116,7 +116,7 @@ def metrics_db(tmp_path: Path) -> Path:
         CREATE TABLE ingest_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at TEXT NOT NULL,
-            memory_type TEXT, importance INTEGER,
+            memory_type TEXT,
             entity_count INTEGER, deduped INTEGER NOT NULL, source TEXT
         );
         """
@@ -134,12 +134,12 @@ def metrics_db(tmp_path: Path) -> Path:
     )
     conn.executemany(
         """INSERT INTO ingest_events
-        (created_at, memory_type, importance, entity_count, deduped, source)
-        VALUES (?,?,?,?,?,?)""",
+        (created_at, memory_type, entity_count, deduped, source)
+        VALUES (?,?,?,?,?)""",
         [
-            (now, "event", 7, 2, 0, "mcp"),
-            (now, "event", 5, 0, 1, "mcp"),
-            (now, "knowledge", 8, 3, 0, "cli"),
+            (now, "event", 2, 0, "mcp"),
+            (now, "event", 0, 1, "mcp"),
+            (now, "knowledge", 3, 0, "cli"),
         ],
     )
     conn.commit()

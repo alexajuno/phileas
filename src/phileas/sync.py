@@ -44,7 +44,6 @@ _MEM_FIELDS = (
     "id",
     "summary",
     "memory_type",
-    "importance",
     "status",
     "access_count",
     "last_accessed",
@@ -67,7 +66,6 @@ def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
         id=d["id"],
         summary=d["summary"],
         memory_type=d["memory_type"],
-        importance=d["importance"],
         status=d["status"],
         access_count=d.get("access_count", 0),
         last_accessed=_dt(d.get("last_accessed")),
@@ -100,7 +98,7 @@ def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, A
     skew between machines; re-sends are idempotent.
     """
     cols = (
-        "SELECT id, summary, memory_type, importance, status, access_count, "
+        "SELECT id, summary, memory_type, status, access_count, "
         "last_accessed, daily_ref, storage_strength, reinforcement_count, last_reinforced, "
         "source_event_id, created_at, updated_at FROM memory_items"
     )

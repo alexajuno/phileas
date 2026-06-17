@@ -34,7 +34,6 @@ def _ingest_event_with_memories(engine, event_text: str, memories: list[dict]) -
         engine.memorize(
             summary=m["summary"],
             memory_type=m.get("memory_type", "knowledge"),
-            importance=m.get("importance", 5),
             source_event_id=event.id,
         )
     return event

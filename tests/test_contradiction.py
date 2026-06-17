@@ -242,8 +242,8 @@ def test_scope_both_surfaces_per_context(tmp_dir: Path):
     its own scope (the design's contextual-variation outcome)."""
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    a = _seed(eng, "router work happens in this repo", importance=5)
-    b = _seed(eng, "router work happens over there", importance=5)
+    a = _seed(eng, "router work happens in this repo")
+    b = _seed(eng, "router work happens over there")
     eng.resolve_contradiction(a, b, "scope", contexts=["phileas"], other_contexts=["ai router"])
 
     ids_phileas = _ids(eng.recall("router", top_k=10, context="phileas"))
@@ -259,9 +259,9 @@ def test_contradicts_edge_does_not_double_demote(tmp_dir: Path):
     doesn't. Contextual variation is handled by SCOPED_TO, not by the edge."""
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    anchor = _seed(eng, "router work happens in this repo", importance=5)
-    contradicting = _seed(eng, "router work happens over there", importance=5)
-    plain = _seed(eng, "router work happens over there", importance=5)  # identical content to `contradicting`
+    anchor = _seed(eng, "router work happens in this repo")
+    contradicting = _seed(eng, "router work happens over there")
+    plain = _seed(eng, "router work happens over there")  # identical content to `contradicting`
 
     # anchor in-context; both others disjoint under the "phileas" query.
     eng.resolve_contradiction(anchor, contradicting, "scope", contexts=["phileas"], other_contexts=["ai router"])

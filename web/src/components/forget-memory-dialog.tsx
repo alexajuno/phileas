@@ -71,8 +71,6 @@ export function ForgetMemoryDialog({
           <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span>{memory.memory_type}</span>
             <span>·</span>
-            <span>imp {memory.importance}</span>
-            <span>·</span>
             <span className="font-mono normal-case">
               {memory.id.slice(0, 8)}
             </span>

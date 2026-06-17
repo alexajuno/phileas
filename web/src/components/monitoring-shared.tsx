@@ -6,7 +6,6 @@ export type ResolvedMemory = {
   id: string;
   summary: string | null;
   memory_type: string | null;
-  importance: number | null;
   created_at: string | null;
 };
 

@@ -2,7 +2,7 @@
 
 Used by `engine.recall`'s legacy Path 3 graph word filter. Common function
 words match almost every entity name; filtering them keeps the path precise
-and stops importance/access tiebreakers from being dominated by false
+and stops storage/access tiebreakers from being dominated by false
 positives.
 
 Why a vendored list instead of `import`-ing a maintained one

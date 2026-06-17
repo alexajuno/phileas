@@ -154,8 +154,7 @@ def health(notify: bool, as_json: bool):
     default="knowledge",
     help="Memory type (profile, event, knowledge, behavior, reflection).",
 )
-@click.option("--importance", default=None, type=int, help="Importance score 1-10 (auto-scored by LLM if omitted).")
-def remember(text: str, memory_type: str, importance: int | None):
+def remember(text: str, memory_type: str):
     """Store a memory.
 
     \b
@@ -172,7 +171,6 @@ def remember(text: str, memory_type: str, importance: int | None):
             {
                 "summary": text,
                 "memory_type": memory_type,
-                "importance": importance,
             },
         )
         if resp and resp.get("ok"):
@@ -187,7 +185,6 @@ def remember(text: str, memory_type: str, importance: int | None):
         result = engine.memorize(
             summary=text,
             memory_type=memory_type,
-            importance=importance,
         )
         print_memory_stored(result)
     except Exception as exc:
@@ -209,8 +206,8 @@ def recall(query: str, top_k: int, memory_type: str | None):
 
     The pipeline gathers candidates from keyword (SQLite FTS), vector
     (ChromaDB), and graph (KuzuDB) sources, then runs a cross-encoder
-    rerank and MMR for diversity. Final scores blend relevance,
-    importance, recency, and access frequency.
+    rerank and MMR for diversity. Final scores blend relevance, storage
+    strength, recency, and access frequency.
     """
     try:
         resp = _daemon_call("recall", {"query": query, "top_k": top_k, "memory_type": memory_type})
@@ -272,10 +269,9 @@ def _run_tool(method: str, params: dict) -> None:
 @click.command("recall-recent")
 @click.option("--days", default=7, type=int, help="How many days back to look.")
 @click.option("--top-per-day", default=10, type=int, help="Max memories to show per day.")
-@click.option("--min-importance", default=5, type=int, help="Only include memories at or above this importance.")
-def recall_recent(days: int, top_per_day: int, min_importance: int):
-    """Top memories per day for the last N days (time-relative queries)."""
-    _run_tool("recall_recent", {"days": days, "top_per_day": top_per_day, "min_importance": min_importance})
+def recall_recent(days: int, top_per_day: int):
+    """Each day's memories for the last N days (time-relative queries)."""
+    _run_tool("recall_recent", {"days": days, "top_per_day": top_per_day})
 
 
 @click.command("timeline")
@@ -517,7 +513,6 @@ def list_cmd(memory_type: str | None, limit: int):
             {
                 "id": item.id,
                 "type": item.memory_type,
-                "importance": item.importance,
                 "summary": item.summary,
                 "score": 0.0,
             }
@@ -540,7 +535,7 @@ def list_cmd(memory_type: str | None, limit: int):
 def show(memory_id: str):
     """Show full detail of a memory.
 
-    Displays ID, summary, type, importance, status, access count, daily
+    Displays ID, summary, type, status, access count, daily
     reference, and timestamps.
     """
     try:
@@ -559,7 +554,6 @@ def show(memory_id: str):
                 "id": item.id,
                 "summary": item.summary,
                 "memory_type": item.memory_type,
-                "importance": item.importance,
                 "status": item.status,
                 "access_count": item.access_count,
                 "daily_ref": item.daily_ref,
@@ -682,7 +676,6 @@ def export_cmd(fmt: str, output: str | None):
                 "id": item.id,
                 "summary": item.summary,
                 "memory_type": item.memory_type,
-                "importance": item.importance,
                 "status": item.status,
                 "access_count": item.access_count,
                 "daily_ref": item.daily_ref,

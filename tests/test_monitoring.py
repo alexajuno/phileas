@@ -97,7 +97,7 @@ def _engine(tmp_dir: Path) -> MemoryEngine:
 
 def test_status_exposes_storage_health(tmp_dir: Path):
     eng = _engine(tmp_dir)
-    eng.memorize("the user prefers dark mode", importance=5)
+    eng.memorize("the user prefers dark mode")
     health = eng.status()["storage_health"]
     assert health["active"] == 1
     assert {"storage_p50", "storage_p90", "fading_count", "recalls_top5pct_share"} <= health.keys()

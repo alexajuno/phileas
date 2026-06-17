@@ -61,7 +61,6 @@ def recall_recent(
     *,
     days: int = 7,
     top_per_day: int = 10,
-    min_importance: int = 5,
 ) -> ToolResult:
     end = _date.today()
     start = end - timedelta(days=days)
@@ -74,13 +73,12 @@ def recall_recent(
         day = (item.get("created_at") or "")[:10]
         by_day[day].append(item)
 
-    # Pass 1: each day's top under a hard global count cap, newest day first, so a
-    # heavy low-importance day can't overflow the context.
+    # Pass 1: each day's memories under a hard global count cap, newest day first,
+    # so a heavy day can't overflow the context.
     recent_max = RECENT_MAX
     per_day, selected, truncated = select_recent(
         by_day,
         top_per_day=top_per_day,
-        min_importance=min_importance,
         recent_max=recent_max,
     )
 
@@ -181,8 +179,7 @@ def list_day_memories(engine, entities_fn: EntitiesFn, *, date: str | None = Non
 
     lines = [f"Memories for {target} ({len(items)} found):"]
     for item in items:
-        imp = item.get("importance", "?")
-        lines.append(f"  [{item['id']}] [{item['type']}] (imp={imp}) {item['summary']}")
+        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
     return {"items": items, "text": "\n".join(lines)}
 
 
@@ -218,7 +215,7 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
     lines = [
         f"[{result['id']}] [{result['type']}]",
         f"  {result['summary']}",
-        f"  importance={result['importance']}  status={result['status']}  "
+        f"  status={result['status']}  "
         f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
         f"  created={result['created_at']}  updated={result['updated_at']}",
         f"  daily_ref={result.get('daily_ref') or '—'}",

@@ -9,14 +9,13 @@ interface ResolvedMemory {
   id: string;
   summary: string | null;
   memory_type: string | null;
-  importance: number | null;
   created_at: string | null;
 }
 
 function resolveMemories(ids: string[]): ResolvedMemory[] {
   if (!ids.length) return [];
   const placeholders = ids.map(() => "?").join(",");
-  const sql = `SELECT id, summary, memory_type, importance, created_at
+  const sql = `SELECT id, summary, memory_type, created_at
                FROM memory_items
                WHERE id IN (${placeholders})`;
   try {
@@ -28,7 +27,6 @@ function resolveMemories(ids: string[]): ResolvedMemory[] {
           id,
           summary: null,
           memory_type: null,
-          importance: null,
           created_at: null,
         },
     );
@@ -37,7 +35,6 @@ function resolveMemories(ids: string[]): ResolvedMemory[] {
       id,
       summary: null,
       memory_type: null,
-      importance: null,
       created_at: null,
     }));
   }

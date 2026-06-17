@@ -15,7 +15,7 @@ from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
 from phileas.models import MemoryItem
-from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN
+from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, seed_storage_strength
 from phileas.vector import VectorStore
 
 
@@ -92,7 +92,7 @@ def test_restudy_grows_storage_less_than_recall(sqlite_path):
 
 def test_storage_backfill_seeds_sentinel_rows_once(sqlite_path):
     db = Database(path=sqlite_path)
-    item = _save(db, summary="a", importance=8)
+    item = _save(db, summary="a", memory_type="profile")
     # Simulate a pre-migration row: -1 sentinel + prior reinforcements.
     db.conn.execute(
         "UPDATE memory_items SET storage_strength = -1.0, reinforcement_count = 3 WHERE id = ?",
@@ -103,7 +103,7 @@ def test_storage_backfill_seeds_sentinel_rows_once(sqlite_path):
     db._backfill_storage_strength()
     import math
 
-    expected = 8 / 10.0 + 0.3 * math.log(1 + 3)
+    expected = seed_storage_strength("profile") + 0.3 * math.log(1 + 3)
     seeded = db.get_item(item.id).storage_strength
     assert seeded == expected
 
@@ -124,10 +124,14 @@ def _engine(tmp_dir: Path) -> MemoryEngine:
     )
 
 
-def test_memorize_seeds_storage_from_importance(tmp_dir: Path):
+def test_memorize_seeds_storage_from_type(tmp_dir: Path):
     eng = _engine(tmp_dir)
-    res = eng.memorize("the user prefers dark mode", importance=8)
-    assert eng.db.get_item(res["id"]).storage_strength == 0.8
+    # A one-off event seeds shallower than an identity-level profile fact.
+    event = eng.memorize("met a friend for coffee", memory_type="event")
+    profile = eng.memorize("the user's name is Giao", memory_type="profile")
+    assert eng.db.get_item(event["id"]).storage_strength == seed_storage_strength("event")
+    assert eng.db.get_item(profile["id"]).storage_strength == seed_storage_strength("profile")
+    assert eng.db.get_item(profile["id"]).storage_strength > eng.db.get_item(event["id"]).storage_strength
 
 
 def test_recall_grows_storage_of_aged_memory(tmp_dir: Path):

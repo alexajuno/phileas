@@ -6,10 +6,9 @@ import { Download } from "lucide-react";
 type Props = {
   day: string;
   type: string | null;
-  min: number;
 };
 
-export function ExportMenu({ day, type, min }: Props) {
+export function ExportMenu({ day, type }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -32,7 +31,6 @@ export function ExportMenu({ day, type, min }: Props) {
   function buildHref(format: "json" | "markdown"): string {
     const params = new URLSearchParams({ format, from: day, to: day });
     if (type) params.set("type", type);
-    if (min > 1) params.set("min", String(min));
     return `/api/export?${params.toString()}`;
   }
 

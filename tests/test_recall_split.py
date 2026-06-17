@@ -59,7 +59,6 @@ def test_hydrate_resolves_id8_to_full_record(tmp_path: Path):
         id="abcd1234-5e6f-7890-abcd-ef1234567890",
         summary="the cake memory",
         memory_type="event",
-        importance=6,
         source_event_id="99887766",
     )
     out = eng.hydrate("abcd1234")  # 8-char pointer prefix
@@ -90,7 +89,7 @@ def test_hydrate_ambiguous_prefix_returns_candidates(tmp_path: Path):
 
 def test_serendipity_count_exclude_and_daily_stability(tmp_path: Path):
     eng = _engine(tmp_path)
-    ids = [_seed(eng, summary=f"memory {i}", importance=(i % 10) + 1) for i in range(20)]
+    ids = [_seed(eng, summary=f"memory {i}", storage_strength=((i % 10) + 1) / 10) for i in range(20)]
 
     out = eng.serendipity(n=3)
     assert len(out) == 3
@@ -113,6 +112,6 @@ def test_serendipity_empty_db(tmp_path: Path):
 def test_serendipity_respects_n_bounds(tmp_path: Path, n: int):
     eng = _engine(tmp_path)
     for i in range(10):
-        _seed(eng, summary=f"m{i}", importance=5)
+        _seed(eng, summary=f"m{i}")
     out = eng.serendipity(n=n)
     assert len(out) == min(n, 10)

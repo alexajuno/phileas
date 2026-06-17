@@ -20,7 +20,7 @@ export function fetchMemoriesForDay(day: string): MemoryItem[] {
   const { startIso, endIso } = localDayBoundsAsUtcIso(day);
   const rows = getDb()
     .prepare<[string, string], Row>(
-      `SELECT id, summary, memory_type, importance, status,
+      `SELECT id, summary, memory_type, status,
               access_count, reinforcement_count, last_reinforced,
               tags, daily_ref, source_session_id,
               created_at, updated_at
@@ -52,7 +52,7 @@ export function searchMemories(rawQuery: string, limit = 100): MemoryItem[] {
     params.push(like, like);
   }
 
-  const sql = `SELECT id, summary, memory_type, importance, status,
+  const sql = `SELECT id, summary, memory_type, status,
                       access_count, reinforcement_count, last_reinforced,
                       tags, daily_ref, source_session_id,
                       created_at, updated_at
@@ -72,7 +72,6 @@ export type ExportFilters = {
   from?: string; // local YYYY-MM-DD inclusive
   to?: string;   // local YYYY-MM-DD inclusive
   type?: string;
-  minImportance?: number;
 };
 
 export function fetchMemoriesForExport(filters: ExportFilters): MemoryItem[] {
@@ -93,12 +92,8 @@ export function fetchMemoriesForExport(filters: ExportFilters): MemoryItem[] {
     clauses.push("memory_type = ?");
     params.push(filters.type);
   }
-  if (filters.minImportance && filters.minImportance > 1) {
-    clauses.push("importance >= ?");
-    params.push(filters.minImportance);
-  }
 
-  const sql = `SELECT id, summary, memory_type, importance, status,
+  const sql = `SELECT id, summary, memory_type, status,
                       access_count, reinforcement_count, last_reinforced,
                       tags, daily_ref, source_session_id,
                       created_at, updated_at
@@ -115,7 +110,7 @@ export function fetchMemoriesForExport(filters: ExportFilters): MemoryItem[] {
 export function fetchMemoriesByIds(ids: string[]): MemoryItem[] {
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(",");
-  const sql = `SELECT id, summary, memory_type, importance, status,
+  const sql = `SELECT id, summary, memory_type, status,
                       access_count, reinforcement_count, last_reinforced,
                       tags, daily_ref, source_session_id,
                       created_at, updated_at

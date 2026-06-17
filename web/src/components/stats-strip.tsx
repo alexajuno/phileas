@@ -6,18 +6,12 @@ type Props = {
   items: MemoryItem[];
   selectedType: string | null;
   onSelect: (type: string | null) => void;
-  minImportance: number;
-  onMinChange: (min: number) => void;
 };
-
-const IMPORTANCE_STEPS = [1, 3, 5, 7, 9] as const;
 
 export function StatsStrip({
   items,
   selectedType,
   onSelect,
-  minImportance,
-  onMinChange,
 }: Props) {
   const counts = items.reduce<Record<string, number>>((acc, m) => {
     acc[m.memory_type] = (acc[m.memory_type] ?? 0) + 1;
@@ -66,29 +60,6 @@ export function StatsStrip({
               <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
               <span className={tone.text}>{type}</span>
               <span className="font-mono tabular-nums text-foreground">{n}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-muted-foreground">importance</span>
-        {IMPORTANCE_STEPS.map((m) => {
-          const active = minImportance === m;
-          return (
-            <button
-              key={m}
-              type="button"
-              onClick={() => onMinChange(m)}
-              aria-pressed={active}
-              className={cn(
-                "inline-flex items-center rounded-full border px-2.5 py-1 transition",
-                active
-                  ? "border-foreground/40 bg-muted/60 text-foreground ring-1 ring-foreground/20"
-                  : "border-border/60 text-muted-foreground hover:bg-muted/40",
-              )}
-            >
-              {m === 1 ? "all" : `≥ ${m}`}
             </button>
           );
         })}

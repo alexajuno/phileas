@@ -40,7 +40,7 @@ That line is `[id8] [type] date · summary · entity tags`. The summary is the w
 
 When you genuinely need more than a pointer, drill in — cheapest to most expensive:
 
-- `hydrate(id8)` — the full record of **one** memory: exact timestamps, importance/status/counts, its source turn (the raw it was distilled from), its `thread_id`, and linked entities. The inverse of the pointer trim.
+- `hydrate(id8)` — the full record of **one** memory: exact timestamps, status/counts, its source turn (the raw it was distilled from), its `thread_id`, and linked entities. The inverse of the pointer trim.
 - `thread(thread_id)` — the conversation a memory came from: its raw turns in order, each with the memories it produced. Get `thread_id` from `hydrate` first. The deepest, most expensive view.
 - `about(name)` — everything tied to an entity (also bounded).
 
@@ -109,10 +109,10 @@ Before calling `memorize`, do a quick `recall` on the core entity or topic. If a
 - **Same fact, refined or corrected** → call `update()` on the existing memory_id instead of creating a new one.
 - **Related but distinct angle** → write the new one; use `relate()` to link them.
 
-### Importance and summary
+### Summary
 
 - `summary` should be one sentence, self-contained — readable without the original turn for context.
-- `importance` ranges 0.0–1.0. Reserve ≥0.8 for things that shape how you should act going forward (strong preferences, identity, major life events). Routine facts are 0.4–0.6.
+- Pick the right `memory_type` — it seeds the memory's durability (identity-level `profile` starts deeper than a one-off `event`), and durability then grows on its own each time the memory is recalled or reinforced.
 
 ### Language
 
