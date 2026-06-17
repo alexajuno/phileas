@@ -70,6 +70,13 @@ def _fts_match_query(query: str) -> str | None:
 
 DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
 
+# Sentinel provenance ids. A memory whose source turn was never captured, or a
+# turn whose conversation was never recorded, points here, so source_event_id
+# and thread_id are never null and a thread -> event -> memory drill-down always
+# resolves to a real row. "unknown" reads as exactly that: origin not recorded.
+UNKNOWN_EVENT_ID = "unknown"
+UNKNOWN_THREAD_ID = "unknown"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_items (
     id TEXT PRIMARY KEY,
@@ -79,7 +86,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
-    source_event_id TEXT REFERENCES events(id),
+    source_event_id TEXT NOT NULL DEFAULT 'unknown' REFERENCES events(id),
     storage_strength REAL NOT NULL DEFAULT 0.5,
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
@@ -101,7 +108,7 @@ CREATE TABLE IF NOT EXISTS events (
     text TEXT NOT NULL,
     received_at TEXT NOT NULL,
     source_kind TEXT,
-    thread_id TEXT
+    thread_id TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS threads (
@@ -134,6 +141,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     summary,
     tokenize = 'unicode61'
 );
+
+-- Sentinel provenance rows. Memories and turns whose real origin was never
+-- captured point at these, so the NOT NULL source_event_id / thread_id always
+-- resolve to a row and a thread -> event -> memory drill-down never dangles.
+INSERT OR IGNORE INTO threads (id, created_at, source_kind, label)
+    VALUES ('unknown', '1970-01-01T00:00:00+00:00', 'unknown', 'unknown provenance');
+INSERT OR IGNORE INTO events (id, text, received_at, source_kind, thread_id)
+    VALUES ('unknown', '', '1970-01-01T00:00:00+00:00', 'unknown', 'unknown');
 """
 
 
@@ -195,7 +210,7 @@ class Database:
                 item.storage_strength,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
-                item.source_event_id,
+                item.source_event_id or UNKNOWN_EVENT_ID,
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
