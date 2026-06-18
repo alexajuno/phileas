@@ -53,6 +53,13 @@ mcp = FastMCP(
         "context. Only drill in when you genuinely need more, via the hydrate ladder "
         "below — don't fan out recall() dozens of times hoping for depth.\n"
         "\n"
+        "Using what you recall: a recalled memory is a prior that shapes your answer, "
+        "not content to repeat back. By default hold it: let it set your stance and "
+        "tone, and answer as if you simply know the person. Name a memory explicitly "
+        "only when the user asks about the past, or when stating it changes or grounds "
+        "the answer. Reciting what you remember to prove that you remember makes a "
+        "conversation feel bounded.\n"
+        "\n"
         "Choose tools by query type:\n"
         "- recall(query): hybrid search (keyword + semantic + graph) — for topic/entity questions.\n"
         "  Pass FOCUSED TERM QUERIES (one concept, 1–4 words: 'tennis', '<person> preferences',\n"
@@ -82,7 +89,13 @@ mcp = FastMCP(
         "  Writes are three steps: start_thread() once per conversation for a thread_id; then per turn "
         "ingest_text(text=<verbatim>, thread_id=that) to capture the raw and get an event_id, then "
         "memorize(..., source_event_id=that). A memory with no source event is refused — that link is "
-        "what lets thread() show where the memory came from."
+        "what lets thread() show where the memory came from.\n"
+        "\n"
+        "Consolidation (the abstraction layer): when recall on a topic keeps returning many near-"
+        "duplicate episodes, abstract them. Write one memory stating the gist (memorize, "
+        "memory_type='reflection'), then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes "
+        "into it. Recall then ranks that gist by how much rolls up into it and returns the summary in "
+        "place of the flood; expand(<gist>) drills back down to the episodes it covers."
     ),
 )
 
@@ -601,6 +614,46 @@ def resolve_contradiction(
         other_contexts=parsed_other,
         confidence=confidence,
     )
+
+
+@_instrumented_tool()
+def roll_up(parent_id: str, child_ids: list | str) -> str:
+    """Consolidate episodes under a higher-level memory — the reflection write.
+
+    When a cluster of memories shares a theme, synthesize one memory that states
+    the gist (via `memorize(memory_type="reflection", ...)`), then call this to
+    link each episode up into it. Recall then ranks that gist by how much rolls
+    up into it, and `expand` drills back down to the episodes. This is how
+    Phileas grows an abstraction layer over the episodic flood: you make the
+    abstraction decision, this records it.
+
+    Args:
+        parent_id: The abstraction memory's uuid or 8-char prefix (the gist).
+        child_ids: The episodes to roll up — a list (or JSON string) of memory
+            uuids / 8-char prefixes.
+    """
+    parsed = json.loads(child_ids) if isinstance(child_ids, str) else child_ids
+    return engine.roll_up(parent_id=parent_id, child_ids=parsed or [])
+
+
+@_instrumented_tool()
+def expand(memory_id: str) -> str:
+    """Drill from a reflection down to the episodes that roll up into it.
+
+    The inverse of `roll_up`: given a gist memory, list the concrete memories
+    rolling up into it, newest first. Use it to unpack a summary recall surfaced
+    when you need the specifics behind it.
+
+    Args:
+        memory_id: The reflection's uuid or 8-char prefix.
+    """
+    items = engine.expand(memory_id)
+    if not items:
+        return f"Nothing rolls up into [{memory_id[:8]}] (or no such memory)."
+    lines = [f"{len(items)} memory(ies) roll up into [{memory_id[:8]}]:"]
+    for it in items:
+        lines.append(f"  [{it['id'][:8]}] [{it.get('type', '?')}] {it.get('summary', '')}")
+    return "\n".join(lines)
 
 
 @_instrumented_tool()

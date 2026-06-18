@@ -21,7 +21,7 @@ from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Thread
-from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
+from phileas.scoring import mmr_select, retrieval_strength, rollup_score, score_components, seed_storage_strength
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
@@ -1417,6 +1417,14 @@ class MemoryEngine:
         retrieval_before: dict[str, float] = {}
         relevance_by_id: dict[str, float] = {}
         components_by_id: dict[str, dict[str, float]] = {}
+        # Roll-up lift: a memory many episodes roll up into is a gist, so nudge
+        # it above the flood it covers. In-degree is a cheap COUNT over the
+        # ROLLS_UP edges of just the surfaced set, folded in as a fifth scoring
+        # component so telemetry's decided_by can attribute a ranking to it.
+        try:
+            srt_rollup = self.graph.get_rollup_indegree([sel["id"] for sel in selected])
+        except Exception:
+            srt_rollup = {}
         for sel in selected:
             item = filtered[sel["id"]]
             relevance = sel["relevance"]
@@ -1425,6 +1433,7 @@ class MemoryEngine:
             retrieval_before[item.id] = retrieval_strength(days, item.storage_strength)
             # Weights/decay are the scoring.py defaults — single-sourced there.
             comps = score_components(relevance, item.storage_strength, days, item.access_count)
+            comps["rollup"] = rollup_score(srt_rollup.get(item.id, 0))
             components_by_id[item.id] = comps
             results.append(_item_to_dict(item, sum(comps.values())))
 
@@ -1686,6 +1695,60 @@ class MemoryEngine:
         if memory_id:
             self.graph.link_memory(memory_id, from_type, from_name)
         return f"Edge {from_name} -[{edge_type}]-> {to_name} created."
+
+    # ------------------------------------------------------------------
+    # roll_up / expand (abstraction layer)
+    # ------------------------------------------------------------------
+
+    @timed_op("roll_up")
+    def roll_up(self, parent_id: str, child_ids: list[str]) -> str:
+        """Link concrete memories up into an abstraction via ROLLS_UP edges.
+
+        The consolidation write: the host synthesizes a higher-level
+        ``reflection`` memory over a cluster of episodes (with ``memorize``),
+        then calls this to connect each episode up into that gist. Recall ranks
+        the gist by how much rolls up into it, and ``expand`` drills back down.
+        Idempotent — re-linking a pair is a no-op. Ids may be full uuids or
+        8-char pointer prefixes.
+        """
+        op_extra(parent_id=parent_id, children=len(child_ids or []))
+        parent = self._resolve_one(parent_id)
+        if isinstance(parent, str):
+            return parent
+        linked = 0
+        skipped: list[str] = []
+        for raw in child_ids or []:
+            child = self._resolve_one(raw)
+            if isinstance(child, str):
+                skipped.append(f"{raw}: {child}")
+                continue
+            if child.id == parent.id:
+                skipped.append(f"{raw}: a memory cannot roll up into itself")
+                continue
+            self.graph.link_memory_to_memory(child.id, "ROLLS_UP", parent.id)
+            linked += 1
+        msg = f"Rolled up {linked} memory(ies) into [{parent.id[:8]}] {parent.summary}."
+        if skipped:
+            msg += " Skipped: " + "; ".join(skipped)
+        return msg
+
+    @timed_op("expand")
+    def expand(self, memory_id: str) -> list[dict]:
+        """Drill from a gist down to the memories that roll up into it.
+
+        Returns the ROLLS_UP children of ``memory_id`` as active item dicts (the
+        episodes a reflection summarizes), newest first. Empty when nothing rolls
+        up into it or the id resolves to nothing.
+        """
+        op_extra(memory_id=memory_id)
+        parent = self._resolve_one(memory_id)
+        if isinstance(parent, str):
+            return []
+        child_ids = self.graph.get_rollup_children(parent.id)
+        srt_items = [self.db.get_item(cid) for cid in child_ids]
+        srt_active = [it for it in srt_items if it and it.status == "active"]
+        srt_active.sort(key=lambda it: it.created_at.timestamp() if it.created_at else 0.0, reverse=True)
+        return [_item_to_dict(it) for it in srt_active]
 
     # ------------------------------------------------------------------
     # scope (AA-118)

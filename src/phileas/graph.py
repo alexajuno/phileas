@@ -1855,6 +1855,56 @@ class GraphStore:
         finally:
             result.close()
 
+    @_locked
+    def get_rollup_indegree(self, memory_ids: list[str]) -> dict[str, int]:
+        """ROLLS_UP in-degree per memory: how many episodes roll up into each.
+
+        The abstraction-mass signal — a high count marks a gist node that covers
+        many concrete memories. Counts incoming ROLLS_UP edges (child → parent)
+        with the same COUNT-over-MATCH idiom as the entity memory_count query,
+        one indexed lookup per id (mirrors get_entities_for_memories). Ids with
+        no incoming ROLLS_UP edge are absent from the map (treat as zero).
+        """
+        out: dict[str, int] = {}
+        if not memory_ids or not self._ensure_connected():
+            return out
+        for mid in memory_ids:
+            if not mid or mid in out:
+                continue
+            result = self._conn.execute(
+                "MATCH (c:Memory)-[r:MEM_REL]->(p:Memory {id: $pid}) "
+                "WHERE r.edge_type = 'ROLLS_UP' RETURN COUNT(c) AS cnt",
+                parameters={"pid": mid},
+            )
+            try:
+                srt_cnt = int(result.get_next()[0])
+                if srt_cnt:
+                    out[mid] = srt_cnt
+            finally:
+                result.close()
+        return out
+
+    @_locked
+    def get_rollup_children(self, parent_id: str) -> list[str]:
+        """Memory ids that roll up into ``parent_id`` (its ROLLS_UP children).
+
+        The drill-down read — from a gist back to the concrete memories it
+        summarizes. Empty when nothing rolls up into it.
+        """
+        if not (parent_id and self._ensure_connected()):
+            return []
+        result = self._conn.execute(
+            "MATCH (c:Memory)-[r:MEM_REL]->(p:Memory {id: $pid}) WHERE r.edge_type = 'ROLLS_UP' RETURN c.id",
+            parameters={"pid": parent_id},
+        )
+        try:
+            children: list[str] = []
+            while result.has_next():
+                children.append(result.get_next()[0])
+            return children
+        finally:
+            result.close()
+
     # ------------------------------------------------------------------
     # Memory → Entity scoping edges (SCOPED_TO) — AA-118
     # ------------------------------------------------------------------

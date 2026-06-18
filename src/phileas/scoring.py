@@ -87,6 +87,30 @@ def storage_strength_norm(storage_strength: float) -> float:
     return 1.0 - 2.0 ** (-max(0.0, storage_strength))
 
 
+# --- Roll-up abstraction lift -----------------------------------------------
+
+# A memory that many episodes roll up into (high ROLLS_UP in-degree) is a gist:
+# recalling it returns one covering summary in place of the flood it abstracts.
+# This small additive term lifts such a gist within the surfaced set so the
+# abstraction can outrank its own children. Log-shaped, so the first few
+# children move it the most and a large hub does not swamp the relevance signal.
+# A starting value to tune against the recall metrics; set to 0.0 to turn the
+# lift off.
+ROLLUP_WEIGHT = 0.08
+
+
+def rollup_score(indegree: int, *, weight: float = ROLLUP_WEIGHT) -> float:
+    """Score contribution from ROLLS_UP in-degree (abstraction mass).
+
+    Zero for a memory with nothing rolling up into it; otherwise rises with the
+    log of the child count, normalized so ten children contribute one ``weight``
+    and the curve flattens past there.
+    """
+    if indegree <= 0:
+        return 0.0
+    return weight * math.log1p(indegree) / math.log1p(10)
+
+
 def score_components(
     relevance: float,
     storage_strength: float,

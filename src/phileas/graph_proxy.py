@@ -257,6 +257,12 @@ class GraphProxy:
     def get_contradictions_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
         return self._read("get_contradictions_for_memory", {"memory_id": memory_id}, default=[])
 
+    def get_rollup_indegree(self, memory_ids: list[str]) -> dict[str, int]:
+        return self._read("get_rollup_indegree", {"memory_ids": list(memory_ids)}, default={})
+
+    def get_rollup_children(self, parent_id: str) -> list[str]:
+        return self._read("get_rollup_children", {"parent_id": parent_id}, default=[])
+
     # -- Neighborhood / stats --
 
     def get_neighborhood(self, node_type: str, name: str, depth: int = 1) -> list[dict[str, Any]]:

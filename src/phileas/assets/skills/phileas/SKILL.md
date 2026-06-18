@@ -48,7 +48,14 @@ Rule of thumb: scan pointers → hydrate the one or two that matter → thread o
 
 ### Use the context
 
-Treat recalled memories as background context, not as content to recite. Reference them when answering only if directly relevant. Never lead a response with "Based on my memory…" — work the context in naturally.
+A recalled memory is a prior that shapes how you answer, not content to repeat back. By default it stays unspoken: let it set your stance, assumptions, and tone, so the answer reads as if you simply know the person. Reciting what you remember to show that you remember is what makes a conversation feel bounded and surveilled; a friend who knows you doesn't narrate your own history back at you to prove it.
+
+Name a recalled memory explicitly only when it earns it:
+
+- the user asks about the past ("what did we decide", "last time"), or
+- stating the fact materially changes or grounds the answer (a constraint, a decision, a date the user needs).
+
+Otherwise hold it. Never lead with "Based on my memory…", and never list what you know about someone as a preamble. Work the knowledge in silently and surface it only when it's load-bearing.
 
 ## Memorize — store new facts
 
