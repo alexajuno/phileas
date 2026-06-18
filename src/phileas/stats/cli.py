@@ -340,7 +340,6 @@ def stats_daemon(since: str, bucket: str, as_json: bool):
             [
                 ("Errors", str(data["errors"])),
                 ("Lock contentions", str(data["lock_contentions"])),
-                ("Reflect runs", str(data["reflect_runs"])),
                 ("Last start", data["last_start"] or "—"),
                 ("Last stop", data["last_stop"] or "—"),
             ],

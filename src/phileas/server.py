@@ -778,28 +778,12 @@ def _trace_recent(
 
 
 @_instrumented_tool()
-def reflect(date: str | None = None) -> str:
-    """Run daily reflection to synthesize insights from a day's memories.
-
-    Args:
-        date: Date to reflect on (YYYY-MM-DD). Defaults to today.
-    """
-    insights = engine.reflect(target_date=date)
-    if not insights:
-        return "No insights extracted (not enough data or already reflected)."
-    lines = [f"Extracted {len(insights)} insight(s):"]
-    for ins in insights:
-        lines.append(f"  [{ins.get('type', 'reflection')}] {ins['summary']}")
-    return "\n".join(lines)
-
-
-@_instrumented_tool()
 def list_day_memories(date: str | None = None) -> str:
     """List the day's active memories — the input for agent-driven reflection.
 
     Returns every active memory anchored to the given date, with no window
-    expansion. The `phileas-reflect` subagent reads this, synthesizes 1–5
-    reflection memories, and writes them back via `memorize(memory_type="reflection")`.
+    expansion. An agent reads this, synthesizes a handful of reflection
+    memories, and writes them back via `memorize(memory_type="reflection")`.
 
     Args:
         date: Date to list (YYYY-MM-DD). Defaults to today.

@@ -181,7 +181,6 @@ def test_daemon_summary(tmp_path: Path):
         ((now - timedelta(hours=2)).isoformat(), "start", None),
         ((now - timedelta(hours=1)).isoformat(), "lock_contention", None),
         ((now - timedelta(hours=1)).isoformat(), "error", '{"err":"x"}'),
-        (now.isoformat(), "reflect_run", '{"insights": 4}'),
     ]
     conn.executemany(
         "INSERT INTO daemon_events (created_at, kind, payload_json) VALUES (?,?,?)",
@@ -194,5 +193,4 @@ def test_daemon_summary(tmp_path: Path):
     out = daemon_summary(p, since=None)
     assert out["errors"] == 1
     assert out["lock_contentions"] == 1
-    assert out["reflect_runs"] == 1
     assert out["last_start"] is not None

@@ -2119,24 +2119,6 @@ class MemoryEngine:
         return [_item_to_dict(item) for item in sorted_items]
 
     # ------------------------------------------------------------------
-    # reflect
-    # ------------------------------------------------------------------
-
-    @timed_op("reflect")
-    def reflect(self, target_date: str | None = None) -> list[dict]:
-        """Deprecated: daemon-side LLM reflection was removed.
-
-        Reflections are now agent-driven: the host Claude reads the day's
-        memories (via `timeline` or MCP tools) and writes reflections back
-        via `memorize(memory_type="reflection", ...)`. This method stays as
-        a stub so the systemd cron job and existing callers don't error;
-        it returns [] immediately.
-        """
-        target_date = target_date or date.today().isoformat()
-        op_extra(date=target_date, skipped="agent_driven")
-        return []
-
-    # ------------------------------------------------------------------
     # status
     # ------------------------------------------------------------------
 

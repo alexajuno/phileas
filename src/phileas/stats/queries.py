@@ -302,7 +302,6 @@ def daemon_summary(metrics_db: Path, since: datetime | None) -> dict:
         "by_kind": by_kind,
         "errors": by_kind.get("error", 0),
         "lock_contentions": by_kind.get("lock_contention", 0),
-        "reflect_runs": by_kind.get("reflect_run", 0),
         "last_start": last_start,
         "last_stop": last_stop,
     }

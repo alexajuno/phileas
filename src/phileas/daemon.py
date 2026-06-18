@@ -35,7 +35,7 @@ _sync_pusher: SyncPusher | None = None
 # Dispatch methods that mutate the canonical (synced) store and should arm a
 # push. Events ride along incrementally on the next push, and the derived graph
 # is rebuilt on import, so neither needs its own trigger here.
-_WRITE_METHODS = frozenset({"memorize", "forget", "update", "reflect", "resolve_contradiction"})
+_WRITE_METHODS = frozenset({"memorize", "forget", "update", "resolve_contradiction"})
 
 
 def _pid_path(config: PhileasConfig) -> Path:
@@ -361,7 +361,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     except Exception:
         pass
 
-    # -- Install systemd timers for reflection + inference ---
+    # -- Install the systemd health-check timer ---
     try:
         from phileas.systemd import install_timers
 
@@ -558,9 +558,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "update":
         # Ensure backward compat: old callers pass only memory_id + summary
         return engine.update(**params)
-    elif method == "reflect":
-        target_date = params.get("date") or params.get("target_date")
-        return engine.reflect(target_date=target_date)
     elif method == "status":
         return engine.status()
     elif method == "list":
