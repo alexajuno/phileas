@@ -90,6 +90,9 @@ mcp = FastMCP(
         "ingest_text(text=<verbatim>, thread_id=that) to capture the raw and get an event_id, then "
         "memorize(..., source_event_id=that). A memory with no source event is refused — that link is "
         "what lets thread() show where the memory came from.\n"
+        "  Write summaries as attributed data, not asserted facts: store observations plainly, but "
+        "record a judgment, prediction, or opinion with its holder, date, and basis, truth left open. "
+        "A claim filed as fact has no holder; a claim filed as data names one.\n"
         "\n"
         "Consolidation (the abstraction layer): when recall on a topic keeps returning many near-"
         "duplicate episodes, abstract them. Write one memory stating the gist (memorize, "
@@ -265,10 +268,16 @@ def memorize(
     forward-prescriptive conventions ("always do X") — those belong in
     the repo's CLAUDE.md.
 
-    Write `summary` as an objective, AI-written fact — never paste raw
-    conversation verbatim. Raw turns belong in the events table: capture one
-    with `ingest_text` and reference it via `source_event_id`; memories
-    *reference* events, they don't contain them.
+    Write `summary` as attributed data, not an asserted verdict. State
+    observations plainly ("PR #202 merged"). Record a judgment, prediction,
+    or opinion with its holder, date, and basis, truth left open: "Giao
+    judged (2026-04-08) ImagenHub can't scale; basis: crowded routing
+    market." A claim filed as fact has no holder; a claim filed as data names
+    one. Record your own reframes as yours, not as the user's.
+
+    Never paste raw conversation verbatim. Raw turns belong in the events
+    table: capture one with `ingest_text` and reference it via
+    `source_event_id`; memories *reference* events, they don't contain them.
 
     Args:
         summary: What to remember (1-2 sentences, in your own words).
@@ -316,6 +325,8 @@ def memorize_batch(memories: list | str, source_event_id: str | None = None) -> 
     Same scope as `memorize`: facts that code and git won't preserve —
     personal context, patterns, life events, and project decisions with
     reasoning. Skip forward-prescriptive conventions (those go in CLAUDE.md).
+    Phrase each summary as attributed data, not an asserted fact (see
+    `memorize`).
 
     A batch usually comes from one passage: capture it once with `ingest_text`
     and pass the returned id as the batch-level `source_event_id` below — every

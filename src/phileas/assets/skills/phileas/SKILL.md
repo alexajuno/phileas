@@ -96,6 +96,27 @@ Phileas captures what the code alone and git alone will not preserve. **Archaeol
 - **Anything already in `CLAUDE.md` or the repo's own docs.**
 - **Fix recipes from debugging** — the commit explains the fix; don't mirror it in memory.
 
+### Record claims as attributed data, not asserted facts
+
+A summary records *what is so*, not a verdict on *what is true*. Much of what people say is judgment, prediction, or opinion, not checkable fact. File those as attributed data: name who holds the view, when, and on what basis, and leave the truth-value open. Evidence may overturn it later.
+
+Run one test before writing each summary:
+
+- **Checkable?** ("PR #202 merged", "Giao moved to Hanoi in May") → store it plainly. It's an observation.
+- **A judgment, prediction, or opinion?** ("ImagenHub can't scale", "no one understands routing") → attribute it. A claim filed as fact has no holder; a claim filed as data names one.
+
+The move is mechanical. Give the claim a subject, a date, and its basis:
+
+- ✗ `ImagenHub can't scale standalone.`
+- ✓ `Giao judged (2026-04-08) ImagenHub can't scale standalone; basis: routing market crowded, no special moat. (truth open)`
+
+Treat inference the same way. The observation is data; the conclusion drawn from it is a held view, attributed to whoever drew it:
+
+- ✗ `Development on the AI router is stale.`
+- ✓ `Giao read the AI router as stalling, from: its last PR sat unreviewed 12 days.`
+
+Record your own reframes as yours, never as something the user asserted. And don't let conviction inflate durability: a firmly-held opinion is still one `knowledge` data point, not a `profile` or `behavior` truth; fold the conviction into the record ("Giao is certain that…") rather than promoting the claim.
+
 ### Memory types
 
 Pass `memory_type` as exactly one of these five — anything else stores but won't match recall's type filter:
