@@ -94,12 +94,6 @@ CREATE TABLE IF NOT EXISTS memory_items (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS processed_sessions (
-    session_id TEXT PRIMARY KEY,
-    file_path TEXT NOT NULL,
-    processed_at TEXT NOT NULL
-);
-
 -- A raw turn. ``source_kind`` records the surface that captured it, so health
 -- can track per-source recency. ``thread_id`` is the conversation it belongs
 -- to: a thread is the ordered run of turns sharing this id.
@@ -350,26 +344,6 @@ class Database:
             FROM memory_items"""
         ).fetchone()
         return {"total": row["total"], "active": row["active"] or 0, "archived": row["archived"] or 0}
-
-    # --- Processed Sessions ---
-
-    @_locked
-    def is_session_processed(self, session_id: str) -> bool:
-        row = self.conn.execute("SELECT 1 FROM processed_sessions WHERE session_id = ?", (session_id,)).fetchone()
-        return row is not None
-
-    @_locked
-    def mark_session_processed(self, session_id: str, file_path: str) -> None:
-        self.conn.execute(
-            "INSERT OR IGNORE INTO processed_sessions (session_id, file_path, processed_at) VALUES (?, ?, ?)",
-            (session_id, file_path, datetime.now(timezone.utc).isoformat()),
-        )
-        self.conn.commit()
-
-    @_locked
-    def get_processed_session_count(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) as cnt FROM processed_sessions").fetchone()
-        return row["cnt"]
 
     # --- Timeline ---
 

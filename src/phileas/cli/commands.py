@@ -580,9 +580,7 @@ def ingest(source: str):
 
     To ingest text into Phileas now, use Claude Code: open a session, paste
     the text (or reference the file), and ask the host Claude to extract
-    memories and call the Phileas `memorize` MCP tool for each. The
-    `ingest_session` MCP tool handles the same flow for Claude Code
-    JSONL session files.
+    memories and call the Phileas `memorize` MCP tool for each.
     """
     _ = source  # preserved for CLI signature compat
     print_error(

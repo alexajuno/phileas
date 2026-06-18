@@ -562,9 +562,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         target_date = params.get("date") or params.get("target_date")
         return engine.reflect(target_date=target_date)
     elif method == "status":
-        stats = engine.status()
-        stats["sessions_processed"] = engine.db.get_processed_session_count()
-        return stats
+        return engine.status()
     elif method == "list":
         memory_type = params.get("memory_type")
         limit = params.get("limit", 20)

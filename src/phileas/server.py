@@ -16,14 +16,11 @@ Tools:
   - hydrate: full record of one memory by id/id8 — the drill-in for a pointer
   - serendipity: N high-signal memories NOT gated on query relevance
   - recall with memory_type="profile": get profile-type memories (ranked)
-  - ingest_session: parse a JSONL session for Claude Code to extract from
-  - mark_session_done: mark a session as processed
   - status: system health/stats
 """
 
 import functools
 import json
-from pathlib import Path
 from time import perf_counter
 
 from mcp.server.fastmcp import FastMCP
@@ -758,71 +755,6 @@ def list_day_memories(date: str | None = None) -> str:
 
 
 @_instrumented_tool()
-def ingest_session(session_path: str) -> str:
-    """Parse a Claude Code JSONL session file and return its conversation text.
-
-    Claude Code should then extract memories from the returned text and call
-    memorize() for each one. Call mark_session_done() when extraction is complete.
-
-    Args:
-        session_path: Absolute path to the .jsonl session file.
-    """
-    from phileas.ingest import parse_session_jsonl
-
-    path = Path(session_path)
-    session_id = path.stem
-
-    if db.is_session_processed(session_id):
-        return f"Session {session_id} already processed. Skipping."
-
-    if not path.exists():
-        return f"File not found: {session_path}"
-
-    messages = parse_session_jsonl(path)
-    if not messages:
-        return f"No messages found in {session_path}."
-
-    lines = [f"Session: {session_id}", f"Messages: {len(messages)}", "---"]
-    for msg in messages:
-        role = msg["role"].upper()
-        content = msg["content"]
-        # Truncate very long messages for readability
-        if len(content) > 2000:
-            content = content[:2000] + "... [truncated]"
-        lines.append(f"{role}: {content}")
-        lines.append("")
-
-    lines.append("---")
-    lines.append(
-        "Extract memories from above and call memorize() for each. "
-        "Write all summaries in English; translate VN/mixed-language turns "
-        "and preserve proper nouns."
-    )
-    lines.append(f"Then call mark_session_done('{session_path}') to mark as processed.")
-    return "\n".join(lines)
-
-
-@_instrumented_tool()
-def mark_session_done(session_path: str) -> str:
-    """Mark a session as processed so it won't be ingested again.
-
-    Call this after extracting memories from ingest_session().
-
-    Args:
-        session_path: Absolute path to the .jsonl session file (same as passed to ingest_session).
-    """
-    path = Path(session_path)
-    session_id = path.stem
-
-    if db.is_session_processed(session_id):
-        return f"Session {session_id} was already marked as processed."
-
-    db.mark_session_processed(session_id, file_path=session_path)
-    total = db.get_processed_session_count()
-    return f"Session {session_id} marked as processed. Total processed sessions: {total}."
-
-
-@_instrumented_tool()
 def start_thread(label: str | None = None, client_key: str | None = None, source_kind: str = "agent") -> dict:
     """Open (or resume) a conversation thread — the frame a run of turns lives in.
 
@@ -966,7 +898,6 @@ def alias(name: str, alias: str, entity_type: str | None = None) -> str:
 def status() -> str:
     """Get system health and memory statistics."""
     stats = engine.status()
-    processed_count = db.get_processed_session_count()
 
     graph_nodes = stats.get("graph_nodes", 0)
     graph_edges = stats.get("graph_edges", 0)
@@ -987,5 +918,4 @@ def status() -> str:
     else:
         lines.append(f"Graph nodes:        {graph_nodes}")
         lines.append(f"Graph edges:        {graph_edges}")
-    lines.append(f"Sessions processed: {processed_count}")
     return "\n".join(lines)
