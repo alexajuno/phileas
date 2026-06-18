@@ -94,11 +94,13 @@ mcp = FastMCP(
         "record a judgment, prediction, or opinion with its holder, date, and basis, truth left open. "
         "A claim filed as fact has no holder; a claim filed as data names one.\n"
         "\n"
-        "Consolidation (the abstraction layer): when recall on a topic keeps returning many near-"
-        "duplicate episodes, abstract them. Write one memory stating the gist (memorize, "
-        "memory_type='reflection'), then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes "
-        "into it. Recall then ranks that gist by how much rolls up into it and returns the summary in "
-        "place of the flood; expand(<gist>) drills back down to the episodes it covers."
+        "Consolidation (the abstraction layer): when one entity (a person, project, or activity) "
+        "has accumulated many episodes, abstract them. Identify the distinct threads across the "
+        "cluster, then write one concise memory covering each (memorize, memory_type='reflection', "
+        "entities=[the entity]); a tight, focused summary stands in better than a long, term-stuffed "
+        "one. Then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes into it. A broad "
+        "query that gathers most of the cluster collapses the episodes into the gist and surfaces it "
+        "in their place; expand(<gist>) drills back down to the episodes it covers."
     ),
 )
 
