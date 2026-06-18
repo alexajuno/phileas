@@ -21,7 +21,7 @@ from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Thread
-from phileas.scoring import mmr_select, retrieval_strength, rollup_score, score_components, seed_storage_strength
+from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.vector import VectorStore
@@ -74,6 +74,17 @@ RECALL_POOL = 200
 # See research/phileas/recall-path-attribution.md.
 PATH3B_MAX_SEEDS = 30
 PATH4_MAX_SEEDS = 30
+
+# Roll-up collapse (Path 6). When a recall gathers the memories that roll up into
+# one summary, fold that flood into the summary instead of returning it: drop the
+# gathered children, surface the gist in their place. The gate is the query's own
+# breadth, read structurally as coverage = (gathered children of a gist) / (all
+# its children). A broad query lights up most of the cluster and collapses; a
+# narrow one lights up a sliver and stays below the gate, so its specific episode
+# is returned untouched. These are structural thresholds on a ratio, not a score
+# weight added to a ranking. COLLAPSE only runs on an untyped recall.
+ROLLUP_COLLAPSE_COVERAGE = 0.5  # surface the gist once this share of its children is gathered
+ROLLUP_COLLAPSE_MIN_CHILDREN = 2  # never collapse a gist on a single gathered child
 
 # Context-aware recall (see docs/contextual-knowledge-design.md). Additive deltas
 # applied to a candidate's stage-2 relevance once an active ``context=`` is
@@ -1106,6 +1117,43 @@ class MemoryEngine:
                     candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
         _mark("events")
 
+        # Path 6: roll-up collapse — fold a gathered flood into its gist.
+        # Walk ROLLS_UP up from the gathered memories to their covering summaries.
+        # When the gather lit up enough of a summary's cluster (coverage past the
+        # gate), the query is broad enough that the summary stands in for those
+        # children: drop them and surface the gist in their place, marked as a
+        # graph hit like any structurally-surfaced candidate. A narrow query lights
+        # up only a sliver, stays below the gate, and its episodes pass through
+        # untouched. This reads the query's own breadth structurally instead of
+        # nudging the gist's score. Skipped on a typed recall (a memory_type filter
+        # could drop a surfaced reflection and lose its children with it).
+        if not memory_type and candidates:
+            try:
+                rollup_parents = self.graph.get_rollup_parents(list(candidates))
+            except Exception:
+                rollup_parents = {}
+            if rollup_parents:
+                gathered_by_parent: dict[str, set[str]] = {}
+                for child_id, parent_ids in rollup_parents.items():
+                    for parent_id in parent_ids:
+                        gathered_by_parent.setdefault(parent_id, set()).add(child_id)
+                child_totals = self.graph.get_rollup_indegree(list(gathered_by_parent))
+                for parent_id, gathered in gathered_by_parent.items():
+                    total = child_totals.get(parent_id, 0)
+                    if total <= 0 or len(gathered) < ROLLUP_COLLAPSE_MIN_CHILDREN:
+                        continue
+                    if len(gathered) / total < ROLLUP_COLLAPSE_COVERAGE:
+                        continue
+                    parent_item = candidates.get(parent_id) or self.db.get_item(parent_id)
+                    if not parent_item or parent_item.status != "active":
+                        continue
+                    for child_id in gathered:
+                        candidates.pop(child_id, None)
+                    candidates[parent_id] = parent_item
+                    graph_ids.add(parent_id)
+                    candidate_hop[parent_id] = min(candidate_hop.get(parent_id, 99), 1)
+            _mark("rollup_collapse")
+
         # Apply filters
         filtered: dict[str, MemoryItem] = {}
         for mem_id, item in candidates.items():
@@ -1417,14 +1465,6 @@ class MemoryEngine:
         retrieval_before: dict[str, float] = {}
         relevance_by_id: dict[str, float] = {}
         components_by_id: dict[str, dict[str, float]] = {}
-        # Roll-up lift: a memory many episodes roll up into is a gist, so nudge
-        # it above the flood it covers. In-degree is a cheap COUNT over the
-        # ROLLS_UP edges of just the surfaced set, folded in as a fifth scoring
-        # component so telemetry's decided_by can attribute a ranking to it.
-        try:
-            srt_rollup = self.graph.get_rollup_indegree([sel["id"] for sel in selected])
-        except Exception:
-            srt_rollup = {}
         for sel in selected:
             item = filtered[sel["id"]]
             relevance = sel["relevance"]
@@ -1433,7 +1473,6 @@ class MemoryEngine:
             retrieval_before[item.id] = retrieval_strength(days, item.storage_strength)
             # Weights/decay are the scoring.py defaults — single-sourced there.
             comps = score_components(relevance, item.storage_strength, days, item.access_count)
-            comps["rollup"] = rollup_score(srt_rollup.get(item.id, 0))
             components_by_id[item.id] = comps
             results.append(_item_to_dict(item, sum(comps.values())))
 

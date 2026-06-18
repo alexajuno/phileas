@@ -1905,6 +1905,34 @@ class GraphStore:
         finally:
             result.close()
 
+    @_locked
+    def get_rollup_parents(self, memory_ids: list[str]) -> dict[str, list[str]]:
+        """For each memory, the gist(s) it rolls up into (its ROLLS_UP parents).
+
+        The up-hop recall uses to fold a gathered flood into its covering summary.
+        Walks ROLLS_UP from child to parent, one indexed lookup per id (mirrors
+        get_entities_for_memories). Memories with no ROLLS_UP parent are absent.
+        """
+        out: dict[str, list[str]] = {}
+        if not memory_ids or not self._ensure_connected():
+            return out
+        for mid in memory_ids:
+            if not mid or mid in out:
+                continue
+            result = self._conn.execute(
+                "MATCH (c:Memory {id: $cid})-[r:MEM_REL]->(p:Memory) WHERE r.edge_type = 'ROLLS_UP' RETURN p.id",
+                parameters={"cid": mid},
+            )
+            try:
+                parents: list[str] = []
+                while result.has_next():
+                    parents.append(result.get_next()[0])
+                if parents:
+                    out[mid] = parents
+            finally:
+                result.close()
+        return out
+
     # ------------------------------------------------------------------
     # Memory → Entity scoping edges (SCOPED_TO) — AA-118
     # ------------------------------------------------------------------

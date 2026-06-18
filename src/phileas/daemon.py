@@ -708,6 +708,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.get_rollup_indegree(params["memory_ids"])
         elif op == "get_rollup_children":
             return graph.get_rollup_children(params["parent_id"])
+        elif op == "get_rollup_parents":
+            return graph.get_rollup_parents(params["memory_ids"])
         elif op == "get_memories_in_context":
             return graph.get_memories_in_context(params["context"])
         elif op == "resolve_context":

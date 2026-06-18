@@ -16,14 +16,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
 from phileas.models import MemoryItem
-from phileas.scoring import rollup_score
 from phileas.vector import VectorStore
 
 
@@ -132,41 +129,54 @@ def test_expand_empty_when_no_children(tmp_dir: Path):
     assert eng.expand(gist) == []
 
 
-# --- ranking: the in-degree lift -------------------------------------------
+# --- collapse: the coverage-gated up-hop ------------------------------------
 
 
-def test_rollup_lift_ranks_gist_over_equal_peer(tmp_dir: Path):
-    """A gist that many episodes roll up into outranks an equally-relevant peer.
-
-    Both memories carry identical query-matching content, so every intrinsic
-    scoring signal (relevance, storage, retrieval, access) is equal between them.
-    The only difference is the ROLLS_UP in-degree, so the gap is the abstraction
-    lift in isolation — the retrieval-at-scale behavior: the summary outranks the
-    flood it covers.
-    """
+def test_broad_query_collapses_flood_into_gist(tmp_dir: Path):
+    """A broad query lights up most of a cluster, so recall returns the gist in
+    place of the episodes that roll up into it."""
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    gist = _seed(eng, "router work happens in this repo")
-    peer = _seed(eng, "router work happens in this repo")
-    # Episodes rolling up into the gist; their content is unrelated to the query
-    # so they don't themselves compete for the surfaced set.
-    kids = [_seed(eng, f"unrelated note {i} on gardening and weather") for i in range(5)]
+    gist = _seed(eng, "Recurring sleep patterns: blue light, caffeine, late nights", memory_type="reflection")
+    kids = [_seed(eng, f"sleep entry {i}: blue light and late caffeine") for i in range(6)]
     eng.roll_up(gist, kids)
 
-    scores = {r["id"]: r["score"] for r in eng.recall("router", top_k=10)}
-    assert gist in scores and peer in scores
-    # The two share every intrinsic signal, so the whole gap is the in-degree
-    # lift for five children — nothing else.
-    assert scores[gist] - scores[peer] == pytest.approx(rollup_score(5), abs=1e-6)
+    ids = [r["id"] for r in eng.recall("sleep", top_k=10)]
+    assert gist in ids  # the gist stands in for the flood
+    assert sum(1 for k in kids if k in ids) <= 1  # children folded away
 
 
-def test_no_rollup_no_lift(tmp_dir: Path):
-    """With nothing rolled up, two identical memories score equally: the lift is
-    strictly opt-in and doesn't perturb the baseline."""
+def test_narrow_query_keeps_episode_not_gist(tmp_dir: Path):
+    """A narrow query lights up one facet, stays below the coverage gate, and its
+    specific episode is returned and outranks the gist (no cannibalization)."""
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
-    a = _seed(eng, "router work happens in this repo")
-    b = _seed(eng, "router work happens in this repo")
+    facets = [
+        "blue light at night",
+        "too much caffeine",
+        "late nights working",
+        "skipping exercise",
+        "bright phone screens",
+    ]
+    gist = _seed(eng, "Recurring sleep patterns: " + ", ".join(facets), memory_type="reflection")
+    kids = [_seed(eng, f"sleep entry: {f}") for f in facets]
+    eng.roll_up(gist, kids)
 
-    scores = {r["id"]: r["score"] for r in eng.recall("router", top_k=10)}
-    assert scores[a] == pytest.approx(scores[b], abs=1e-6)
+    ids = [r["id"] for r in eng.recall("caffeine", top_k=10)]
+    assert kids[1] in ids  # the specific caffeine episode survives
+    if gist in ids:  # and the gist never outranks it
+        assert ids.index(kids[1]) < ids.index(gist)
+
+
+def test_collapse_skipped_on_typed_recall(tmp_dir: Path):
+    """A memory_type filter could drop a surfaced reflection and lose its children
+    with it, so collapse is inert when a type is requested."""
+    eng = _engine(tmp_dir)
+    _seed_corpus(eng)
+    gist = _seed(eng, "Recurring sleep patterns: blue light, caffeine, late nights", memory_type="reflection")
+    kids = [_seed(eng, f"sleep entry {i}: blue light and late caffeine", memory_type="event") for i in range(6)]
+    eng.roll_up(gist, kids)
+
+    ids = [r["id"] for r in eng.recall("sleep", top_k=10, memory_type="event")]
+    assert gist not in ids  # reflection filtered out, not collapsed into
+    assert sum(1 for k in kids if k in ids) >= 2  # episodes returned untouched

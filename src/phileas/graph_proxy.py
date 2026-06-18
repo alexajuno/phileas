@@ -263,6 +263,9 @@ class GraphProxy:
     def get_rollup_children(self, parent_id: str) -> list[str]:
         return self._read("get_rollup_children", {"parent_id": parent_id}, default=[])
 
+    def get_rollup_parents(self, memory_ids: list[str]) -> dict[str, list[str]]:
+        return self._read("get_rollup_parents", {"memory_ids": list(memory_ids)}, default={})
+
     # -- Neighborhood / stats --
 
     def get_neighborhood(self, node_type: str, name: str, depth: int = 1) -> list[dict[str, Any]]:
