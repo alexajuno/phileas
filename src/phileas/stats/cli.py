@@ -238,7 +238,7 @@ def stats_tools(since: str, bucket: str, as_json: bool):
 @stats.command("bounds")
 @_shared_flags
 def stats_bounds(since: str, bucket: str, as_json: bool):
-    """recall_recent output bounds (AA-112) — per-layer fire rate + savings."""
+    """recall_recent output: summary-clip fire rate + savings."""
     cfg = load_config()
     since_dt, _, _ = _resolve_window(since)
     metrics_db = cfg.home / "metrics.db"
@@ -260,26 +260,18 @@ def stats_bounds(since: str, bucket: str, as_json: bool):
             ],
         )
     )
-    t = Table(title="Per layer — bounds set in recall_format.py (POINTER_SUMMARY_CHARS / RECENT_MAX_CHARS; 0 = off)")
-    for col in ("Layer", "Fired", "Fire rate", "Effect"):
+    t = Table(title="Summary clip (POINTER_SUMMARY_CHARS in recall_format.py; 0 = off)")
+    for col in ("Fired", "Fire rate", "Effect"):
         t.add_column(col)
     trunc = data["truncation"]
-    budget = data["budget"]
     t.add_row(
-        "1 · summary truncation",
         str(trunc["fired_calls"]),
         f"{trunc['fire_rate']:.0%}",
         f"{trunc['memories_truncated']:,} summaries clipped, {trunc['chars_saved']:,} chars saved",
     )
-    t.add_row(
-        "2 · output-char budget",
-        str(budget["fired_calls"]),
-        f"{budget['fire_rate']:.0%}",
-        f"{budget['memories_dropped']:,} pointers dropped",
-    )
     render.console.print(t)
     if data["uninstrumented"]:
-        render.console.print(f"[dim]{data['uninstrumented']} pre-AA-112 calls without bounds counters excluded.[/dim]")
+        render.console.print(f"[dim]{data['uninstrumented']} calls without bounds counters excluded.[/dim]")
 
 
 @stats.command("ingest")

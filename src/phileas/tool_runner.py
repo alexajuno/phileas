@@ -26,13 +26,10 @@ from typing import Callable
 from phileas.recall_format import (
     ABOUT_MAX,
     POINTER_SUMMARY_CHARS,
-    RECENT_MAX,
-    RECENT_MAX_CHARS,
-    cap_day_blocks,
+    day_header,
     id8,
     pointer_line,
     render_pointers,
-    select_recent,
 )
 
 EntitiesFn = Callable[[list[dict]], dict[str, list[dict]]]
@@ -60,7 +57,6 @@ def recall_recent(
     entities_fn: EntitiesFn,
     *,
     days: int = 7,
-    top_per_day: int = 10,
 ) -> ToolResult:
     end = _date.today()
     start = end - timedelta(days=days)
@@ -73,58 +69,36 @@ def recall_recent(
         day = (item.get("created_at") or "")[:10]
         by_day[day].append(item)
 
-    # Pass 1: each day's memories under a hard global count cap, newest day first,
-    # so a heavy day can't overflow the context.
-    recent_max = RECENT_MAX
-    per_day, selected, truncated = select_recent(
-        by_day,
-        top_per_day=top_per_day,
-        recent_max=recent_max,
-    )
+    # Newest day first, newest memory within a day first.
+    ordered: list[dict] = []
+    day_blocks: list[tuple[str, list[dict]]] = []
+    for day in sorted(by_day.keys(), reverse=True):
+        day_items = sorted(by_day[day], key=lambda x: x.get("created_at") or "", reverse=True)
+        ordered.extend(day_items)
+        day_blocks.append((day, day_items))
 
-    # Pass 2: render pointers (entity tags batched across the whole selection; no
-    # per-line date — the day header carries it), with layer 1 — per-summary
-    # clipping (0 = off; full body one hydrate() away).
+    # Entity tags batched across the whole window; no per-line date, the day
+    # header carries it. Each summary is clipped to a readable width with the
+    # full body one hydrate() away.
     clip = POINTER_SUMMARY_CHARS
-    ents = entities_fn(selected)
-    blocks = [
-        (day, day_total, [pointer_line(it, ents, show_date=False, max_summary_chars=clip) for it in top])
-        for day, day_total, top in per_day
-    ]
-
-    # Pass 3: layer 2 — hard char budget on the rendered output (0 = off). The
-    # count cap bounds the wrong axis when summaries run long (a few dozen × ~1k
-    # chars overruns the MCP token ceiling); this bounds what actually lands in
-    # context.
-    head = f"Recent memories (last {days} day(s)):"
-    budget = RECENT_MAX_CHARS
-    footer_reserve = 200  # headroom for the head line + one footer line
-    body_budget = max(1, budget - len(head) - footer_reserve) if budget > 0 else 0
-    body_lines, budget_dropped, size_capped = cap_day_blocks(blocks, max_chars=body_budget)
-    lines = [head, *body_lines]
-    if size_capped:
-        lines.append(
-            f"\n… size-capped at {budget} chars — +{budget_dropped} more in window "
-            "(narrow `days`, or drill in with timeline / list_day_memories)."
-        )
-    if truncated:
-        lines.append(f"\n… capped at {recent_max} memories — narrow with `days` or use timeline for a fuller window.")
+    ents = entities_fn(ordered)
+    lines = [f"Recent memories (last {days} day(s)):"]
+    for day, day_items in day_blocks:
+        lines.append(day_header(day, len(day_items)))
+        lines.extend(pointer_line(it, ents, show_date=False, max_summary_chars=clip) for it in day_items)
     output = "\n".join(lines)
 
-    # Per-layer effectiveness counters — carried out to the caller's trace and
-    # surfaced by `phileas stats bounds` so each layer proves itself (or gets
-    # turned off).
-    summary_lens = [len((it.get("summary") or "").strip()) for it in selected]
+    # Per-summary clip effectiveness, carried to the caller's trace and surfaced
+    # by `phileas stats bounds`.
+    summary_lens = [len((it.get("summary") or "").strip()) for it in ordered]
     bounds = {
         "pointer_summary_chars": clip,
-        "recent_max_chars": budget,
         "summaries_truncated": sum(1 for n in summary_lens if clip > 0 and n > clip),
         "trim_saved_chars": sum(n - clip for n in summary_lens if clip > 0 and n > clip),
-        "budget_dropped": budget_dropped,
         "output_chars": len(output),
     }
 
-    return {"items": selected, "text": output, "bounds": bounds}
+    return {"items": ordered, "text": output, "bounds": bounds}
 
 
 def timeline(

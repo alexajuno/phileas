@@ -1,30 +1,20 @@
-"""Pure pointer formatting + recall output bounding (AA-106, AA-112).
+"""Pointer formatting for the recall-family tools.
 
-No IO, no engine, no graph — this module just turns memory dicts into cheap
-pointer lines and bounds the output. Kept dependency-free so the formatting and
-the overflow caps are unit-testable without standing up the engine. The graph
-round-trip that fetches entity tags lives in the caller
+No IO, no engine, no graph: this module turns memory dicts into cheap pointer
+lines. Kept dependency-free so the formatting is unit-testable without standing
+up the engine. The graph round-trip that fetches entity tags lives in the caller
 (``server._entities_for``); these functions take the entity map as data.
 
-Two independently togglable bounding layers (AA-112 — each is an experiment,
-verify via `phileas stats bounds` before trusting it):
-
-- Layer 1: per-summary truncation (``max_summary_chars``, 0 = off) — a pointer
-  is a locator, not the body; the full summary is one hydrate() away.
-- Layer 2: cumulative output-char budget for recall_recent (``cap_day_blocks``,
-  ``max_chars`` 0 = off) — the hard guarantee against the MCP token ceiling,
-  whatever individual summaries look like.
+A pointer is a locator, not the body. ``max_summary_chars`` clips each summary
+to a readable width, with the full text one hydrate() away.
 """
 
 from __future__ import annotations
 
-# Recall output bounds — never hand-tuned; the rationale for each layer lives in
-# the module docstring above (the count cap vs. the output-size cap). Set a
-# constant to 0 to disable that layer.
-RECENT_MAX = 40  # hard cap on memories recall_recent returns
-ABOUT_MAX = 25  # cap on memories about() returns before a "+N more" footer
-POINTER_SUMMARY_CHARS = 200  # layer 1: clip each pointer summary (0 = off)
-RECENT_MAX_CHARS = 10_000  # layer 2: recall_recent total output budget (0 = off)
+# How many memories about() lists before a "+N more" footer.
+ABOUT_MAX = 25
+# Clip each pointer summary to this width (0 shows the whole summary).
+POINTER_SUMMARY_CHARS = 200
 
 
 def id8(memory_id: str) -> str:
@@ -49,10 +39,10 @@ def pointer_line(
     """One memory as ``[id8] [type] <date> · <summary> · <entity tags>``.
 
     The uuid tail and the score/event/time-of-day metadata are
-    dropped. ``max_summary_chars`` > 0 clips the summary with an ellipsis
-    (AA-112 layer 1) — the full body stays one hydrate() away; 0 shows it
-    whole. ``show_date`` is False for day-grouped callers (recall_recent)
-    where a per-line date is redundant.
+    dropped. ``max_summary_chars`` > 0 clips the summary with an ellipsis,
+    leaving the full body one hydrate() away; 0 shows it whole.
+    ``show_date`` is False for day-grouped callers (recall_recent) where a
+    per-line date is redundant.
     """
     mid = item.get("id", "")
     head = f"[{id8(mid)}] [{item.get('type', '?')}]"
@@ -79,89 +69,5 @@ def render_pointers(
     return [pointer_line(it, entities_by_id, show_date=show_date, max_summary_chars=max_summary_chars) for it in items]
 
 
-def select_recent(
-    by_day: dict[str, list[dict]],
-    *,
-    top_per_day: int,
-    recent_max: int,
-) -> tuple[list[tuple[str, int, list[dict]]], list[dict], bool]:
-    """Pick each day's memories newest-first under a hard global cap.
-
-    Returns ``(per_day, selected, truncated)`` where ``per_day`` is a list of
-    ``(day, day_total, top_items)``. The global ``recent_max`` cap is what stops
-    a heavy day from overflowing the context (AA-106 — this path blew up at 81k
-    chars); ``top_per_day`` bounds each day.
-
-    Placeholder ranking: intra-day order is plain recency and the cut is the
-    newest ``top_per_day``. The proper "catch me up" selection — what to keep
-    when a day overflows, weighing durability and centrality rather than arrival
-    order — is deferred work tracked in the issue tracker.
-    """
-    per_day: list[tuple[str, int, list[dict]]] = []
-    selected: list[dict] = []
-    truncated = False
-    for day in sorted(by_day.keys(), reverse=True):
-        if len(selected) >= recent_max:
-            truncated = True
-            break
-        day_items = by_day[day]
-        top = sorted(day_items, key=lambda x: x.get("created_at") or "", reverse=True)
-        if len(top) > top_per_day:
-            top = top[:top_per_day]
-            truncated = True
-        remaining = recent_max - len(selected)
-        if len(top) > remaining:
-            top = top[:remaining]
-            truncated = True
-        selected.extend(top)
-        per_day.append((day, len(day_items), top))
-    return per_day, selected, truncated
-
-
-def _day_header(day: str, day_total: int, showing: int) -> str:
-    return f"\n{day} ({day_total} total, showing {showing}):"
-
-
-def cap_day_blocks(
-    blocks: list[tuple[str, int, list[str]]],
-    *,
-    max_chars: int,
-) -> tuple[list[str], int, bool]:
-    """Flatten ``(day, day_total, rendered_lines)`` blocks under a char budget.
-
-    AA-112 layer 2 — the hard size bound on recall_recent's rendered output.
-    Counts what actually lands in context (day headers + pointer lines +
-    newlines), so it holds regardless of summary or entity-tag length. Walks
-    blocks in the order given (newest day first), stops before the budget is
-    exceeded, and reports what it cut. ``max_chars`` <= 0 disables the cap
-    (layer toggle).
-
-    Returns ``(lines, dropped, size_capped)`` where ``dropped`` is the number
-    of pointer lines not emitted.
-    """
-    out: list[str] = []
-    used = 0
-    dropped = 0
-    capped = False
-    for day, day_total, lines in blocks:
-        if capped:
-            dropped += len(lines)
-            continue
-        take: list[str] = []
-        body = 0
-        for line in lines:
-            # Budget against the header as it would read with this line added;
-            # the final header (same count or lower) is never longer.
-            header_cost = len(_day_header(day, day_total, len(take) + 1)) + 1
-            if max_chars > 0 and used + header_cost + body + len(line) + 1 > max_chars:
-                capped = True
-                break
-            take.append(line)
-            body += len(line) + 1
-        dropped += len(lines) - len(take)
-        if take:
-            header = _day_header(day, day_total, len(take))
-            out.append(header)
-            out.extend(take)
-            used += len(header) + 1 + body
-    return out, dropped, capped
+def day_header(day: str, count: int) -> str:
+    return f"\n{day} ({count}):"
