@@ -1,6 +1,6 @@
 [project]
 name = "phileas-memory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first long-term memory for AI companions"
 readme = "README.md"
 license = "MIT"
