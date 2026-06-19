@@ -1241,14 +1241,15 @@ class MemoryEngine:
             for mem_id in filtered:
                 relevance_map[mem_id] = raw[mem_id] / top if top > 1e-12 else 0.5
 
-            # Optional post-fusion rerank (PHILEAS_RERANK). Fusion decides candidacy;
-            # the cross-encoder makes the final precision call over the fused head —
-            # including the keyword/structural hits the floor path routes around. It
-            # repairs the dense leg's mistakes: a low-cosine exact-term match (the
-            # "Sweden" case) that RRF buries gets re-judged with the query in view and
-            # lifted back to the top. Consumed by RANK, not absolute score — its
-            # ranking on personal text is reliable where its sigmoid is not.
-            rerank_mode, rr_k, rr_pool = resolve_rerank()
+            # Post-fusion rerank, on by default (set PHILEAS_RERANK=off to skip).
+            # Fusion decides candidacy; the cross-encoder makes the final precision
+            # call over the fused head, including the keyword/structural hits the
+            # floor path routes around. It repairs the dense leg's mistakes: a
+            # low-cosine exact-term match (the "Sweden" case) that RRF buries gets
+            # re-judged with the query in view and lifted back to the top. Consumed
+            # by rank, not absolute score: its ranking on personal text is reliable
+            # where its sigmoid is not.
+            rerank_mode, rr_k, rr_pool = resolve_rerank(default="rank")
             if rerank_mode == "rank":
                 from phileas.reranker import rerank
 
