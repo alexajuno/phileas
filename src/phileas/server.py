@@ -100,7 +100,15 @@ mcp = FastMCP(
         "entities=[the entity]); a tight, focused summary stands in better than a long, term-stuffed "
         "one. Then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes into it. A broad "
         "query that gathers most of the cluster collapses the episodes into the gist and surfaces it "
-        "in their place; expand(<gist>) drills back down to the episodes it covers."
+        "in their place; expand(<gist>) drills back down to the episodes it covers. "
+        "A recall that ends with a '↳ … aren't rolled up into a gist yet' line is your in-the-moment "
+        "cue that this theme's cluster has grown past what's surfaced. recall only signals it; survey "
+        "hands you the material: call survey(theme) to get the loose memories grouped into candidate "
+        "sub-threads (each with its id8s) plus any gist already covering part of the theme. Then per "
+        "sub-thread write one focused reflection and roll_up its members, into an existing gist when "
+        "survey shows one matches, rather than minting a sibling. Rolled memories leave the loose set, "
+        "so each pass shrinks the theme. Consolidating is part of using memory well, not a separate "
+        "chore: a tripped cue is the moment to spend a few seconds leaving the store tidier than you found it."
     ),
 )
 
@@ -124,6 +132,11 @@ vector = VectorStore(path=_config.chroma_path)
 # MCP servers never open KuzuDB directly — avoids file lock conflicts.
 graph = GraphProxy()
 engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
+
+# Minimum count of closely-related, not-yet-gisted memories before recall appends
+# the consolidation nudge. The engine gates "related" on keyword + cosine (see
+# REPORT_COSINE_FLOOR); this just sets how big a loose cluster must be to surface.
+_RECALL_REPORT_MIN_LOOSE = 12
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +446,16 @@ def recall(
 
     lines = [f"Found {len(items)} memories:"]
     lines.extend(_pointer_lines(items, show_date=True))
+    report = getattr(engine, "_last_recall_report", None)
+    if report and report.get("loose", 0) >= _RECALL_REPORT_MIN_LOOSE:
+        span = report.get("span")
+        when = f" ({span[0]} → {span[1]})" if span else ""
+        lines.append(
+            f"\n↳ {report['loose']} more memories on this theme aren't rolled up into a gist yet{when}. "
+            f'Cue to consolidate (see "Consolidation" in your instructions): call survey("{query}") to see '
+            "them grouped into sub-threads with their ids, then write one reflection per thread and roll_up "
+            "its members. A few seconds now keeps this theme compact next time."
+        )
     return "\n".join(lines)
 
 
@@ -665,6 +688,55 @@ def expand(memory_id: str) -> str:
     lines = [f"{len(items)} memory(ies) roll up into [{memory_id[:8]}]:"]
     for it in items:
         lines.append(f"  [{it['id'][:8]}] [{it.get('type', '?')}] {it.get('summary', '')}")
+    return "\n".join(lines)
+
+
+@_instrumented_tool()
+def survey(theme: str) -> str:
+    """Survey a theme's un-consolidated cluster so you can roll it up: the consolidation read.
+
+    recall answers a query and, when a theme has grown past what it surfaces, ends
+    with a `↳ … aren't rolled up into a gist yet` cue. survey is how you act on that
+    cue: it returns the loose (un-gisted) memories on the theme grouped into candidate
+    sub-threads (by their most distinctive entity), each with its full id8 list, plus
+    any gist already covering part of the theme. Then, per sub-thread: write one
+    focused reflection (`memorize(memory_type="reflection", entities=[the thread's
+    entity])`) and `roll_up` its id over that group's id8s, or when a sub-thread
+    matches an existing gist shown below, roll_up into that gist rather than minting a
+    sibling. Rolled memories leave the loose set, so the theme shrinks each pass.
+
+    Pass the same focused theme you would pass to recall (1-4 words).
+
+    Args:
+        theme: The theme to consolidate (a focused term query, e.g. "memory layers").
+    """
+    data = engine.survey(theme)
+    if not data["groups"] and not data["existing_gists"]:
+        return f"Nothing to consolidate for '{data['theme']}': no loose cluster found."
+
+    span = data.get("span")
+    when = f" ({span[0]} → {span[1]})" if span else ""
+    lines = [
+        f"Survey of '{data['theme']}': {data['loose_total']} loose "
+        f"memories{when} across {len(data['groups'])} candidate sub-thread(s)."
+    ]
+    if data["existing_gists"]:
+        lines.append("\nGists already on this theme; roll a matching sub-thread into one of these, don't duplicate:")
+        for g in data["existing_gists"]:
+            lines.append(f"  [{g['id'][:8]}] {g['summary']}")
+    if data["groups"]:
+        lines.append("\nSub-threads (one focused reflection each, then roll_up its members):")
+        for grp in data["groups"]:
+            gspan = grp.get("span")
+            gwhen = f" {gspan[0]}→{gspan[1]}" if gspan else ""
+            more = f" +{grp['overflow']} more (re-survey after rolling these)" if grp["overflow"] else ""
+            ids = " ".join(grp["ids"])
+            lines.append(f"  • {grp['label']} ({grp['count']}{gwhen}): {ids}{more}")
+    lines.append(
+        '\nPer sub-thread: memorize(memory_type="reflection", entities=[the thread\'s entity]) the '
+        "synthesis, then roll_up(parent_id=<that reflection, or a matching gist above>, "
+        "child_ids=[the group's id8s])."
+    )
     return "\n".join(lines)
 
 
