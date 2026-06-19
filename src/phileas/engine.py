@@ -68,6 +68,29 @@ BM25_FLOOR_SCALE = 6.0
 # bounding gather cost; the relevance cut — not this number — decides what returns.
 RECALL_POOL = 200
 
+# A gathered candidate counts as "related" for the consolidation report only when it
+# has BOTH a keyword hit and a cosine at least this high. Each single gather signal
+# admits one kind of noise: the fused rank inflates graph-bridge neighbours, a lone
+# keyword token ("quality" on "sleep quality") matches off-topic memories, and cosine
+# alone drops real low-cosine keyword hits. The off-topic noise sits near cosine 0 in
+# every case, so keyword AND a small cosine floor keeps real cluster members and drops
+# what any one signal lets through.
+REPORT_COSINE_FLOOR = 0.25
+
+# survey() partitions a theme's loose cluster into candidate sub-threads so the
+# host writes one focused reflection per thread, not one blind mega-gist. Grouping is
+# by topical entity: each loose memory files under its rarest entity (its most
+# distinctive thread). Two kinds of entity can't separate threads and are dropped as
+# keys: Day/Date entities (a date is not a thread) and any entity covering more than
+# SURVEY_UBIQUITOUS of the loose set (the theme's own hub, e.g. "Phileas"). Memories
+# left without a topical key fall to time buckets (by month) rather than one blob. The
+# per-group id cap is generous: id8s are cheap, and showing the whole group closes the
+# gap a query-answering head deliberately leaves.
+SURVEY_UBIQUITOUS = 0.4
+SURVEY_NONTOPICAL_TYPES = frozenset({"Day", "Date"})
+SURVEY_MAX_GROUPS = 8
+SURVEY_PER_GROUP = 40
+
 # Cap iteration in Path 3b (memory pivot) and Path 4 (semantic-to-graph bridge).
 # Both scale O(seeds × entities × neighbours); on entity-rich queries Path 3
 # already saturates the pool, so iterating thousands of seeds finds duplicates.
@@ -700,6 +723,14 @@ class MemoryEngine:
         from time import perf_counter
 
         _t0 = perf_counter()
+        # Consolidation report (PHILEAS_RECALL_REPORT): an opt-in one-line nudge
+        # built from the full gathered pool. It reports how many related memories
+        # sit beyond the returned head and how many are not yet rolled up into a
+        # gist. Reset per call (early-return paths leave it None); the default
+        # response shape stays unchanged.
+        self._last_recall_report = None
+        _want_report = bool(os.environ.get("PHILEAS_RECALL_REPORT", "").strip())
+        _report_pool = None
         _effective_top_k = top_k if top_k is not None else 9999
         # Gather pool is fixed and independent of the requested result count, so
         # the distributional cut always sees the same score shape. An explicit
@@ -1241,14 +1272,15 @@ class MemoryEngine:
             for mem_id in filtered:
                 relevance_map[mem_id] = raw[mem_id] / top if top > 1e-12 else 0.5
 
-            # Optional post-fusion rerank (PHILEAS_RERANK). Fusion decides candidacy;
-            # the cross-encoder makes the final precision call over the fused head —
-            # including the keyword/structural hits the floor path routes around. It
-            # repairs the dense leg's mistakes: a low-cosine exact-term match (the
-            # "Sweden" case) that RRF buries gets re-judged with the query in view and
-            # lifted back to the top. Consumed by RANK, not absolute score — its
-            # ranking on personal text is reliable where its sigmoid is not.
-            rerank_mode, rr_k, rr_pool = resolve_rerank()
+            # Post-fusion rerank, on by default (set PHILEAS_RERANK=off to skip).
+            # Fusion decides candidacy; the cross-encoder makes the final precision
+            # call over the fused head, including the keyword/structural hits the
+            # floor path routes around. It repairs the dense leg's mistakes: a
+            # low-cosine exact-term match (the "Sweden" case) that RRF buries gets
+            # re-judged with the query in view and lifted back to the top. Consumed
+            # by rank, not absolute score: its ranking on personal text is reliable
+            # where its sigmoid is not.
+            rerank_mode, rr_k, rr_pool = resolve_rerank(default="rank")
             if rerank_mode == "rank":
                 from phileas.reranker import rerank
 
@@ -1342,6 +1374,10 @@ class MemoryEngine:
         # min_keep retains the single best item so a flat/weak spread still answers
         # rather than returning empty.
         gate_ids = list(filtered.keys())
+        # Snapshot the gathered pool before the cut prunes it, so the report
+        # reflects everything the query gathered, not just the surfaced head.
+        if _want_report:
+            _report_pool = dict(filtered)
         # RRF relevance is max-normalized rank-fusion, not absolute cosine, so the
         # 0.05 garbage-gate floor has no fixed meaning on it — let the relative cut
         # decide alone (min_keep still guarantees an answer). The floor only bites
@@ -1630,6 +1666,27 @@ class MemoryEngine:
             },
         )
 
+        # Build the consolidation report from the pre-cut pool: the closely-related
+        # memories that did not make the head (keyword hit AND cosine above the floor),
+        # and how many of those still lack a gist. The content gate is what makes the
+        # nudge fire on a real theme rather than on gather-pool size.
+        if _want_report and _report_pool:
+            _returned = {r["id"] for r in results}
+            # A real cluster member matches on content (a keyword hit) AND carries
+            # non-trivial semantic similarity; the gather's off-topic noise fails one
+            # or the other (no keyword, or cosine near zero).
+            _related = [
+                mid
+                for mid in _report_pool
+                if mid not in _returned and mid in keyword_ids and cosine_map.get(mid, 0.0) >= REPORT_COSINE_FLOOR
+            ]
+            if _related:
+                _parents = self.graph.get_rollup_parents(_related) or {}
+                _loose = [mid for mid in _related if not _parents.get(mid)]
+                _dates = [_report_pool[mid].created_at for mid in _loose if _report_pool[mid].created_at]
+                _span = (min(_dates).date().isoformat(), max(_dates).date().isoformat()) if _dates else None
+                self._last_recall_report = {"related": len(_related), "loose": len(_loose), "span": _span}
+
         return results
 
     # ------------------------------------------------------------------
@@ -1812,6 +1869,165 @@ class MemoryEngine:
         srt_active = [it for it in srt_items if it and it.status == "active"]
         srt_active.sort(key=lambda it: it.created_at.timestamp() if it.created_at else 0.0, reverse=True)
         return [_item_to_dict(it) for it in srt_active]
+
+    @timed_op("survey")
+    def survey(
+        self,
+        theme: str,
+        max_groups: int = SURVEY_MAX_GROUPS,
+        per_group: int = SURVEY_PER_GROUP,
+    ) -> dict:
+        """Survey a theme's un-consolidated cluster, the consolidation read.
+
+        recall answers a query and only *signals* (its ``↳ … aren't rolled up``
+        cue) that a theme has grown past what surfaces; survey is the sideways rung
+        on the drill-in ladder that hands back the material to act on it. It gathers
+        the same on-theme cluster the cue counts (a keyword hit AND a cosine of at
+        least ``REPORT_COSINE_FLOOR``), keeps the loose (un-gisted) members,
+        partitions them into candidate sub-threads by their most distinctive entity
+        (so the host writes one focused reflection per thread rather than one blind
+        mega-gist), and surfaces any gist already covering part of the theme so new
+        strays roll into it instead of minting a sibling. No rerank or cut: survey
+        wants the whole cluster, not a query-answering head.
+
+        Returns ``{"theme", "loose_total", "gisted_on_theme", "span",
+        "existing_gists": [{"id", "summary"}],
+        "groups": [{"label", "ids", "count", "span", "overflow"}]}``.
+        """
+        op_extra(theme=theme)
+        empty = {
+            "theme": (theme or "").strip(),
+            "loose_total": 0,
+            "gisted_on_theme": 0,
+            "span": None,
+            "existing_gists": [],
+            "groups": [],
+        }
+        clean = (theme or "").strip()
+        if not clean:
+            return empty
+
+        # Same universe the recall cue gate counts: active keyword hits whose cosine
+        # clears the floor. keyword search already filters to active.
+        items: dict[str, MemoryItem] = {
+            item.id: item for item, _bm25 in self.db.search_by_keyword_scored(clean, top_k=RECALL_POOL)
+        }
+        cosine_map = dict(self.vector.search(clean, top_k=RECALL_POOL)) if items else {}
+        on_theme = [mid for mid in items if cosine_map.get(mid, 0.0) >= REPORT_COSINE_FLOOR]
+        if not on_theme:
+            return empty
+
+        def _span(mids: list[str]) -> tuple[str, str] | None:
+            dates = [items[m].created_at for m in mids if items[m].created_at]
+            if not dates:
+                return None
+            return (min(dates).date().isoformat(), max(dates).date().isoformat())
+
+        def _by_date(mid: str) -> float:
+            ca = items[mid].created_at
+            return ca.timestamp() if ca else 0.0
+
+        # Split loose (no gist yet) from already-gisted; collect the covering gists.
+        parents = self.graph.get_rollup_parents(on_theme) or {}
+        loose = [mid for mid in on_theme if not parents.get(mid)]
+        gisted = [mid for mid in on_theme if parents.get(mid)]
+        gist_ids: list[str] = []
+        for mid in gisted:
+            for pid in parents.get(mid, []):
+                if pid not in gist_ids:
+                    gist_ids.append(pid)
+        existing_gists: list[dict] = []
+        for gid in gist_ids:
+            gi = self.db.get_item(gid)
+            if gi and gi.status == "active":
+                existing_gists.append({"id": gid, "summary": gi.summary})
+
+        if not loose:
+            return {
+                "theme": clean,
+                "loose_total": 0,
+                "gisted_on_theme": len(gisted),
+                "span": None,
+                "existing_gists": existing_gists,
+                "groups": [],
+            }
+
+        # Topical entities per loose memory: drop Day/Date types (a date is not a
+        # thread). Each memory then files under its rarest topical entity, the most
+        # distinctive thread it belongs to.
+        ents = self.graph.get_entities_for_memories(loose) or {}
+        topical: dict[str, list[str]] = {}  # mid -> [entity names], date types stripped
+        for mid in loose:
+            names = [
+                (e.get("name") or "").strip()
+                for e in ents.get(mid, [])
+                if (e.get("name") or "").strip() and (e.get("type") or "") not in SURVEY_NONTOPICAL_TYPES
+            ]
+            topical[mid] = names
+
+        ent_members: dict[str, set[str]] = {}
+        for mid, names in topical.items():
+            for nm in names:
+                ent_members.setdefault(nm, set()).add(mid)
+        # An entity on more than SURVEY_UBIQUITOUS of the loose set is the theme's own
+        # hub, too broad to separate threads, so not a grouping key.
+        broad = SURVEY_UBIQUITOUS * len(loose)
+        distinctive = {nm: ms for nm, ms in ent_members.items() if len(ms) <= broad}
+
+        assigned: dict[str, list[str]] = {}
+        residual: list[str] = []  # no distinctive entity, time-bucketed below
+        for mid in loose:
+            keys = [nm for nm in topical[mid] if nm in distinctive]
+            if not keys:
+                residual.append(mid)
+                continue
+            home = min(keys, key=lambda nm: (len(distinctive[nm]), nm))
+            assigned.setdefault(home, []).append(mid)
+
+        named: list[tuple[str, list[str]]] = []
+        for nm, mids in assigned.items():
+            if len(mids) >= 2:
+                named.append((nm, mids))
+            else:
+                residual.extend(mids)  # a one-memory "thread" isn't one
+        named.sort(key=lambda g: len(g[1]), reverse=True)
+
+        # Cap entity groups; overflow joins the residual (re-survey after a pass
+        # surfaces what's left, since rolled memories leave the loose set).
+        kept, overflow_groups = named[:max_groups], named[max_groups:]
+        for _nm, mids in overflow_groups:
+            residual.extend(mids)
+
+        # The residual (no topical entity) is bucketed by month: a bounded, datable
+        # consolidation unit beats one undifferentiated blob.
+        by_month: dict[str, list[str]] = {}
+        for mid in residual:
+            ca = items[mid].created_at
+            ym = ca.strftime("%Y-%m") if ca else "undated"
+            by_month.setdefault(ym, []).append(mid)
+
+        def _group(label: str, mids: list[str]) -> dict:
+            ordered = sorted(set(mids), key=_by_date)
+            shown = ordered[:per_group]
+            return {
+                "label": label,
+                "ids": [m[:8] for m in shown],
+                "count": len(ordered),
+                "span": _span(ordered),
+                "overflow": max(0, len(ordered) - len(shown)),
+            }
+
+        groups = [_group(nm, mids) for nm, mids in kept]
+        groups += [_group(ym, by_month[ym]) for ym in sorted(by_month, reverse=True)]
+
+        return {
+            "theme": clean,
+            "loose_total": len(loose),
+            "gisted_on_theme": len(gisted),
+            "span": _span(loose),
+            "existing_gists": existing_gists,
+            "groups": groups,
+        }
 
     # ------------------------------------------------------------------
     # scope (AA-118)

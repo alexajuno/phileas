@@ -163,8 +163,13 @@ def test_expand_context_walks_part_of(tmp_dir: Path):
     assert eng.graph.resolve_context("recall work")["id"] in parent_info["descendants"]
 
 
-def test_no_context_passthrough_ignores_scopes(tmp_dir: Path):
+def test_no_context_passthrough_ignores_scopes(tmp_dir: Path, monkeypatch):
     """recall(query) with no context never reads scope edges (byte-identical)."""
+    # Pin fusion as the relevance base. The cross-encoder consumes its output by
+    # strict rank, so it splits the deliberate tie between two identical memories
+    # and hides the equality this test checks; the scope passthrough guarantee is
+    # independent of the rerank stage.
+    monkeypatch.setenv("PHILEAS_RERANK", "off")
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
     ts = dt.datetime(2026, 1, 1, 12, 0, 0)
@@ -242,7 +247,11 @@ def test_lifting_parent_scope_found_from_child_context(tmp_dir: Path):
     assert ids.index(lifted) < ids.index(disjoint)
 
 
-def test_excluded_in_context_demoted_below_peer(tmp_dir: Path):
+def test_excluded_in_context_demoted_below_peer(tmp_dir: Path, monkeypatch):
+    # Pin fusion as the relevance base so the two peers tie without context; the
+    # cross-encoder would rank them apart by text and break the baseline this
+    # test demotes against. The excluded-scope demotion is what's under test.
+    monkeypatch.setenv("PHILEAS_RERANK", "off")
     eng = _engine(tmp_dir)
     _seed_corpus(eng)
     excluded = _seed(eng, "srt prefix rule one")
