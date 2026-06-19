@@ -152,13 +152,23 @@ class TestWireCodex:
         assert "[mcp_servers.phileas-dev]" in text
 
 
+def _write_claude_servers(home: Path, servers: dict, extra: dict | None = None) -> Path:
+    """Seed ~/.claude.json with the given mcpServers (plus any other top-level keys)."""
+    path = _claude_user_config(home)
+    data: dict = {"mcpServers": servers}
+    if extra:
+        data.update(extra)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
 class TestWireClaudeCodeFallback:
-    """Without the claude CLI on PATH, the entry is merged into the file Claude
+    """Without the claude CLI on PATH, a new entry is merged into the file Claude
     Code reads (~/.claude.json), not the ignored ~/.claude/.mcp.json."""
 
     def test_writes_user_config_not_ignored_file(self, fake_home, monkeypatch):
         monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: None)
-        assert _wire_claude_code("default") is True
+        assert _wire_claude_code("default") == "added"
         cfg = json.loads(_claude_user_config(fake_home).read_text(encoding="utf-8"))
         entry = cfg["mcpServers"]["phileas"]
         assert entry["args"] == ["serve"]
@@ -167,31 +177,53 @@ class TestWireClaudeCodeFallback:
 
     def test_named_profile_carries_env(self, fake_home, monkeypatch):
         monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: None)
-        assert _wire_claude_code("dev") is True
+        assert _wire_claude_code("dev") == "added"
         cfg = json.loads(_claude_user_config(fake_home).read_text(encoding="utf-8"))
         assert cfg["mcpServers"]["phileas-dev"]["env"] == {"PHILEAS_PROFILE": "dev"}
 
     def test_preserves_existing_config(self, fake_home, monkeypatch):
         monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: None)
-        path = _claude_user_config(fake_home)
-        path.write_text(
-            json.dumps({"projects": {"/x": {}}, "mcpServers": {"other": {"command": "o"}}}),
-            encoding="utf-8",
-        )
-        assert _wire_claude_code("default") is True
+        path = _write_claude_servers(fake_home, {"other": {"command": "o"}}, extra={"projects": {"/x": {}}})
+        assert _wire_claude_code("default") == "added"
         cfg = json.loads(path.read_text(encoding="utf-8"))
         assert cfg["projects"] == {"/x": {}}
         assert set(cfg["mcpServers"]) == {"other", "phileas"}
 
 
+class TestWireClaudeCodeIdempotent:
+    """Re-running over an existing entry is non-destructive: skip if identical,
+    warn-and-keep if it points somewhere else."""
+
+    def test_unchanged_when_entry_matches(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
+        path = _write_claude_servers(fake_home, {"phileas": {"command": "/usr/bin/phileas", "args": ["serve"]}})
+        before = path.read_text(encoding="utf-8")
+        assert _wire_claude_code("default") == "unchanged"
+        assert path.read_text(encoding="utf-8") == before  # left untouched
+
+    def test_conflict_when_command_differs(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
+        path = _write_claude_servers(fake_home, {"phileas": {"command": "/old/phileas", "args": ["serve"]}})
+        before = path.read_text(encoding="utf-8")
+        assert _wire_claude_code("default") == "conflict"
+        assert path.read_text(encoding="utf-8") == before  # never clobbered
+
+    def test_conflict_when_profile_env_missing(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
+        # Same command/args, but no PHILEAS_PROFILE -> not a match for the dev profile.
+        _write_claude_servers(fake_home, {"phileas-dev": {"command": "/usr/bin/phileas", "args": ["serve"]}})
+        assert _wire_claude_code("dev") == "conflict"
+
+
 class TestWireClaudeCodeCli:
-    """With the claude CLI present, wiring shells out to `claude mcp add` at user scope."""
+    """With the claude CLI present and no existing entry, wiring shells out to
+    `claude mcp add` at user scope."""
 
     def test_add_argv_for_default_profile(self, fake_home, monkeypatch):
         monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: "/usr/bin/claude")
         monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
         calls = _record_subprocess(monkeypatch, returncodes=[0])
-        assert _wire_claude_code("default") is True
+        assert _wire_claude_code("default") == "added"
         assert calls == [
             ["/usr/bin/claude", "mcp", "add", "--scope", "user", "phileas", "--", "/usr/bin/phileas", "serve"]
         ]
@@ -200,7 +232,7 @@ class TestWireClaudeCodeCli:
         monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: "/usr/bin/claude")
         monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
         calls = _record_subprocess(monkeypatch, returncodes=[0])
-        assert _wire_claude_code("dev") is True
+        assert _wire_claude_code("dev") == "added"
         assert calls[0] == [
             "/usr/bin/claude",
             "mcp",
@@ -215,14 +247,12 @@ class TestWireClaudeCodeCli:
             "serve",
         ]
 
-    def test_replaces_existing_entry_on_conflict(self, fake_home, monkeypatch):
+    def test_add_failure_reports_failed_without_retry(self, fake_home, monkeypatch):
         monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: "/usr/bin/claude")
         monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
-        # First add fails (key exists) -> remove -> add succeeds.
-        calls = _record_subprocess(monkeypatch, returncodes=[1, 0, 0])
-        assert _wire_claude_code("default") is True
-        assert calls[1] == ["/usr/bin/claude", "mcp", "remove", "--scope", "user", "phileas"]
-        assert calls[2] == calls[0]
+        calls = _record_subprocess(monkeypatch, returncodes=[1])
+        assert _wire_claude_code("default") == "failed"
+        assert len(calls) == 1  # no remove-then-retry dance
 
 
 class TestInstallSkillCodex:

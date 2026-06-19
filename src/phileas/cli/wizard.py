@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -42,20 +43,16 @@ def _server_key(profile: str) -> str:
 def _server_command() -> tuple[str, list[str]]:
     """Command + args that launch the Phileas MCP server.
 
-    Prefer the installed ``phileas`` binary; fall back to ``uv run`` against the
-    working tree when it isn't on PATH.
+    Prefer the installed ``phileas`` console script. When it isn't on PATH, fall
+    back to the current interpreter (``sys.executable``), which already has
+    Phileas importable regardless of how it was installed (pip, uv tool, venv).
+    A bare ``python`` could resolve to an interpreter without Phileas, so use the
+    absolute path of the one running init.
     """
     phileas_exe = _find_phileas_command()
     if phileas_exe:
         return phileas_exe, ["serve"]
-    return "uv", [
-        "run",
-        "--project",
-        str(Path(__file__).resolve().parents[2].parent),
-        "python",
-        "-c",
-        "from phileas.server import mcp; mcp.run()",
-    ]
+    return sys.executable, ["-c", "from phileas.server import mcp; mcp.run()"]
 
 
 def _server_entry(profile: str) -> dict:
@@ -117,32 +114,73 @@ def _claude_add_argv(claude: str, profile: str) -> list[str]:
     return argv
 
 
-def _wire_claude_code(profile: str) -> bool:
-    """Register the profile's Phileas server where Claude Code reads it.
+def _read_user_mcp_entry(key: str) -> dict | None:
+    """The user-scope MCP entry Claude Code currently has for ``key``, or None.
 
-    Claude Code resolves user-scope MCP servers from ``~/.claude.json``. Prefer
-    ``claude mcp add --scope user`` so Claude Code owns the write to its own
-    config; fall back to merging the entry into ``~/.claude.json`` directly when
-    the CLI isn't on PATH. Returns True on success.
+    User-scope servers live in ``~/.claude.json`` under ``mcpServers`` (where
+    ``claude mcp add --scope user`` writes), so reading that file tells us
+    whether an entry already exists and what command it points at.
+    """
+    path = Path.home() / ".claude.json"
+    if not (path.exists() and path.stat().st_size > 0):
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict):
+        return servers.get(key)
+    return None
+
+
+def _entry_matches(existing: dict, profile: str) -> bool:
+    """True if an existing entry already points at this profile's command + env.
+
+    Compares only the fields we control (command, args, the ``PHILEAS_PROFILE``
+    env), so storage quirks in how the entry was written don't read as a
+    difference.
+    """
+    command, args = _server_command()
+    if existing.get("command") != command:
+        return False
+    if list(existing.get("args") or []) != args:
+        return False
+    existing_profile = (existing.get("env") or {}).get("PHILEAS_PROFILE")
+    desired_profile = None if profile == DEFAULT_PROFILE else profile
+    return existing_profile == desired_profile
+
+
+def _add_claude_entry(profile: str) -> bool:
+    """Register the entry where Claude Code reads it. Returns True on success.
+
+    Prefer ``claude mcp add --scope user`` so Claude Code owns the write to its
+    own config; fall back to merging the entry into ``~/.claude.json`` directly
+    when the CLI isn't on PATH.
     """
     claude = _claude_cli()
     if claude is None:
         return _write_json_mcp(Path.home() / ".claude.json", profile)
-
-    argv = _claude_add_argv(claude, profile)
     try:
-        if subprocess.run(argv, capture_output=True, text=True).returncode == 0:
-            return True
-        # `claude mcp add` refuses when the key already exists at this scope, so
-        # a re-run replaces it: drop the old entry, then add fresh.
-        subprocess.run(
-            [claude, "mcp", "remove", "--scope", "user", _server_key(profile)],
-            capture_output=True,
-            text=True,
-        )
-        return subprocess.run(argv, capture_output=True, text=True).returncode == 0
+        return subprocess.run(_claude_add_argv(claude, profile), capture_output=True, text=True).returncode == 0
     except OSError:
         return False
+
+
+def _wire_claude_code(profile: str) -> str:
+    """Register the profile's Phileas server where Claude Code reads it.
+
+    Idempotent and non-destructive. Returns one of:
+      - ``added``: there was no user-scope entry, so a fresh one was registered.
+      - ``unchanged``: an identical entry was already present; nothing to do.
+      - ``conflict``: an entry exists but points at a different command; it is
+        left untouched (we never silently replace a working setup).
+      - ``failed``: registration was attempted but did not succeed.
+    """
+    existing = _read_user_mcp_entry(_server_key(profile))
+    if existing is not None:
+        return "unchanged" if _entry_matches(existing, profile) else "conflict"
+    return "added" if _add_claude_entry(profile) else "failed"
 
 
 def _wire_antigravity(profile: str) -> bool:
@@ -428,11 +466,19 @@ def run_wizard() -> None:
         console.print()
         console.print("[bold]Configuring Claude Code integration...[/bold]")
         key = _server_key(profile)
-        if _wire_claude_code(profile):
+        env_flag = "" if profile == DEFAULT_PROFILE else f"--env PHILEAS_PROFILE={profile} "
+        status = _wire_claude_code(profile)
+        if status == "added":
             console.print(f"  MCP   [green]OK[/green] -- registered '{key}' (user scope)")
             console.print(f"        [dim]Verify with: claude mcp get {key}[/dim]")
-        else:
-            env_flag = "" if profile == DEFAULT_PROFILE else f"--env PHILEAS_PROFILE={profile} "
+        elif status == "unchanged":
+            console.print(f"  MCP   [green]OK[/green] -- '{key}' already configured")
+        elif status == "conflict":
+            console.print(f"  MCP   [yellow]'{key}' already points at a different command -- left as-is[/yellow]")
+            console.print("        To repoint it at this install, run:")
+            console.print(f"        [cyan]claude mcp remove --scope user {key}[/cyan]")
+            console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
+        else:  # failed
             console.print("  MCP   [yellow]could not register the MCP server automatically[/yellow]")
             console.print("        Register it manually with:")
             console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
