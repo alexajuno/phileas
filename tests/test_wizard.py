@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,8 +80,21 @@ class TestInstallSkill:
 # ------------------------------------------------------------------
 
 
-def _claude_mcp_file(home: Path) -> Path:
-    return home / ".claude" / ".mcp.json"
+def _claude_user_config(home: Path) -> Path:
+    return home / ".claude.json"
+
+
+def _record_subprocess(monkeypatch, returncodes):
+    """Patch the wizard's subprocess.run to record argv and return canned exit codes."""
+    calls: list[list[str]] = []
+    codes = iter(returncodes)
+
+    def fake_run(argv, *args, **kwargs):
+        calls.append(list(argv))
+        return SimpleNamespace(returncode=next(codes), stdout="", stderr="")
+
+    monkeypatch.setattr("phileas.cli.wizard.subprocess.run", fake_run)
+    return calls
 
 
 class TestWireCodex:
@@ -138,27 +152,77 @@ class TestWireCodex:
         assert "[mcp_servers.phileas-dev]" in text
 
 
-class TestWireClaudeCode:
-    """Claude Code MCP config is written to ~/.claude/.mcp.json."""
+class TestWireClaudeCodeFallback:
+    """Without the claude CLI on PATH, the entry is merged into the file Claude
+    Code reads (~/.claude.json), not the ignored ~/.claude/.mcp.json."""
 
-    def test_default_profile_has_no_env(self, fake_home):
+    def test_writes_user_config_not_ignored_file(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: None)
         assert _wire_claude_code("default") is True
-        cfg = json.loads(_claude_mcp_file(fake_home).read_text(encoding="utf-8"))
+        cfg = json.loads(_claude_user_config(fake_home).read_text(encoding="utf-8"))
         entry = cfg["mcpServers"]["phileas"]
         assert entry["args"] == ["serve"]
         assert "env" not in entry
+        assert not (fake_home / ".claude" / ".mcp.json").exists()
 
-    def test_named_profile_keyed_and_carries_env(self, fake_home):
+    def test_named_profile_carries_env(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: None)
         assert _wire_claude_code("dev") is True
-        cfg = json.loads(_claude_mcp_file(fake_home).read_text(encoding="utf-8"))
-        assert "phileas-dev" in cfg["mcpServers"]
+        cfg = json.loads(_claude_user_config(fake_home).read_text(encoding="utf-8"))
         assert cfg["mcpServers"]["phileas-dev"]["env"] == {"PHILEAS_PROFILE": "dev"}
 
-    def test_named_profile_coexists_with_default(self, fake_home):
-        _wire_claude_code("default")
-        _wire_claude_code("dev")
-        cfg = json.loads(_claude_mcp_file(fake_home).read_text(encoding="utf-8"))
-        assert set(cfg["mcpServers"]) == {"phileas", "phileas-dev"}
+    def test_preserves_existing_config(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: None)
+        path = _claude_user_config(fake_home)
+        path.write_text(
+            json.dumps({"projects": {"/x": {}}, "mcpServers": {"other": {"command": "o"}}}),
+            encoding="utf-8",
+        )
+        assert _wire_claude_code("default") is True
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        assert cfg["projects"] == {"/x": {}}
+        assert set(cfg["mcpServers"]) == {"other", "phileas"}
+
+
+class TestWireClaudeCodeCli:
+    """With the claude CLI present, wiring shells out to `claude mcp add` at user scope."""
+
+    def test_add_argv_for_default_profile(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: "/usr/bin/claude")
+        monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
+        calls = _record_subprocess(monkeypatch, returncodes=[0])
+        assert _wire_claude_code("default") is True
+        assert calls == [
+            ["/usr/bin/claude", "mcp", "add", "--scope", "user", "phileas", "--", "/usr/bin/phileas", "serve"]
+        ]
+
+    def test_named_profile_passes_env_flag(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: "/usr/bin/claude")
+        monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
+        calls = _record_subprocess(monkeypatch, returncodes=[0])
+        assert _wire_claude_code("dev") is True
+        assert calls[0] == [
+            "/usr/bin/claude",
+            "mcp",
+            "add",
+            "--scope",
+            "user",
+            "phileas-dev",
+            "--env",
+            "PHILEAS_PROFILE=dev",
+            "--",
+            "/usr/bin/phileas",
+            "serve",
+        ]
+
+    def test_replaces_existing_entry_on_conflict(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._claude_cli", lambda: "/usr/bin/claude")
+        monkeypatch.setattr("phileas.cli.wizard._find_phileas_command", lambda: "/usr/bin/phileas")
+        # First add fails (key exists) -> remove -> add succeeds.
+        calls = _record_subprocess(monkeypatch, returncodes=[1, 0, 0])
+        assert _wire_claude_code("default") is True
+        assert calls[1] == ["/usr/bin/claude", "mcp", "remove", "--scope", "user", "phileas"]
+        assert calls[2] == calls[0]
 
 
 class TestInstallSkillCodex:

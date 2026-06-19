@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import click
@@ -38,28 +39,33 @@ def _server_key(profile: str) -> str:
     return "phileas" if profile == DEFAULT_PROFILE else f"phileas-{profile}"
 
 
+def _server_command() -> tuple[str, list[str]]:
+    """Command + args that launch the Phileas MCP server.
+
+    Prefer the installed ``phileas`` binary; fall back to ``uv run`` against the
+    working tree when it isn't on PATH.
+    """
+    phileas_exe = _find_phileas_command()
+    if phileas_exe:
+        return phileas_exe, ["serve"]
+    return "uv", [
+        "run",
+        "--project",
+        str(Path(__file__).resolve().parents[2].parent),
+        "python",
+        "-c",
+        "from phileas.server import mcp; mcp.run()",
+    ]
+
+
 def _server_entry(profile: str) -> dict:
     """Build the JSON MCP server entry for a profile.
 
     A non-default profile carries ``PHILEAS_PROFILE`` in ``env`` so the spawned
     server resolves the right data home; the default profile needs none.
     """
-    phileas_exe = _find_phileas_command()
-    if phileas_exe:
-        entry: dict = {"type": "stdio", "command": phileas_exe, "args": ["serve"]}
-    else:
-        entry = {
-            "type": "stdio",
-            "command": "uv",
-            "args": [
-                "run",
-                "--project",
-                str(Path(__file__).resolve().parents[2].parent),
-                "python",
-                "-c",
-                "from phileas.server import mcp; mcp.run()",
-            ],
-        }
+    command, args = _server_command()
+    entry: dict = {"type": "stdio", "command": command, "args": args}
     if profile != DEFAULT_PROFILE:
         entry["env"] = {"PHILEAS_PROFILE": profile}
     return entry
@@ -87,9 +93,56 @@ def _write_json_mcp(mcp_json_path: Path, profile: str) -> bool:
         return False
 
 
+def _claude_cli() -> str | None:
+    """Path to the Claude Code CLI, if it's on PATH."""
+    import shutil
+
+    return shutil.which("claude")
+
+
+def _claude_add_argv(claude: str, profile: str) -> list[str]:
+    """Argv for ``claude mcp add`` that registers the profile at user scope.
+
+    Order matters: the name must precede ``--env`` (which is variadic and would
+    otherwise swallow the name as another env var), and ``--`` must precede the
+    command so the server's own flags (e.g. the ``uv run --project`` fallback)
+    reach the subprocess intact. Mirrors the CLI's own example,
+    ``claude mcp add <name> -e KEY=val -- <command>``.
+    """
+    command, args = _server_command()
+    argv = [claude, "mcp", "add", "--scope", "user", _server_key(profile)]
+    if profile != DEFAULT_PROFILE:
+        argv += ["--env", f"PHILEAS_PROFILE={profile}"]
+    argv += ["--", command, *args]
+    return argv
+
+
 def _wire_claude_code(profile: str) -> bool:
-    """Add the profile's Phileas MCP server to Claude Code's config. Returns True on success."""
-    return _write_json_mcp(Path.home() / ".claude" / ".mcp.json", profile)
+    """Register the profile's Phileas server where Claude Code reads it.
+
+    Claude Code resolves user-scope MCP servers from ``~/.claude.json``. Prefer
+    ``claude mcp add --scope user`` so Claude Code owns the write to its own
+    config; fall back to merging the entry into ``~/.claude.json`` directly when
+    the CLI isn't on PATH. Returns True on success.
+    """
+    claude = _claude_cli()
+    if claude is None:
+        return _write_json_mcp(Path.home() / ".claude.json", profile)
+
+    argv = _claude_add_argv(claude, profile)
+    try:
+        if subprocess.run(argv, capture_output=True, text=True).returncode == 0:
+            return True
+        # `claude mcp add` refuses when the key already exists at this scope, so
+        # a re-run replaces it: drop the old entry, then add fresh.
+        subprocess.run(
+            [claude, "mcp", "remove", "--scope", "user", _server_key(profile)],
+            capture_output=True,
+            text=True,
+        )
+        return subprocess.run(argv, capture_output=True, text=True).returncode == 0
+    except OSError:
+        return False
 
 
 def _wire_antigravity(profile: str) -> bool:
@@ -153,21 +206,7 @@ def _replace_toml_table(text: str, table: str, block: str) -> str:
 def _wire_codex(profile: str) -> bool:
     """Add the profile's Phileas MCP server to Codex's config.toml. Returns True on success."""
     config_path = _codex_home() / "config.toml"
-    phileas_exe = _find_phileas_command()
-
-    if phileas_exe:
-        command = phileas_exe
-        args = ["serve"]
-    else:
-        command = "uv"
-        args = [
-            "run",
-            "--project",
-            str(Path(__file__).resolve().parents[2].parent),
-            "python",
-            "-c",
-            "from phileas.server import mcp; mcp.run()",
-        ]
+    command, args = _server_command()
 
     table = f"mcp_servers.{_server_key(profile)}"
     block_lines = [
@@ -388,13 +427,15 @@ def run_wizard() -> None:
     if use_claude_code:
         console.print()
         console.print("[bold]Configuring Claude Code integration...[/bold]")
+        key = _server_key(profile)
         if _wire_claude_code(profile):
-            mcp_path = Path.home() / ".claude" / ".mcp.json"
-            console.print(f"  MCP   [green]OK[/green] -- updated {mcp_path}")
+            console.print(f"  MCP   [green]OK[/green] -- registered '{key}' (user scope)")
+            console.print(f"        [dim]Verify with: claude mcp get {key}[/dim]")
         else:
-            console.print("  MCP   [yellow]could not write MCP config automatically[/yellow]")
-            console.print("        Add this to ~/.claude/.mcp.json manually:")
-            console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
+            env_flag = "" if profile == DEFAULT_PROFILE else f"--env PHILEAS_PROFILE={profile} "
+            console.print("  MCP   [yellow]could not register the MCP server automatically[/yellow]")
+            console.print("        Register it manually with:")
+            console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
 
         changed, msg = _install_skill()
         marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
