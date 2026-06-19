@@ -791,20 +791,35 @@ def serve():
 
 @click.command("init")
 @click.option(
+    "--profile",
+    default=None,
+    help="Set up this profile without prompting (for scripted/CI runs).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    help="Accept defaults and skip prompts; uses the default profile unless --profile is given.",
+)
+@click.option(
     "--skip-models",
     is_flag=True,
     help="Skip downloading the embedding/reranker models (set them up later).",
 )
-def init_cmd(skip_models):
+def init_cmd(profile, assume_yes, skip_models):
     """Set up Phileas for Claude Code.
 
     Selects a profile (each profile is a separate instance with its own data
     dir, daemon, and timer), wires the Phileas MCP server and recall skill into
     Claude Code, and sets up the embedding and reranker models.
+
+    Runs interactively by default. For scripted or CI use, pass --profile and/or
+    --yes to skip the prompts.
     """
     from phileas.cli.wizard import run_wizard
 
-    code = run_wizard(skip_models=skip_models)
+    code = run_wizard(skip_models=skip_models, profile=profile, assume_yes=assume_yes)
     if code:
         raise SystemExit(code)
 

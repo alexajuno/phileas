@@ -13,6 +13,7 @@ from phileas.cli.wizard import (
     _ensure_model,
     _install_skill,
     _model_cached,
+    _skill_marker,
     _wire_claude_code,
     run_wizard,
 )
@@ -66,6 +67,54 @@ class TestInstallSkill:
         changed, _ = _install_skill(force=True)
         assert changed is True
         assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas\n")
+
+    def test_refreshes_unmodified_copy_on_upgrade(self, fake_home, tmp_path, monkeypatch):
+        # A controllable "shipped" asset standing in for the package copy.
+        src = tmp_path / "SKILL.md"
+        src.write_text("---\nname: phileas\nv1\n", encoding="utf-8")
+        monkeypatch.setattr("phileas.cli.wizard.SKILL_SOURCE", src)
+
+        assert _install_skill()[0] is True  # initial install records the v1 hash
+        src.write_text("---\nname: phileas\nv2\n", encoding="utf-8")  # ship an update
+
+        changed, msg = _install_skill()
+        assert changed is True
+        assert "updated" in msg.lower()
+        dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
+        assert dest.read_text(encoding="utf-8") == "---\nname: phileas\nv2\n"
+
+    def test_preserves_user_edits_across_upgrade(self, fake_home, tmp_path, monkeypatch):
+        src = tmp_path / "SKILL.md"
+        src.write_text("---\nname: phileas\nv1\n", encoding="utf-8")
+        monkeypatch.setattr("phileas.cli.wizard.SKILL_SOURCE", src)
+
+        _install_skill()  # records the v1 hash
+        dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
+        dest.write_text("# I edited this\n", encoding="utf-8")  # user diverges
+        src.write_text("---\nname: phileas\nv2\n", encoding="utf-8")  # ship an update
+
+        changed, msg = _install_skill()
+        assert changed is False
+        assert "custom content" in msg.lower()
+        assert dest.read_text(encoding="utf-8") == "# I edited this\n"  # preserved
+
+    def test_backfills_marker_for_premarker_install(self, fake_home, tmp_path, monkeypatch):
+        src = tmp_path / "SKILL.md"
+        src.write_text("v1", encoding="utf-8")
+        monkeypatch.setattr("phileas.cli.wizard.SKILL_SOURCE", src)
+        # A copy installed before markers existed: matches shipped, no sidecar.
+        dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("v1", encoding="utf-8")
+        assert not _skill_marker().exists()
+
+        changed, _ = _install_skill()
+        assert changed is False  # already current
+        assert _skill_marker().exists()  # marker backfilled
+
+        src.write_text("v2", encoding="utf-8")  # now an upgrade can refresh it
+        assert _install_skill()[0] is True
+        assert dest.read_text(encoding="utf-8") == "v2"
 
 
 # ------------------------------------------------------------------
@@ -290,3 +339,64 @@ class TestRunWizardReadiness:
         )
         assert run_wizard(skip_models=True) == 1
         assert called == []  # --skip-models never invokes the downloader
+
+
+# ------------------------------------------------------------------
+# run_wizard unattended mode + re-run acknowledgement
+# ------------------------------------------------------------------
+
+
+class TestRunWizardUnattended:
+    """--profile / --yes skip the prompts; the re-run acknowledgement fires only
+    when running interactively."""
+
+    def _stub_helpers(self, monkeypatch, *, embedding="present"):
+        monkeypatch.delenv("PHILEAS_HOME", raising=False)
+        monkeypatch.setattr("phileas.cli.wizard._wire_claude_code", lambda profile: "added")
+        monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (True, "installed"))
+        monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
+        monkeypatch.setattr("phileas.cli.wizard._ensure_reranker_model", lambda: "present")
+
+    def _forbid_prompt(self, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError("prompt should not be called in unattended mode")
+
+        monkeypatch.setattr("phileas.cli.wizard.click.prompt", boom)
+
+    def test_profile_flag_skips_prompt(self, fake_home, monkeypatch):
+        self._stub_helpers(monkeypatch)
+        self._forbid_prompt(monkeypatch)
+        assert run_wizard(profile="dev") == 0
+        assert (fake_home / ".phileas-dev").is_dir()
+
+    def test_yes_uses_default_profile_without_prompt(self, fake_home, monkeypatch):
+        self._stub_helpers(monkeypatch)
+        self._forbid_prompt(monkeypatch)
+        assert run_wizard(assume_yes=True) == 0
+        assert (fake_home / ".phileas").is_dir()
+
+    def test_invalid_profile_flag_returns_2(self, fake_home, monkeypatch):
+        self._stub_helpers(monkeypatch)
+        assert run_wizard(profile="bad/name") == 2
+
+    def test_acknowledges_rerun_when_already_configured(self, fake_home, monkeypatch):
+        _write_claude_servers(fake_home, {"phileas": {"command": "x", "args": ["serve"]}})
+        self._stub_helpers(monkeypatch)
+        monkeypatch.setattr("phileas.cli.wizard.click.prompt", lambda *a, **k: "default")
+        confirms: list[tuple] = []
+        monkeypatch.setattr(
+            "phileas.cli.wizard.click.confirm",
+            lambda *a, **k: confirms.append(a) or False,  # user declines
+        )
+        assert run_wizard() == 0  # declined -> clean exit, nothing changed
+        assert confirms  # the acknowledgement was shown
+
+    def test_no_acknowledgement_in_unattended(self, fake_home, monkeypatch):
+        _write_claude_servers(fake_home, {"phileas": {"command": "x", "args": ["serve"]}})
+        self._stub_helpers(monkeypatch)
+
+        def boom(*a, **k):
+            raise AssertionError("no confirmation prompt in unattended mode")
+
+        monkeypatch.setattr("phileas.cli.wizard.click.confirm", boom)
+        assert run_wizard(assume_yes=True) == 0

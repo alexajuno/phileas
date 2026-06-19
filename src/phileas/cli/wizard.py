@@ -8,6 +8,7 @@ Walks the user through first-time configuration:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -200,14 +201,42 @@ def _skill_dest() -> Path:
     return Path.home() / ".claude" / "skills" / "phileas" / "SKILL.md"
 
 
-def _install_skill(force: bool = False) -> tuple[bool, str]:
-    """Install the Phileas skill into ~/.claude/skills/phileas/SKILL.md.
+def _skill_marker() -> Path:
+    """Sidecar recording the hash of the skill content init last wrote.
 
-    Behavior:
+    This is what lets a later run tell a stale shipped copy (safe to refresh)
+    apart from one the user edited by hand (must be preserved): the live copy is
+    ours to update only while it still hashes to what we recorded writing.
+    """
+    return _skill_dest().parent / ".phileas-skill.sha256"
+
+
+def _hash_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _read_skill_marker() -> str | None:
+    try:
+        return _skill_marker().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _install_skill(force: bool = False) -> tuple[bool, str]:
+    """Install or refresh the Phileas skill at ~/.claude/skills/phileas/SKILL.md.
+
+    The live copy is what Claude Code reads; the shipped asset is the source. A
+    sidecar (``_skill_marker``) records the hash of what init last wrote, so an
+    upgrade can refresh an untouched copy while preserving genuine user edits:
+
       - Source missing -> error.
-      - Dest missing -> write (idempotent on next run).
-      - Dest exists with matching content -> skip.
-      - Dest exists with custom content -> skip unless force=True.
+      - No live copy -> write it (and record the hash).
+      - Live copy already matches the shipped asset -> nothing to do (record the
+        hash if a pre-marker install never did, so the next upgrade can refresh).
+      - Live copy differs but still hashes to what we last wrote -> a stale
+        shipped version the user hasn't touched; refresh it to the asset.
+      - Live copy differs and was edited since we wrote it -> preserve it unless
+        force=True.
     """
     if not SKILL_SOURCE.is_file():
         return False, f"skill source missing at {SKILL_SOURCE}"
@@ -218,23 +247,43 @@ def _install_skill(force: bool = False) -> tuple[bool, str]:
         return False, f"could not read skill source: {exc}"
 
     dest = _skill_dest()
-    if dest.exists():
+
+    def persist(message: str) -> tuple[bool, str]:
         try:
-            existing = dest.read_text(encoding="utf-8")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(source_text, encoding="utf-8")
+            _skill_marker().write_text(_hash_text(source_text) + "\n", encoding="utf-8")
         except OSError as exc:
-            return False, f"could not read existing skill: {exc}"
-        if existing == source_text:
-            return False, f"skill already installed at {dest}"
-        if not force:
-            return False, f"skill exists with custom content at {dest} (use force=True to overwrite)"
+            return False, f"could not write skill: {exc}"
+        return True, message
+
+    if not dest.exists():
+        return persist(f"installed skill at {dest}")
 
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(source_text, encoding="utf-8")
+        existing = dest.read_text(encoding="utf-8")
     except OSError as exc:
-        return False, f"could not write skill: {exc}"
+        return False, f"could not read existing skill: {exc}"
 
-    return True, f"installed skill at {dest}"
+    source_hash = _hash_text(source_text)
+    if existing == source_text:
+        # Up to date. Backfill the marker for a pre-marker install so the next
+        # shipped change can be told apart from a user edit.
+        if _read_skill_marker() != source_hash:
+            try:
+                _skill_marker().write_text(source_hash + "\n", encoding="utf-8")
+            except OSError:
+                pass
+        return False, f"skill already installed at {dest}"
+
+    if _read_skill_marker() == _hash_text(existing):
+        # The live copy is an older shipped version we wrote and the user has not
+        # touched, so refreshing it to the current asset is safe.
+        return persist(f"updated skill to the shipped version at {dest}")
+
+    if force:
+        return persist(f"overwrote skill at {dest}")
+    return False, f"skill at {dest} has custom content; left as-is (use force=True to overwrite)"
 
 
 # -- Model setup ------------------------------------------------------
@@ -321,29 +370,54 @@ def _model_summary(status: str) -> str:
 # -- Main wizard ------------------------------------------------------
 
 
-def run_wizard(skip_models: bool = False) -> int:
-    """Run the interactive init wizard. Returns a process exit code.
+def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes: bool = False) -> int:
+    """Run the init wizard. Returns a process exit code.
 
-    Returns 0 when Phileas is ready (the embedding model is present) and 1 when
-    a required model is missing, so the caller can exit non-zero.
+    Interactive by default. ``profile`` (a name to set up without prompting) and
+    ``assume_yes`` (accept defaults, skip confirmations) make it scriptable for
+    CI or the README one-liner.
+
+    Returns 0 when Phileas is ready (the embedding model is present), 1 when a
+    required model is missing, and 2 when an explicit ``profile`` is invalid, so
+    the caller can exit non-zero.
     """
+    unattended = profile is not None or assume_yes
+
     console.print()
     console.print("[bold cyan]Welcome to Phileas[/bold cyan] -- persistent memory for AI.")
     console.print()
 
     # 1. Profile -- which instance to set up (its own data dir, daemon, timer)
-    while True:
-        profile = click.prompt(
-            "Profile (use a new name for a second, separate instance)",
-            default=DEFAULT_PROFILE,
-        )
+    if profile is not None:
         try:
             home = resolve_home(profile)
-            break
         except ValueError as exc:
-            console.print(f"  [yellow]{exc}[/yellow]")
+            console.print(f"[red]Invalid profile '{profile}':[/red] {exc}")
+            return 2
+    elif assume_yes:
+        profile = DEFAULT_PROFILE
+        home = resolve_home(profile)
+    else:
+        while True:
+            profile = click.prompt(
+                "Profile (use a new name for a second, separate instance)",
+                default=DEFAULT_PROFILE,
+            )
+            try:
+                home = resolve_home(profile)
+                break
+            except ValueError as exc:
+                console.print(f"  [yellow]{exc}[/yellow]")
     home.mkdir(parents=True, exist_ok=True)
     console.print(f"[green]Profile[/green] [cyan]{profile}[/cyan] -- data dir {home}")
+
+    # Re-run acknowledgement: if this profile is already wired, say so instead of
+    # silently redoing setup. Skipped when running unattended.
+    if not unattended and _read_user_mcp_entry(_server_key(profile)) is not None:
+        console.print()
+        if not click.confirm(f"Profile '{profile}' looks already configured. Re-run setup?", default=True):
+            console.print("[dim]Nothing changed.[/dim]")
+            return 0
 
     # 2. Wire Claude Code
     console.print()
