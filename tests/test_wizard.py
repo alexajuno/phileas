@@ -1,9 +1,5 @@
-"""Tests for the wizard skill-install + MCP-wiring helpers (PHI-39).
-
-The hook-delivery helpers (_sync_hook_state / *HOOK_COMMANDS) were removed when
-Phileas went MCP-only (AA-116); only the skill-install and Codex MCP-config
-wiring remain.
-"""
+"""Tests for the wizard helpers: skill install, Claude Code MCP wiring,
+model setup, and the readiness verdict."""
 
 from __future__ import annotations
 
@@ -14,10 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from phileas.cli.wizard import (
+    _ensure_model,
     _install_skill,
-    _install_skill_codex,
+    _model_cached,
     _wire_claude_code,
-    _wire_codex,
+    run_wizard,
 )
 
 
@@ -26,10 +23,6 @@ def fake_home(tmp_path, monkeypatch):
     """Point Path.home() at tmp_path for the duration of a test."""
     monkeypatch.setenv("HOME", str(tmp_path))
     return tmp_path
-
-
-def _codex_config_file(home: Path) -> Path:
-    return home / ".codex" / "config.toml"
 
 
 # ------------------------------------------------------------------
@@ -76,7 +69,7 @@ class TestInstallSkill:
 
 
 # ------------------------------------------------------------------
-# Codex integration helpers
+# Claude Code MCP wiring
 # ------------------------------------------------------------------
 
 
@@ -95,61 +88,6 @@ def _record_subprocess(monkeypatch, returncodes):
 
     monkeypatch.setattr("phileas.cli.wizard.subprocess.run", fake_run)
     return calls
-
-
-class TestWireCodex:
-    """Codex MCP config is written to ~/.codex/config.toml."""
-
-    def test_writes_mcp_server_when_missing(self, fake_home):
-        changed = _wire_codex("default")
-        assert changed is True
-        text = _codex_config_file(fake_home).read_text(encoding="utf-8")
-        assert "[mcp_servers.phileas]" in text
-        assert 'args = ["serve"]' in text
-
-    def test_replaces_existing_phileas_server_preserving_other_config(self, fake_home):
-        path = _codex_config_file(fake_home)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            "\n".join(
-                [
-                    '[projects."/tmp/project"]',
-                    'trust_level = "trusted"',
-                    "",
-                    "[mcp_servers.phileas]",
-                    'command = "old"',
-                    'args = ["old"]',
-                    "",
-                    "[mcp_servers.other]",
-                    'command = "other"',
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-
-        changed = _wire_codex("default")
-        assert changed is True
-        text = path.read_text(encoding="utf-8")
-        assert 'trust_level = "trusted"' in text
-        assert 'command = "old"' not in text
-        assert "[mcp_servers.other]" in text
-        assert text.count("[mcp_servers.phileas]") == 1
-
-    def test_named_profile_uses_distinct_table_and_env(self, fake_home):
-        """A named profile writes a separate table carrying PHILEAS_PROFILE."""
-        assert _wire_codex("dev") is True
-        text = _codex_config_file(fake_home).read_text(encoding="utf-8")
-        assert "[mcp_servers.phileas-dev]" in text
-        assert 'PHILEAS_PROFILE = "dev"' in text
-
-    def test_named_profile_coexists_with_default(self, fake_home):
-        """Wiring dev after default leaves both server tables in place."""
-        _wire_codex("default")
-        _wire_codex("dev")
-        text = _codex_config_file(fake_home).read_text(encoding="utf-8")
-        assert "[mcp_servers.phileas]" in text
-        assert "[mcp_servers.phileas-dev]" in text
 
 
 def _write_claude_servers(home: Path, servers: dict, extra: dict | None = None) -> Path:
@@ -255,12 +193,100 @@ class TestWireClaudeCodeCli:
         assert len(calls) == 1  # no remove-then-retry dance
 
 
-class TestInstallSkillCodex:
-    """Skill is copied from the package asset to ~/.codex/skills/phileas/SKILL.md."""
+# ------------------------------------------------------------------
+# Model setup
+# ------------------------------------------------------------------
 
-    def test_creates_skill_when_missing(self, fake_home):
-        changed, _msg = _install_skill_codex()
-        assert changed is True
-        dest = fake_home / ".codex" / "skills" / "phileas" / "SKILL.md"
-        assert dest.is_file()
-        assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas\n")
+
+class TestModelCached:
+    """The cache preflight loads offline: present -> True, missing -> False."""
+
+    def test_true_when_loader_succeeds_and_restores_env(self, monkeypatch):
+        import os
+
+        monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        assert _model_cached(lambda name: None, "m") is True
+        assert "HF_HUB_OFFLINE" not in os.environ  # restored to absent
+
+    def test_false_when_loader_raises(self):
+        def boom(name):
+            raise OSError("not cached")
+
+        assert _model_cached(boom, "m") is False
+
+    def test_restores_preexisting_env_value(self, monkeypatch):
+        import os
+
+        monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+        _model_cached(lambda name: None, "m")
+        assert os.environ["HF_HUB_OFFLINE"] == "0"  # original value put back
+
+
+class TestEnsureModel:
+    """_ensure_model: cache first, then download with one retry."""
+
+    def test_present_skips_download(self, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._model_cached", lambda loader, name: True)
+        downloads: list[str] = []
+        assert _ensure_model(lambda name: downloads.append(name), "m") == "present"
+        assert downloads == []
+
+    def test_downloaded_when_not_cached(self, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._model_cached", lambda loader, name: False)
+        downloads: list[str] = []
+        assert _ensure_model(lambda name: downloads.append(name), "m") == "downloaded"
+        assert downloads == ["m"]
+
+    def test_failed_retries_once(self, monkeypatch):
+        monkeypatch.setattr("phileas.cli.wizard._model_cached", lambda loader, name: False)
+        attempts: list[str] = []
+
+        def boom(name):
+            attempts.append(name)
+            raise RuntimeError("network down")
+
+        assert _ensure_model(boom, "m") == "failed"
+        assert len(attempts) == 2  # initial attempt + one retry
+
+
+# ------------------------------------------------------------------
+# run_wizard readiness verdict
+# ------------------------------------------------------------------
+
+
+class TestRunWizardReadiness:
+    """run_wizard returns 0 only when the embedding model is present; the
+    reranker is optional and never gates readiness."""
+
+    def _stub(self, monkeypatch, *, embedding, reranker="present", mcp="unchanged"):
+        monkeypatch.setattr("phileas.cli.wizard.click.prompt", lambda *a, **k: "default")
+        monkeypatch.setattr("phileas.cli.wizard._wire_claude_code", lambda profile: mcp)
+        monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (False, "already installed"))
+        monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
+        monkeypatch.setattr("phileas.cli.wizard._ensure_reranker_model", lambda: reranker)
+
+    def test_ready_when_embedding_present(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="present")
+        assert run_wizard() == 0
+
+    def test_ready_when_embedding_downloaded(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="downloaded")
+        assert run_wizard() == 0
+
+    def test_not_ready_when_embedding_failed(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="failed")
+        assert run_wizard() == 1
+
+    def test_ready_when_only_reranker_failed(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="present", reranker="failed")
+        assert run_wizard() == 0
+
+    def test_skip_models_is_not_ready_and_skips_download(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="present")
+        called: list[str] = []
+        monkeypatch.setattr(
+            "phileas.cli.wizard._ensure_embedding_model",
+            lambda: called.append("embedding") or "present",
+        )
+        assert run_wizard(skip_models=True) == 1
+        assert called == []  # --skip-models never invokes the downloader

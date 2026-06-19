@@ -790,18 +790,23 @@ def serve():
 
 
 @click.command("init")
-def init_cmd():
-    """Set up Phileas interactively.
+@click.option(
+    "--skip-models",
+    is_flag=True,
+    help="Skip downloading the embedding/reranker models (set them up later).",
+)
+def init_cmd(skip_models):
+    """Set up Phileas for Claude Code.
 
-    Picks usage mode (Claude Code / Antigravity / Codex / standalone),
-    selects a profile (each profile is a separate instance with its own
-    data dir, daemon, and timer), wires the MCP entry and recall skill
-    into the chosen clients, and downloads the embedding and reranker
-    models.
+    Selects a profile (each profile is a separate instance with its own data
+    dir, daemon, and timer), wires the Phileas MCP server and recall skill into
+    Claude Code, and sets up the embedding and reranker models.
     """
     from phileas.cli.wizard import run_wizard
 
-    run_wizard()
+    code = run_wizard(skip_models=skip_models)
+    if code:
+        raise SystemExit(code)
 
 
 # ------------------------------------------------------------------

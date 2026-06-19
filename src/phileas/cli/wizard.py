@@ -1,10 +1,9 @@
 """Interactive setup wizard for `phileas init`.
 
 Walks the user through first-time configuration:
- 1. Choose usage mode (Claude Code / Antigravity / Codex / Standalone / All)
- 2. Choose a profile (which instance — its own data dir, daemon, timer)
- 3. Wire the MCP config for the chosen clients
- 4. Download embedding + reranker models
+ 1. Choose a profile (which instance, with its own data dir, daemon, timer)
+ 2. Wire the Phileas MCP server + recall skill into Claude Code
+ 3. Set up the embedding (required) and reranker (optional) models
 """
 
 from __future__ import annotations
@@ -38,6 +37,13 @@ def _server_key(profile: str) -> str:
     overwriting its entry.
     """
     return "phileas" if profile == DEFAULT_PROFILE else f"phileas-{profile}"
+
+
+def _find_phileas_command() -> str | None:
+    """Find the phileas executable on PATH."""
+    import shutil
+
+    return shutil.which("phileas")
 
 
 def _server_command() -> tuple[str, list[str]]:
@@ -102,8 +108,8 @@ def _claude_add_argv(claude: str, profile: str) -> list[str]:
 
     Order matters: the name must precede ``--env`` (which is variadic and would
     otherwise swallow the name as another env var), and ``--`` must precede the
-    command so the server's own flags (e.g. the ``uv run --project`` fallback)
-    reach the subprocess intact. Mirrors the CLI's own example,
+    command so the server's own args (the ``-c`` script for the interpreter
+    fallback) reach the subprocess intact. Mirrors the CLI's own example,
     ``claude mcp add <name> -e KEY=val -- <command>``.
     """
     command, args = _server_command()
@@ -183,98 +189,6 @@ def _wire_claude_code(profile: str) -> str:
     return "added" if _add_claude_entry(profile) else "failed"
 
 
-def _wire_antigravity(profile: str) -> bool:
-    """Add the profile's Phileas MCP server to Antigravity's config. Returns True on success."""
-    paths = [
-        Path.home() / ".gemini" / "config" / "mcp_config.json",
-        Path.home() / ".gemini" / "antigravity-cli" / "mcp_config.json",
-    ]
-    return any([_write_json_mcp(p, profile) for p in paths])
-
-
-def _codex_home() -> Path:
-    env = os.environ.get("CODEX_HOME")
-    if env:
-        return Path(env).expanduser()
-    return Path.home() / ".codex"
-
-
-def _toml_string(value: str) -> str:
-    return json.dumps(value)
-
-
-def _toml_string_array(values: list[str]) -> str:
-    return "[" + ", ".join(_toml_string(value) for value in values) + "]"
-
-
-def _replace_toml_table(text: str, table: str, block: str) -> str:
-    lines = text.splitlines()
-    out: list[str] = []
-    skipping = False
-    inserted = False
-
-    for line in lines:
-        stripped = line.strip()
-        is_table = stripped.startswith("[") and stripped.endswith("]")
-        table_name = stripped.strip("[]").strip() if is_table else ""
-
-        if is_table and (table_name == table or table_name.startswith(f"{table}.")):
-            if not inserted:
-                if out and out[-1].strip():
-                    out.append("")
-                out.extend(block.splitlines())
-                inserted = True
-            skipping = True
-            continue
-
-        if skipping and is_table:
-            skipping = False
-
-        if not skipping:
-            out.append(line)
-
-    if not inserted:
-        if out and out[-1].strip():
-            out.append("")
-        out.extend(block.splitlines())
-
-    return "\n".join(out).rstrip() + "\n"
-
-
-def _wire_codex(profile: str) -> bool:
-    """Add the profile's Phileas MCP server to Codex's config.toml. Returns True on success."""
-    config_path = _codex_home() / "config.toml"
-    command, args = _server_command()
-
-    table = f"mcp_servers.{_server_key(profile)}"
-    block_lines = [
-        f"[{table}]",
-        f"command = {_toml_string(command)}",
-        f"args = {_toml_string_array(args)}",
-    ]
-    if profile != DEFAULT_PROFILE:
-        block_lines.append(f"env = {{ PHILEAS_PROFILE = {_toml_string(profile)} }}")
-    block = "\n".join(block_lines)
-
-    try:
-        if config_path.exists():
-            text = config_path.read_text(encoding="utf-8")
-        else:
-            text = ""
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(_replace_toml_table(text, table, block), encoding="utf-8")
-        return True
-    except OSError:
-        return False
-
-
-def _find_phileas_command() -> str | None:
-    """Find the phileas executable on PATH."""
-    import shutil
-
-    return shutil.which("phileas")
-
-
 # -- Skill installation ------------------------------------------------
 
 # Source asset ships with the package and never depends on HOME.
@@ -323,131 +237,101 @@ def _install_skill(force: bool = False) -> tuple[bool, str]:
     return True, f"installed skill at {dest}"
 
 
-def _skill_dest_antigravity() -> Path:
-    """Live destination for the user-invoked skill in Antigravity."""
-    return Path.home() / ".gemini" / "config" / "skills" / "phileas" / "SKILL.md"
+# -- Model setup ------------------------------------------------------
 
 
-def _install_skill_antigravity(force: bool = False) -> tuple[bool, str]:
-    """Install the Phileas skill into ~/.gemini/config/skills/phileas/SKILL.md."""
-    if not SKILL_SOURCE.is_file():
-        return False, f"skill source missing at {SKILL_SOURCE}"
+def _model_cached(loader, name: str) -> bool:
+    """True if ``name`` is already in the local cache (no network needed).
 
+    Loads with the HuggingFace hub forced offline: a cached model loads, a
+    missing one raises fast without touching the network. Restores the prior
+    ``HF_HUB_OFFLINE`` value so the check doesn't leak into the rest of init.
+    """
+    previous = os.environ.get("HF_HUB_OFFLINE")
+    os.environ["HF_HUB_OFFLINE"] = "1"
     try:
-        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not read skill source: {exc}"
-
-    dest = _skill_dest_antigravity()
-    if dest.exists():
-        try:
-            existing = dest.read_text(encoding="utf-8")
-        except OSError as exc:
-            return False, f"could not read existing skill: {exc}"
-        if existing == source_text:
-            return False, f"skill already installed at {dest}"
-        if not force:
-            return False, f"skill exists with custom content at {dest} (use force=True to overwrite)"
-
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(source_text, encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not write skill: {exc}"
-
-    return True, f"installed skill at {dest}"
-
-
-def _skill_dest_codex() -> Path:
-    """Live destination for the user-invoked skill in Codex."""
-    return _codex_home() / "skills" / "phileas" / "SKILL.md"
-
-
-def _install_skill_codex(force: bool = False) -> tuple[bool, str]:
-    """Install the Phileas skill into ~/.codex/skills/phileas/SKILL.md."""
-    if not SKILL_SOURCE.is_file():
-        return False, f"skill source missing at {SKILL_SOURCE}"
-
-    try:
-        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not read skill source: {exc}"
-
-    dest = _skill_dest_codex()
-    if dest.exists():
-        try:
-            existing = dest.read_text(encoding="utf-8")
-        except OSError as exc:
-            return False, f"could not read existing skill: {exc}"
-        if existing == source_text:
-            return False, f"skill already installed at {dest}"
-        if not force:
-            return False, f"skill exists with custom content at {dest} (use force=True to overwrite)"
-
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(source_text, encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not write skill: {exc}"
-
-    return True, f"installed skill at {dest}"
-
-
-def _download_embedding_model() -> bool:
-    """Download the sentence-transformers embedding model. Returns True on success."""
-    try:
-        from sentence_transformers import SentenceTransformer
-
-        console.print(f"  Downloading embedding model [cyan]{EMBEDDING_MODEL}[/cyan] ...")
-        SentenceTransformer(EMBEDDING_MODEL)
+        loader(name)
         return True
-    except Exception as exc:
-        console.print(f"  [yellow]skipped[/yellow] -- {exc}")
+    except Exception:
         return False
+    finally:
+        if previous is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = previous
 
 
-def _download_reranker_model() -> bool:
-    """Download the cross-encoder reranker model. Returns True on success."""
-    try:
-        from sentence_transformers import CrossEncoder
+def _ensure_model(loader, name: str, *, retries: int = 1) -> str:
+    """Make a model available locally. Returns ``present``, ``downloaded``, or ``failed``.
 
-        console.print(f"  Downloading reranker model [cyan]{RERANKER_MODEL}[/cyan] ...")
-        CrossEncoder(RERANKER_MODEL, max_length=256)
-        return True
-    except Exception as exc:
-        console.print(f"  [yellow]skipped[/yellow] -- {exc}")
-        return False
+    Checks the local cache first so an already-downloaded model costs no
+    network. Otherwise fetches it, retrying once on a transient error.
+    """
+    if _model_cached(loader, name):
+        console.print(f"  [green]present[/green] -- {name}")
+        return "present"
+
+    console.print(f"  Downloading [cyan]{name}[/cyan] ...")
+    last_exc: Exception | None = None
+    for _ in range(retries + 1):
+        try:
+            loader(name)
+            return "downloaded"
+        except Exception as exc:
+            last_exc = exc
+    console.print(f"  [yellow]failed[/yellow] -- {last_exc}")
+    return "failed"
+
+
+def _ensure_embedding_model() -> str:
+    """Ensure the sentence-transformers embedding model is available locally."""
+    from sentence_transformers import SentenceTransformer
+
+    return _ensure_model(SentenceTransformer, EMBEDDING_MODEL)
+
+
+def _ensure_reranker_model() -> str:
+    """Ensure the cross-encoder reranker model is available locally."""
+    from sentence_transformers import CrossEncoder
+
+    return _ensure_model(lambda name: CrossEncoder(name, max_length=256), RERANKER_MODEL)
+
+
+# -- Summary helpers --------------------------------------------------
+
+
+def _mcp_summary(status: str, key: str) -> str:
+    return {
+        "added": f"registered '{key}'",
+        "unchanged": f"'{key}' already configured",
+        "conflict": f"left existing '{key}' as-is (points elsewhere)",
+        "failed": "not registered (see above)",
+    }.get(status, status)
+
+
+def _model_summary(status: str) -> str:
+    return {
+        "present": "already downloaded",
+        "downloaded": "downloaded",
+        "failed": "download failed",
+        "skipped": "skipped (--skip-models)",
+    }.get(status, status)
 
 
 # -- Main wizard ------------------------------------------------------
 
 
-def run_wizard() -> None:
-    """Run the interactive init wizard."""
+def run_wizard(skip_models: bool = False) -> int:
+    """Run the interactive init wizard. Returns a process exit code.
+
+    Returns 0 when Phileas is ready (the embedding model is present) and 1 when
+    a required model is missing, so the caller can exit non-zero.
+    """
     console.print()
     console.print("[bold cyan]Welcome to Phileas[/bold cyan] -- persistent memory for AI.")
     console.print()
 
-    # 1. Usage mode
-    console.print("How will you use Phileas?")
-    console.print()
-    console.print(
-        "  [cyan]1[/cyan]  With Claude Code [dim](recommended)[/dim] -- Claude is the brain, Phileas stores memories"
-    )
-    console.print("  [cyan]2[/cyan]  With Antigravity -- Antigravity is the brain, Phileas stores memories")
-    console.print("  [cyan]3[/cyan]  With Codex CLI -- Codex is the brain, Phileas stores memories")
-    console.print("  [cyan]4[/cyan]  Standalone CLI -- Phileas uses an LLM API for smart features")
-    console.print("  [cyan]5[/cyan]  All -- Claude Code + Antigravity + Codex + standalone CLI access")
-    console.print()
-
-    mode = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4", "5"]), default="1")
-    use_claude_code = mode in ("1", "5")
-    use_antigravity = mode in ("2", "5")
-    use_codex = mode in ("3", "5")
-    use_standalone = mode in ("4", "5")
-
-    # 2. Profile — which instance to set up (its own data dir, daemon, timer)
-    console.print()
+    # 1. Profile -- which instance to set up (its own data dir, daemon, timer)
     while True:
         profile = click.prompt(
             "Profile (use a new name for a second, separate instance)",
@@ -461,74 +345,62 @@ def run_wizard() -> None:
     home.mkdir(parents=True, exist_ok=True)
     console.print(f"[green]Profile[/green] [cyan]{profile}[/cyan] -- data dir {home}")
 
-    # 3. Wire integrations
-    if use_claude_code:
-        console.print()
-        console.print("[bold]Configuring Claude Code integration...[/bold]")
-        key = _server_key(profile)
-        env_flag = "" if profile == DEFAULT_PROFILE else f"--env PHILEAS_PROFILE={profile} "
-        status = _wire_claude_code(profile)
-        if status == "added":
-            console.print(f"  MCP   [green]OK[/green] -- registered '{key}' (user scope)")
-            console.print(f"        [dim]Verify with: claude mcp get {key}[/dim]")
-        elif status == "unchanged":
-            console.print(f"  MCP   [green]OK[/green] -- '{key}' already configured")
-        elif status == "conflict":
-            console.print(f"  MCP   [yellow]'{key}' already points at a different command -- left as-is[/yellow]")
-            console.print("        To repoint it at this install, run:")
-            console.print(f"        [cyan]claude mcp remove --scope user {key}[/cyan]")
-            console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
-        else:  # failed
-            console.print("  MCP   [yellow]could not register the MCP server automatically[/yellow]")
-            console.print("        Register it manually with:")
-            console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
-
-        changed, msg = _install_skill()
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Skill {marker} -- {msg}")
-        console.print("  [dim]Restart Claude Code to pick up MCP + skill changes.[/dim]")
-
-    if use_antigravity:
-        console.print()
-        console.print("[bold]Configuring Antigravity integration...[/bold]")
-        if _wire_antigravity(profile):
-            console.print("  MCP   [green]OK[/green] -- updated mcp_config.json")
-        else:
-            console.print("  MCP   [yellow]could not write MCP config automatically[/yellow]")
-            console.print("        Add this to ~/.gemini/config/mcp_config.json manually:")
-            console.print('        [cyan]"phileas": { "command": "phileas", "args": ["serve"] }[/cyan]')
-
-        changed, msg = _install_skill_antigravity()
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Skill {marker} -- {msg}")
-        console.print("  [dim]Restart Antigravity/agy to pick up MCP + skill changes.[/dim]")
-
-    if use_codex:
-        console.print()
-        console.print("[bold]Configuring Codex CLI integration...[/bold]")
-        if _wire_codex(profile):
-            config_path = _codex_home() / "config.toml"
-            console.print(f"  MCP   [green]OK[/green] -- updated {config_path}")
-        else:
-            console.print("  MCP   [yellow]could not write Codex config automatically[/yellow]")
-            console.print("        Add this to ~/.codex/config.toml manually:")
-            console.print(
-                '        [cyan][mcp_servers.phileas]\n        command = "phileas"\n        args = ["serve"][/cyan]'
-            )
-
-        changed, msg = _install_skill_codex()
-        marker = "[green]OK[/green]" if changed else "[dim]skip[/dim]"
-        console.print(f"  Skill {marker} -- {msg}")
-        console.print("  [dim]Restart Codex CLI to pick up MCP + skill changes.[/dim]")
-
-    # 5. Download models
+    # 2. Wire Claude Code
     console.print()
-    console.print("[bold]Downloading models...[/bold]")
-    _download_embedding_model()
-    _download_reranker_model()
+    console.print("[bold]Configuring Claude Code integration...[/bold]")
+    key = _server_key(profile)
+    env_flag = "" if profile == DEFAULT_PROFILE else f"--env PHILEAS_PROFILE={profile} "
+    mcp_status = _wire_claude_code(profile)
+    if mcp_status == "added":
+        console.print(f"  MCP   [green]OK[/green] -- registered '{key}' (user scope)")
+        console.print(f"        [dim]Verify with: claude mcp get {key}[/dim]")
+    elif mcp_status == "unchanged":
+        console.print(f"  MCP   [green]OK[/green] -- '{key}' already configured")
+    elif mcp_status == "conflict":
+        console.print(f"  MCP   [yellow]'{key}' already points at a different command -- left as-is[/yellow]")
+        console.print("        To repoint it at this install, run:")
+        console.print(f"        [cyan]claude mcp remove --scope user {key}[/cyan]")
+        console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
+    else:  # failed
+        console.print("  MCP   [yellow]could not register the MCP server automatically[/yellow]")
+        console.print("        Register it manually with:")
+        console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
 
-    # 6. Done
+    skill_changed, skill_msg = _install_skill()
+    skill_marker = "[green]OK[/green]" if skill_changed else "[dim]skip[/dim]"
+    console.print(f"  Skill {skill_marker} -- {skill_msg}")
+    console.print("  [dim]Restart Claude Code to pick up MCP + skill changes.[/dim]")
+
+    # 3. Models -- embedding is required, reranker is optional
     console.print()
+    if skip_models:
+        console.print("[bold]Models[/bold] -- [yellow]skipped[/yellow] (--skip-models)")
+        embedding_status = "skipped"
+        reranker_status = "skipped"
+    else:
+        console.print("[bold]Setting up models...[/bold]")
+        embedding_status = _ensure_embedding_model()
+        reranker_status = _ensure_reranker_model()
+
+    # 4. Summary + readiness verdict
+    console.print()
+    console.print("[bold]Summary[/bold]")
+    console.print(f"  MCP        {_mcp_summary(mcp_status, key)}")
+    console.print(f"  Skill      {'updated' if skill_changed else 'already current'}")
+    console.print(f"  Embedding  {_model_summary(embedding_status)}")
+    console.print(f"  Reranker   {_model_summary(reranker_status)}")
+    console.print()
+
+    if embedding_status not in ("present", "downloaded"):
+        console.print("[bold yellow]Phileas is set up, but not ready yet.[/bold yellow]")
+        console.print("  The embedding model is required for [cyan]memorize[/cyan] and [cyan]recall[/cyan].")
+        if skip_models:
+            console.print("  Fetch it when you're ready by re-running [cyan]phileas init[/cyan].")
+        else:
+            console.print("  It could not be downloaded. Re-run [cyan]phileas init[/cyan] with a connection.")
+        console.print()
+        return 1
+
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()
 
@@ -539,30 +411,9 @@ def run_wizard() -> None:
         )
         console.print()
 
-    if use_claude_code and not use_standalone and not use_antigravity and not use_codex:
-        console.print("Next steps:")
-        console.print("  [cyan]1.[/cyan] Restart Claude Code")
-        console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
-        console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
-    elif use_antigravity and not use_standalone and not use_claude_code and not use_codex:
-        console.print("Next steps:")
-        console.print("  [cyan]1.[/cyan] Restart Antigravity/agy")
-        console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
-        console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
-    elif use_codex and not use_standalone and not use_claude_code and not use_antigravity:
-        console.print("Next steps:")
-        console.print("  [cyan]1.[/cyan] Restart Codex CLI")
-        console.print("  [cyan]2.[/cyan] Run [cyan]/hooks[/cyan] and trust the Phileas hooks")
-        console.print("  [cyan]3.[/cyan] Start chatting -- Phileas will remember automatically")
-    elif use_standalone and not use_claude_code and not use_antigravity and not use_codex:
-        console.print("Try:")
-        console.print('  [cyan]phileas remember "something about yourself"[/cyan]')
-        console.print('  [cyan]phileas recall "what do you know about me"[/cyan]')
-        console.print("  [cyan]phileas status[/cyan]")
-    else:
-        console.print("Next steps:")
-        console.print("  [cyan]1.[/cyan] Restart Claude Code, Antigravity, and/or Codex for MCP integration")
-        console.print('  [cyan]2.[/cyan] Try the CLI: [cyan]phileas remember "I like Python"[/cyan]')
-        console.print("  [cyan]3.[/cyan] Check usage: [cyan]phileas usage[/cyan]")
-
+    console.print("Next steps:")
+    console.print("  [cyan]1.[/cyan] Restart Claude Code")
+    console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")
+    console.print("  [cyan]3.[/cyan] Try: [cyan]phileas status[/cyan] to check your memories")
     console.print()
+    return 0
