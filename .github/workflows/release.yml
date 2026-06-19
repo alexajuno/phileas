@@ -1,8 +1,8 @@
 name: Release
 
 # Build and publish phileas-memory to PyPI when a GitHub Release is published.
-# Publishing uses PyPI Trusted Publishing (OIDC) — no API token stored in the
-# repo. See RELEASING.md for the one-time PyPI setup and how to cut a release.
+# Publishing uses PyPI Trusted Publishing (OIDC); no API token is stored in the
+# repo.
 
 on:
   release:
