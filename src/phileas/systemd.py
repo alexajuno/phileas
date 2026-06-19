@@ -1,10 +1,12 @@
-"""Systemd user timer management for Phileas background jobs.
+"""Systemd user unit management for Phileas background jobs.
 
-Installs/removes the per-profile health-check timer:
-  - phileas-health@<profile>: periodic health check that pushes alerts
+Installs/removes two per-profile units:
+  - phileas-daemon@<profile>: the long-running daemon (KuzuDB graph + model
+    server) that the MCP server proxies all graph operations to.
+  - phileas-health@<profile>: periodic health check that pushes alerts.
 
-The unit is instanced by profile so that several Phileas instances (e.g. a
-``default`` store and a ``dev`` store) each get their own timer instead of the
+Both are instanced by profile so that several Phileas instances (e.g. a
+``default`` store and a ``dev`` store) each get their own units instead of the
 second install retargeting the first.
 """
 
@@ -39,7 +41,44 @@ def _phileas_bin() -> str:
     return "phileas"
 
 
+def systemd_available() -> bool:
+    """True when a systemd user manager is reachable, so units can be installed.
+
+    macOS, containers, and headless boxes without ``systemd --user`` fail this,
+    which is the signal init uses to fall back to an unsupervised daemon.
+    """
+    if which("systemctl") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "show", "--property=Version"],
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+_DAEMON_UNIT = "phileas-daemon"
 _HEALTH_UNIT = "phileas-health"
+
+_DAEMON_SERVICE_TEMPLATE = """\
+[Unit]
+Description=Phileas memory daemon -- KuzuDB graph + model server (profile {profile})
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={bin} start --foreground
+Environment=PHILEAS_HOME={home}
+Environment=PHILEAS_PROFILE={profile}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
 
 _SERVICE_TEMPLATE = """\
 [Unit]
@@ -68,6 +107,62 @@ WantedBy=timers.target
 def _health_unit(profile: str) -> str:
     """Instanced unit base name for a profile, e.g. ``phileas-health@dev``."""
     return f"{_HEALTH_UNIT}@{profile}"
+
+
+def _daemon_unit(profile: str) -> str:
+    """Instanced daemon-service base name, e.g. ``phileas-daemon@dev``."""
+    return f"{_DAEMON_UNIT}@{profile}"
+
+
+def legacy_daemon_service() -> str | None:
+    """Return ``phileas-daemon`` if a pre-profile, non-instanced service exists.
+
+    Hand-rolled or pre-profile installs carry the bare ``phileas-daemon.service``
+    name (it may hold custom env, e.g. a secrets drop-in). init leaves it
+    untouched and surfaces it rather than installing a second, competing
+    instanced unit for the same default store.
+    """
+    path = _unit_dir() / f"{_DAEMON_UNIT}.service"
+    return _DAEMON_UNIT if path.exists() else None
+
+
+def install_daemon_service(home: Path, profile: str = DEFAULT_PROFILE) -> list[str]:
+    """Install and enable the profile's daemon service. Returns installed unit names.
+
+    The service runs ``phileas start --foreground`` under systemd so the daemon
+    (the single KuzuDB owner) survives logout and reboot and restarts on failure.
+    ``enable --now`` starts it; the caller waits for the daemon to answer, since a
+    cold start loads the embedding and reranker models before it binds a port.
+    """
+    unit_dir = _unit_dir()
+    phileas_bin = _phileas_bin()
+
+    name = _daemon_unit(profile)
+    service_path = unit_dir / f"{name}.service"
+    service_path.write_text(_DAEMON_SERVICE_TEMPLATE.format(bin=phileas_bin, home=str(home), profile=profile))
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", f"{name}.service"], capture_output=True)
+
+    return [name]
+
+
+def remove_daemon_service(profile: str = DEFAULT_PROFILE) -> list[str]:
+    """Disable and remove the profile's daemon service. Returns removed unit names."""
+    unit_dir = _unit_dir()
+    name = _daemon_unit(profile)
+    service_path = unit_dir / f"{name}.service"
+    removed = []
+
+    if service_path.exists():
+        subprocess.run(["systemctl", "--user", "disable", "--now", f"{name}.service"], capture_output=True)
+        service_path.unlink(missing_ok=True)
+        removed.append(name)
+
+    if removed:
+        subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+
+    return removed
 
 
 # Units Phileas no longer manages. ``phileas-health`` (no ``@``) is the

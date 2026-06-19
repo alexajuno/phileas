@@ -26,7 +26,7 @@ from time import perf_counter
 from mcp.server.fastmcp import FastMCP
 
 from phileas import tool_runner
-from phileas.config import load_config
+from phileas.config import DEFAULT_PROFILE, load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph_proxy import GraphProxy
@@ -955,9 +955,10 @@ def status() -> str:
         f"Vector embeddings:  {stats.get('vector_count', 0)}",
     ]
     if daemon_down:
-        lines.append(
-            "Graph:              UNAVAILABLE (daemon not running). Start it with: systemctl --user start phileas-daemon"
+        start_cmd = (
+            "phileas start" if _config.profile == DEFAULT_PROFILE else f"phileas --profile {_config.profile} start"
         )
+        lines.append(f"Graph:              UNAVAILABLE (daemon not running). Start it with: {start_cmd}")
     else:
         lines.append(f"Graph nodes:        {graph_nodes}")
         lines.append(f"Graph edges:        {graph_edges}")

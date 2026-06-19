@@ -812,7 +812,8 @@ def init_cmd(profile, assume_yes, skip_models):
 
     Selects a profile (each profile is a separate instance with its own data
     dir, daemon, and timer), wires the Phileas MCP server and recall skill into
-    Claude Code, and sets up the embedding and reranker models.
+    Claude Code, sets up the embedding and reranker models, and establishes the
+    daemon that owns the entity graph so it works out of the box.
 
     Runs interactively by default. For scripted or CI use, pass --profile and/or
     --yes to skip the prompts.

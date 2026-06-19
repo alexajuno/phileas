@@ -11,12 +11,14 @@ import pytest
 
 from phileas.cli.wizard import (
     _ensure_model,
+    _establish_daemon,
     _install_skill,
     _model_cached,
     _skill_marker,
     _wire_claude_code,
     run_wizard,
 )
+from phileas.config import DEFAULT_PROFILE
 
 
 @pytest.fixture
@@ -307,12 +309,13 @@ class TestRunWizardReadiness:
     """run_wizard returns 0 only when the embedding model is present; the
     reranker is optional and never gates readiness."""
 
-    def _stub(self, monkeypatch, *, embedding, reranker="present", mcp="unchanged"):
+    def _stub(self, monkeypatch, *, embedding, reranker="present", mcp="unchanged", daemon="running"):
         monkeypatch.setattr("phileas.cli.wizard.click.prompt", lambda *a, **k: "default")
         monkeypatch.setattr("phileas.cli.wizard._wire_claude_code", lambda profile: mcp)
         monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (False, "already installed"))
         monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
         monkeypatch.setattr("phileas.cli.wizard._ensure_reranker_model", lambda: reranker)
+        monkeypatch.setattr("phileas.cli.wizard._establish_daemon", lambda home, profile: daemon)
 
     def test_ready_when_embedding_present(self, fake_home, monkeypatch):
         self._stub(monkeypatch, embedding="present")
@@ -340,6 +343,28 @@ class TestRunWizardReadiness:
         assert run_wizard(skip_models=True) == 1
         assert called == []  # --skip-models never invokes the downloader
 
+    def test_ready_when_daemon_started_unsupervised(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="present", daemon="manual")
+        assert run_wizard() == 0
+
+    def test_ready_when_daemon_left_to_legacy_unit(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="present", daemon="legacy")
+        assert run_wizard() == 0
+
+    def test_not_ready_when_daemon_failed(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="present", daemon="failed")
+        assert run_wizard() == 1
+
+    def test_daemon_not_attempted_when_embedding_missing(self, fake_home, monkeypatch):
+        self._stub(monkeypatch, embedding="failed")
+        called: list[int] = []
+        monkeypatch.setattr(
+            "phileas.cli.wizard._establish_daemon",
+            lambda home, profile: called.append(1) or "running",
+        )
+        assert run_wizard() == 1
+        assert called == []  # no embedding model -> daemon establishment is skipped
+
 
 # ------------------------------------------------------------------
 # run_wizard unattended mode + re-run acknowledgement
@@ -356,6 +381,7 @@ class TestRunWizardUnattended:
         monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (True, "installed"))
         monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
         monkeypatch.setattr("phileas.cli.wizard._ensure_reranker_model", lambda: "present")
+        monkeypatch.setattr("phileas.cli.wizard._establish_daemon", lambda home, profile: "running")
 
     def _forbid_prompt(self, monkeypatch):
         def boom(*a, **k):
@@ -400,3 +426,72 @@ class TestRunWizardUnattended:
 
         monkeypatch.setattr("phileas.cli.wizard.click.confirm", boom)
         assert run_wizard(assume_yes=True) == 0
+
+
+# ------------------------------------------------------------------
+# _establish_daemon -- bring up the graph-owning daemon
+# ------------------------------------------------------------------
+
+
+class TestEstablishDaemon:
+    """Prefers a supervised systemd service, falls back to an unsupervised
+    start, leaves a hand-managed unit alone, and reports failure honestly."""
+
+    def test_running_when_already_up(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: 12345)
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: None)
+        assert _establish_daemon(fake_home, "dev") == "running"
+
+    def test_legacy_unit_left_untouched_for_default(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: "phileas-daemon")
+        # The legacy guard short-circuits before is_running is even consulted.
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: None)
+        assert _establish_daemon(fake_home, DEFAULT_PROFILE) == "legacy"
+
+    def test_named_profile_ignores_legacy_default_unit(self, fake_home, monkeypatch):
+        # The legacy unit only governs the default store; a named profile installs
+        # its own instanced service regardless.
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: "phileas-daemon")
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: None)
+        monkeypatch.setattr("phileas.systemd.systemd_available", lambda: True)
+        monkeypatch.setattr("phileas.systemd.install_daemon_service", lambda home, profile: ["phileas-daemon@dev"])
+        monkeypatch.setattr("phileas.cli.wizard._wait_for_daemon", lambda cfg: True)
+        assert _establish_daemon(fake_home, "dev") == "service"
+
+    def test_installs_service_when_systemd_available(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: None)
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: None)
+        monkeypatch.setattr("phileas.systemd.systemd_available", lambda: True)
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            "phileas.systemd.install_daemon_service",
+            lambda home, profile: calls.append((home, profile)) or ["phileas-daemon@dev"],
+        )
+        monkeypatch.setattr("phileas.cli.wizard._wait_for_daemon", lambda cfg: True)
+        assert _establish_daemon(fake_home, "dev") == "service"
+        assert calls  # the service install was attempted
+
+    def test_manual_when_no_systemd(self, fake_home, monkeypatch):
+        states = iter([None, 4242])  # down at first, up after the spawn
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: next(states))
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: None)
+        monkeypatch.setattr("phileas.systemd.systemd_available", lambda: False)
+        monkeypatch.setattr("phileas.cli.wizard._spawn_daemon", lambda profile, home: True)
+        assert _establish_daemon(fake_home, "dev") == "manual"
+
+    def test_failed_when_spawn_does_not_come_up(self, fake_home, monkeypatch):
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: None)
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: None)
+        monkeypatch.setattr("phileas.systemd.systemd_available", lambda: False)
+        monkeypatch.setattr("phileas.cli.wizard._spawn_daemon", lambda profile, home: False)
+        assert _establish_daemon(fake_home, "dev") == "failed"
+
+    def test_service_wait_timeout_falls_back_to_manual(self, fake_home, monkeypatch):
+        states = iter([None, 5151])  # service never answers, spawn does
+        monkeypatch.setattr("phileas.daemon.is_running", lambda cfg=None: next(states))
+        monkeypatch.setattr("phileas.systemd.legacy_daemon_service", lambda: None)
+        monkeypatch.setattr("phileas.systemd.systemd_available", lambda: True)
+        monkeypatch.setattr("phileas.systemd.install_daemon_service", lambda home, profile: ["phileas-daemon@dev"])
+        monkeypatch.setattr("phileas.cli.wizard._wait_for_daemon", lambda cfg: False)
+        monkeypatch.setattr("phileas.cli.wizard._spawn_daemon", lambda profile, home: True)
+        assert _establish_daemon(fake_home, "dev") == "manual"

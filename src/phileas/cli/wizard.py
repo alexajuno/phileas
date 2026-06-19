@@ -4,6 +4,7 @@ Walks the user through first-time configuration:
  1. Choose a profile (which instance, with its own data dir, daemon, timer)
  2. Wire the Phileas MCP server + recall skill into Claude Code
  3. Set up the embedding (required) and reranker (optional) models
+ 4. Establish the daemon that owns the entity graph (so it works out of the box)
 """
 
 from __future__ import annotations
@@ -346,6 +347,91 @@ def _ensure_reranker_model() -> str:
     return _ensure_model(lambda name: CrossEncoder(name, max_length=256), RERANKER_MODEL)
 
 
+# -- Daemon establishment ---------------------------------------------
+
+
+def _wait_for_daemon(cfg, timeout_s: float = 60.0) -> bool:
+    """Poll until the daemon answers, bounded. A cold start loads models first."""
+    import time
+
+    from phileas import daemon as daemon_mod
+
+    for _ in range(int(timeout_s * 5)):
+        if daemon_mod.is_running(cfg) is not None:
+            return True
+        time.sleep(0.2)
+    return daemon_mod.is_running(cfg) is not None
+
+
+def _spawn_daemon(profile: str, home: Path) -> bool:
+    """Start an unsupervised daemon in a fresh process. Best-effort.
+
+    Spawns rather than ``os.fork()`` in-process: init has already loaded torch
+    for the model-cache check, and forking after that is unsafe. ``phileas
+    start`` backgrounds itself and returns once the daemon has bound its port.
+    """
+    phileas_exe = _find_phileas_command()
+    argv = (
+        [phileas_exe, "start"] if phileas_exe else [sys.executable, "-c", "from phileas.daemon import start; start()"]
+    )
+    env = dict(os.environ)
+    env["PHILEAS_PROFILE"] = profile
+    env["PHILEAS_HOME"] = str(home)
+    try:
+        return subprocess.run(argv, env=env, capture_output=True, text=True, timeout=90).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _establish_daemon(home: Path, profile: str) -> str:
+    """Bring up the daemon that owns the entity graph. Returns a status string.
+
+    The MCP server proxies every graph operation to this daemon; without it,
+    memories still store and keyword/vector recall works, but the entity graph
+    stays inert. Prefer a supervised ``systemd --user`` service so it survives
+    reboot; on platforms without one, start it unsupervised for this session.
+
+      - ``running``: a daemon was already up; nothing to do.
+      - ``service``: installed + started a systemd --user service.
+      - ``manual``: no systemd user manager; started it for this session only.
+      - ``legacy``: a hand-managed ``phileas-daemon.service`` is present; left it
+        untouched rather than install a competing unit for the default store.
+      - ``failed``: could not bring a daemon up.
+    """
+    from phileas import daemon as daemon_mod
+    from phileas.config import load_config
+
+    cfg = load_config(home=home, profile=profile)
+
+    # Don't install a competing unit when a hand-managed daemon service exists
+    # for the default store -- it may carry custom env (e.g. a secrets drop-in).
+    if profile == DEFAULT_PROFILE:
+        try:
+            from phileas.systemd import legacy_daemon_service
+
+            if legacy_daemon_service() is not None:
+                return "legacy"
+        except Exception:
+            pass
+
+    if daemon_mod.is_running(cfg) is not None:
+        return "running"
+
+    try:
+        from phileas.systemd import install_daemon_service, systemd_available
+
+        if systemd_available():
+            install_daemon_service(home, profile)
+            if _wait_for_daemon(cfg):
+                return "service"
+    except Exception:
+        pass
+
+    if _spawn_daemon(profile, home) and daemon_mod.is_running(cfg) is not None:
+        return "manual"
+    return "failed"
+
+
 # -- Summary helpers --------------------------------------------------
 
 
@@ -364,6 +450,17 @@ def _model_summary(status: str) -> str:
         "downloaded": "downloaded",
         "failed": "download failed",
         "skipped": "skipped (--skip-models)",
+    }.get(status, status)
+
+
+def _daemon_summary(status: str) -> str:
+    return {
+        "running": "already running",
+        "service": "installed + started (systemd --user service)",
+        "manual": "started (not supervised -- restart it after a reboot)",
+        "legacy": "left your hand-managed phileas-daemon.service as-is",
+        "failed": "could not start -- the entity graph will be inert",
+        "skipped": "skipped (models not ready)",
     }.get(status, status)
 
 
@@ -456,13 +553,26 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
         embedding_status = _ensure_embedding_model()
         reranker_status = _ensure_reranker_model()
 
-    # 4. Summary + readiness verdict
+    # 4. Daemon -- the single KuzuDB owner the MCP server proxies graph ops to.
+    #    It loads the embedding model on start, so only attempt it once that's
+    #    present. Without a daemon, memories store and keyword/vector recall
+    #    work, but the entity graph (relations, graph-hop recall) stays inert.
+    daemon_status = "skipped"
+    if embedding_status in ("present", "downloaded"):
+        console.print()
+        console.print("[bold]Establishing the memory daemon...[/bold]")
+        daemon_status = _establish_daemon(home, profile)
+        marker = "[green]OK[/green]" if daemon_status != "failed" else "[yellow]warn[/yellow]"
+        console.print(f"  Daemon {marker} -- {_daemon_summary(daemon_status)}")
+
+    # 5. Summary + readiness verdict
     console.print()
     console.print("[bold]Summary[/bold]")
     console.print(f"  MCP        {_mcp_summary(mcp_status, key)}")
     console.print(f"  Skill      {'updated' if skill_changed else 'already current'}")
     console.print(f"  Embedding  {_model_summary(embedding_status)}")
     console.print(f"  Reranker   {_model_summary(reranker_status)}")
+    console.print(f"  Daemon     {_daemon_summary(daemon_status)}")
     console.print()
 
     if embedding_status not in ("present", "downloaded"):
@@ -475,8 +585,31 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
         console.print()
         return 1
 
+    start_cmd = "phileas start" if profile == DEFAULT_PROFILE else f"phileas --profile {profile} start"
+
+    if daemon_status == "failed":
+        console.print("[bold yellow]Phileas is set up, but the entity graph is offline.[/bold yellow]")
+        console.print("  Memories save and keyword/vector recall work, but relations and")
+        console.print("  graph-hop recall need the daemon running.")
+        console.print(f"  Start it with: [cyan]{start_cmd}[/cyan]")
+        console.print()
+        return 1
+
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()
+
+    if daemon_status == "manual":
+        console.print(
+            "[dim]The daemon is running but not supervised on this platform; it won't restart "
+            f"after a reboot. Bring it back with [cyan]{start_cmd}[/cyan].[/dim]"
+        )
+        console.print()
+    elif daemon_status == "legacy":
+        console.print(
+            "[dim]Left your hand-managed [cyan]phileas-daemon.service[/cyan] in charge of the daemon. "
+            "Make sure it's running: [cyan]systemctl --user start phileas-daemon[/cyan].[/dim]"
+        )
+        console.print()
 
     if profile != DEFAULT_PROFILE:
         console.print(

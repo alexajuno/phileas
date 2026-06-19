@@ -17,8 +17,10 @@ class GraphProxy:
     Writes are fire-and-forget (returns None on failure).
     Reads return sensible defaults on failure.
 
-    If the daemon isn't running on first use, attempts to start it via
-    systemd. Falls back to graceful degradation if that also fails.
+    When no daemon is reachable, reads return their defaults and writes are
+    dropped (not queued or replayed). The daemon is established by ``phileas
+    init`` (or ``phileas start``); until one answers, the entity graph is inert
+    while keyword and vector recall keep working.
     """
 
     def _check_daemon(self) -> bool:

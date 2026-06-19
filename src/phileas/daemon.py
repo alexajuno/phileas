@@ -248,18 +248,29 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     config = config or load_config()
 
     if not foreground:
+        # Drop a stale port file so the parent's wait can't read a previous
+        # run's port before the fresh child writes its own.
+        _port_path(config).unlink(missing_ok=True)
         # Fork to background
         pid = os.fork()
         if pid > 0:
-            # Parent: wait briefly for port file, then return
+            # Parent: wait for the child to write its port file. A cold start
+            # loads the embedding + reranker models first, which takes far
+            # longer than a warm one, so wait generously -- but reap the child
+            # the moment it exits, so a real startup failure surfaces at once
+            # instead of blocking for the whole window.
             import time
 
-            for _ in range(50):  # Wait up to 5 seconds
-                time.sleep(0.1)
+            deadline_s = 60
+            for _ in range(deadline_s * 10):
+                reaped, _status = os.waitpid(pid, os.WNOHANG)
+                if reaped == pid:
+                    raise RuntimeError("Daemon process exited during startup (see the daemon log)")
                 port_file = _port_path(config)
                 if port_file.exists():
                     return int(port_file.read_text().strip())
-            raise RuntimeError("Daemon failed to start (no port file after 5s)")
+                time.sleep(0.1)
+            raise RuntimeError(f"Daemon failed to start (no port file after {deadline_s}s)")
         else:
             # Child: detach
             os.setsid()
