@@ -1127,6 +1127,8 @@ class MemoryEngine:
         # untouched. This reads the query's own breadth structurally instead of
         # nudging the gist's score. Skipped on a typed recall (a memory_type filter
         # could drop a surfaced reflection and lose its children with it).
+        rollup_collapse_log: list[dict] = []
+        collapsed_parent_ids: set[str] = set()
         if not memory_type and candidates:
             try:
                 rollup_parents = self.graph.get_rollup_parents(list(candidates))
@@ -1140,19 +1142,35 @@ class MemoryEngine:
                 child_totals = self.graph.get_rollup_indegree(list(gathered_by_parent))
                 for parent_id, gathered in gathered_by_parent.items():
                     total = child_totals.get(parent_id, 0)
-                    if total <= 0 or len(gathered) < ROLLUP_COLLAPSE_MIN_CHILDREN:
-                        continue
-                    if len(gathered) / total < ROLLUP_COLLAPSE_COVERAGE:
-                        continue
-                    parent_item = candidates.get(parent_id) or self.db.get_item(parent_id)
-                    if not parent_item or parent_item.status != "active":
-                        continue
-                    for child_id in gathered:
-                        candidates.pop(child_id, None)
-                    candidates[parent_id] = parent_item
-                    graph_ids.add(parent_id)
-                    candidate_hop[parent_id] = min(candidate_hop.get(parent_id, 99), 1)
+                    g = len(gathered)
+                    coverage = g / total if total > 0 else 0.0
+                    fired = total > 0 and g >= ROLLUP_COLLAPSE_MIN_CHILDREN and coverage >= ROLLUP_COLLAPSE_COVERAGE
+                    if fired:
+                        parent_item = candidates.get(parent_id) or self.db.get_item(parent_id)
+                        if not parent_item or parent_item.status != "active":
+                            fired = False
+                        else:
+                            for child_id in gathered:
+                                candidates.pop(child_id, None)
+                            candidates[parent_id] = parent_item
+                            graph_ids.add(parent_id)
+                            collapsed_parent_ids.add(parent_id)
+                            candidate_hop[parent_id] = min(candidate_hop.get(parent_id, 99), 1)
+                    # Coverage is the quantity the gate decides on; record every
+                    # parent considered (fired or not) so the collapse is
+                    # observable per recall, not inferred from downstream results.
+                    rollup_collapse_log.append(
+                        {
+                            "parent": parent_id[:8],
+                            "gathered": g,
+                            "total": total,
+                            "coverage": round(coverage, 2),
+                            "fired": fired,
+                        }
+                    )
             _mark("rollup_collapse")
+        # Surfaced for the recall trace and for direct inspection by experiments.
+        self._last_rollup_collapse = rollup_collapse_log
 
         # Apply filters
         filtered: dict[str, MemoryItem] = {}
@@ -1339,8 +1357,13 @@ class MemoryEngine:
                 **_cut_params,
             )
         )
+        # A gist that fired collapse is exempt from the cut: collapse already
+        # removed its children, so dropping the gist too would lose the cluster
+        # entirely and surface nothing in its place. It fired because the query
+        # gathered most of the cluster, so it is on-topic by construction; keep
+        # it at whatever rank it scored (demote, don't drop).
         for idx, mem_id in enumerate(gate_ids):
-            if idx not in keep_pos:
+            if idx not in keep_pos and mem_id not in collapsed_parent_ids:
                 del filtered[mem_id]
         _mark("score_blend")
 
@@ -1603,6 +1626,7 @@ class MemoryEngine:
                 "context_resolved": context_info["name"] if context_info else None,
                 "context_ids": sorted(context_ids),
                 "stage_timings": {k: round(v, 2) for k, v in _stage_timings.items()},
+                "rollup_collapse": rollup_collapse_log,
             },
         )
 

@@ -268,10 +268,9 @@ def _run_tool(method: str, params: dict) -> None:
 
 @click.command("recall-recent")
 @click.option("--days", default=7, type=int, help="How many days back to look.")
-@click.option("--top-per-day", default=10, type=int, help="Max memories to show per day.")
-def recall_recent(days: int, top_per_day: int):
+def recall_recent(days: int):
     """Each day's memories for the last N days (time-relative queries)."""
-    _run_tool("recall_recent", {"days": days, "top_per_day": top_per_day})
+    _run_tool("recall_recent", {"days": days})
 
 
 @click.command("timeline")

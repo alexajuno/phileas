@@ -185,15 +185,14 @@ def tool_calls_summary(metrics_db: Path, since: datetime | None) -> dict:
 
 
 def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
-    """AA-112 per-layer effectiveness for recall_recent's output bounds.
+    """Per-summary clip effectiveness for recall_recent's output.
 
     Reads the bounds counters recall_recent writes into recall_traces.extra:
-    layer 1 (per-summary truncation) fire rate + chars saved, layer 2 (output
-    char budget) fire rate + memories dropped, and the final output_chars
-    distribution. This is the "does each layer prove itself?" report — a layer
-    that never fires (or fires on every call and forces drill-ins) is a knob
-    to retune or turn off. Traces from before the counters existed are
-    reported as ``uninstrumented``.
+    the summary-truncation fire rate, chars saved, and the final output_chars
+    distribution. This is the "does the clip prove itself?" report: a clip that
+    never fires (or fires on every call and forces drill-ins) is a knob to
+    retune or turn off. Traces from before the counters existed are reported as
+    ``uninstrumented``.
     """
     where, params = _since_clause(since)
     where = f"{where} AND" if where else " WHERE"
@@ -208,8 +207,6 @@ def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
     trunc_fired = 0
     trunc_memories = 0
     trim_saved_chars = 0
-    budget_fired = 0
-    budget_dropped = 0
     output_chars: list[int] = []
     for r in rows:
         try:
@@ -221,14 +218,10 @@ def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
             continue
         output_chars.append(int(extra["output_chars"]))
         n_trunc = int(extra.get("summaries_truncated") or 0)
-        n_dropped = int(extra.get("budget_dropped") or 0)
         if n_trunc:
             trunc_fired += 1
             trunc_memories += n_trunc
             trim_saved_chars += int(extra.get("trim_saved_chars") or 0)
-        if n_dropped:
-            budget_fired += 1
-            budget_dropped += n_dropped
 
     def _pct(values: list[int], q: float) -> int:
         if not values:
@@ -246,11 +239,6 @@ def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
             "fire_rate": (trunc_fired / instrumented) if instrumented else 0.0,
             "memories_truncated": trunc_memories,
             "chars_saved": trim_saved_chars,
-        },
-        "budget": {
-            "fired_calls": budget_fired,
-            "fire_rate": (budget_fired / instrumented) if instrumented else 0.0,
-            "memories_dropped": budget_dropped,
         },
         "p50_output_chars": _pct(output_chars, 0.5),
         "p95_output_chars": _pct(output_chars, 0.95),
