@@ -21,7 +21,6 @@ dependencies = [
     "sentence-transformers>=5.3.0",
     "chromadb>=1.0.0",
     "kuzu>=0.8.0",
-    "litellm>=1.83.0",
     "click>=8.3.1",
     "rich>=14.3.3",
     "fastapi>=0.136.3",
