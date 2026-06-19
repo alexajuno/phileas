@@ -88,7 +88,7 @@ def stop(config: PhileasConfig | None = None) -> bool:
     try:
         from phileas.systemd import remove_timers
 
-        remove_timers()
+        remove_timers(profile=config.profile)
     except Exception:
         pass
 
@@ -365,7 +365,11 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     try:
         from phileas.systemd import install_timers
 
-        installed = install_timers(config.home, health_interval_min=config.health.check_interval_minutes)
+        installed = install_timers(
+            config.home,
+            profile=config.profile,
+            health_interval_min=config.health.check_interval_minutes,
+        )
         if installed:
             log.info("systemd timers installed", extra={"op": "daemon", "data": {"timers": installed}})
     except Exception as e:

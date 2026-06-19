@@ -8,9 +8,14 @@ code constant, so there is nothing here to test for those.
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from phileas.config import (
+    DEFAULT_PROFILE,
     _find_project_config,
     load_config,
+    resolve_home,
+    resolve_profile,
 )
 
 # ------------------------------------------------------------------
@@ -220,6 +225,53 @@ class TestProjectConfig:
         cfg = load_config(home=user_home, project_start=nested)
         assert cfg.sync.subscribe is True
         assert cfg.sync.peer_url == "https://box.local:8787"
+
+
+# ------------------------------------------------------------------
+# Profiles — home selection by named instance
+# ------------------------------------------------------------------
+
+
+class TestProfiles:
+    """A profile selects the data home so several instances coexist."""
+
+    def test_default_profile_maps_to_phileas(self):
+        assert resolve_home() == Path.home() / ".phileas"
+        assert resolve_home("default") == Path.home() / ".phileas"
+
+    def test_named_profile_maps_to_sibling(self):
+        assert resolve_home("dev") == Path.home() / ".phileas-dev"
+
+    def test_profile_from_env(self, monkeypatch):
+        monkeypatch.setenv("PHILEAS_PROFILE", "work")
+        assert resolve_profile() == "work"
+        assert resolve_home() == Path.home() / ".phileas-work"
+
+    def test_explicit_profile_beats_env(self, monkeypatch):
+        monkeypatch.setenv("PHILEAS_PROFILE", "work")
+        assert resolve_home("dev") == Path.home() / ".phileas-dev"
+
+    def test_phileas_home_overrides_profile(self, tmp_path, monkeypatch):
+        """PHILEAS_HOME pins the directory regardless of profile."""
+        monkeypatch.setenv("PHILEAS_HOME", str(tmp_path))
+        monkeypatch.setenv("PHILEAS_PROFILE", "dev")
+        assert resolve_home() == tmp_path
+
+    def test_load_config_records_profile(self, monkeypatch):
+        monkeypatch.setenv("PHILEAS_PROFILE", "dev")
+        cfg = load_config()
+        assert cfg.profile == "dev"
+        assert cfg.home == Path.home() / ".phileas-dev"
+
+    def test_explicit_home_keeps_default_profile(self, tmp_path):
+        cfg = load_config(home=tmp_path)
+        assert cfg.home == tmp_path
+        assert cfg.profile == DEFAULT_PROFILE
+
+    @pytest.mark.parametrize("bad", ["bad/name", "-bad", "with space", "dot.dot"])
+    def test_invalid_profile_rejected(self, bad):
+        with pytest.raises(ValueError):
+            resolve_profile(bad)
 
 
 def marker_outside_tmp_path(result: Path, tmp_path: Path) -> bool:

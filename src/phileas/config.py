@@ -7,8 +7,12 @@ them (recall hyperparameters in ``engine.py``, output bounds in
 ``recall_format.py``, scoring weights/decay in ``scoring.py``).
 
 Config loading priority (later wins): code defaults < user ``config.toml`` <
-project ``.phileas.toml``. The home directory also honours the ``PHILEAS_HOME``
-env var. Unknown TOML keys are ignored, so a stale config.toml carrying the old
+project ``.phileas.toml``. The home directory is selected by *profile*: the
+``default`` profile lives at ``~/.phileas`` and a named profile ``<p>`` lives at
+the sibling ``~/.phileas-<p>``, so several independent instances coexist. The
+active profile comes from ``--profile`` / ``PHILEAS_PROFILE``; ``PHILEAS_HOME``
+is a low-level override that pins the directory regardless of profile. Unknown
+TOML keys are ignored, so a stale config.toml carrying the old
 ``[recall]``/``[scoring]``/… sections loads cleanly (those sections are simply
 dropped).
 
@@ -21,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
@@ -114,6 +119,10 @@ class HealthConfig:
 # ------------------------------------------------------------------
 
 _DEFAULT_HOME = Path.home() / ".phileas"
+DEFAULT_PROFILE = "default"
+# A profile names a directory and a systemd instance, so keep it filesystem- and
+# unit-safe: start alphanumeric, then alphanumerics / dash / underscore.
+_PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 @dataclass
@@ -121,6 +130,7 @@ class PhileasConfig:
     """Top-level Phileas configuration."""
 
     home: Path = field(default_factory=lambda: _DEFAULT_HOME)
+    profile: str = DEFAULT_PROFILE
     sync: SyncConfig = field(default_factory=SyncConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
 
@@ -172,6 +182,36 @@ def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
         _apply_toml_section(cfg.health, data["health"])
 
 
+def resolve_profile(profile: str | None = None) -> str:
+    """Return the active profile name.
+
+    Precedence: explicit arg, then ``PHILEAS_PROFILE`` env, then ``default``.
+    Raises ``ValueError`` on a name that isn't directory/unit safe.
+    """
+    name = profile or os.environ.get("PHILEAS_PROFILE") or DEFAULT_PROFILE
+    if not _PROFILE_RE.match(name):
+        raise ValueError(f"invalid profile {name!r}: use letters, digits, '-' or '_' (must start alphanumeric)")
+    return name
+
+
+def resolve_home(profile: str | None = None) -> Path:
+    """Return the data home directory for a profile.
+
+    Precedence (first match wins):
+      1. ``PHILEAS_HOME`` — used verbatim, the low-level override that pins the
+         directory regardless of profile.
+      2. The profile (arg, else ``PHILEAS_PROFILE``, else ``default``): the
+         ``default`` profile maps to ``~/.phileas`` so an existing store needs no
+         migration; any other name ``<p>`` maps to the sibling ``~/.phileas-<p>``.
+    """
+    if env_home := os.environ.get("PHILEAS_HOME"):
+        return Path(env_home)
+    name = resolve_profile(profile)
+    if name == DEFAULT_PROFILE:
+        return Path.home() / ".phileas"
+    return Path.home() / f".phileas-{name}"
+
+
 def _find_project_config(start: Path | None = None) -> Path | None:
     """Walk upward from `start` (default cwd) looking for a `.phileas.toml`.
 
@@ -189,25 +229,23 @@ def _find_project_config(start: Path | None = None) -> Path | None:
 def load_config(
     home: Path | None = None,
     project_start: Path | None = None,
+    profile: str | None = None,
 ) -> PhileasConfig:
     """Load Phileas configuration with priority: project > user > defaults.
 
-    Layering order (later wins):
+    The home directory comes from ``home`` when given, else from the profile
+    (see ``resolve_home``). Layering order (later wins):
       1. Code defaults.
       2. User TOML at `<home>/config.toml`.
       3. Project TOML at the nearest `.phileas.toml` walking up from `project_start`
          (or cwd when `project_start` is None).
     """
-    # 1. Resolve home directory
-    if home is not None:
-        resolved_home = home
-    elif env_home := os.environ.get("PHILEAS_HOME"):
-        resolved_home = Path(env_home)
-    else:
-        resolved_home = _DEFAULT_HOME
+    # 1. Resolve the active profile + home directory
+    active_profile = resolve_profile(profile)
+    resolved_home = home if home is not None else resolve_home(profile)
 
     # 2. Start with all defaults
-    cfg = PhileasConfig(home=resolved_home)
+    cfg = PhileasConfig(home=resolved_home, profile=active_profile)
 
     # 3. Layer user TOML on top
     user_toml = resolved_home / "config.toml"

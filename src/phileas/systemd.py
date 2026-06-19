@@ -1,7 +1,11 @@
 """Systemd user timer management for Phileas background jobs.
 
-Installs/removes the systemd user unit for:
-  - phileas-health: periodic health check that pushes alerts
+Installs/removes the per-profile health-check timer:
+  - phileas-health@<profile>: periodic health check that pushes alerts
+
+The unit is instanced by profile so that several Phileas instances (e.g. a
+``default`` store and a ``dev`` store) each get their own timer instead of the
+second install retargeting the first.
 """
 
 from __future__ import annotations
@@ -10,6 +14,8 @@ import logging
 import subprocess
 from pathlib import Path
 from shutil import which
+
+from phileas.config import DEFAULT_PROFILE
 
 log = logging.getLogger("phileas.systemd")
 
@@ -33,20 +39,22 @@ def _phileas_bin() -> str:
     return "phileas"
 
 
-_UNITS: dict[str, dict[str, str]] = {
-    "phileas-health": {
-        "service": """\
+_HEALTH_UNIT = "phileas-health"
+
+_SERVICE_TEMPLATE = """\
 [Unit]
-Description=Phileas health check + push alerts
+Description=Phileas health check + push alerts (profile {profile})
 
 [Service]
 Type=oneshot
 ExecStart={bin} health --notify
 Environment=PHILEAS_HOME={home}
-""",
-        "timer": """\
+Environment=PHILEAS_PROFILE={profile}
+"""
+
+_TIMER_TEMPLATE = """\
 [Unit]
-Description=Phileas health check timer
+Description=Phileas health check timer (profile {profile})
 
 [Timer]
 OnBootSec={interval_min}min
@@ -54,21 +62,27 @@ OnUnitActiveSec={interval_min}min
 
 [Install]
 WantedBy=timers.target
-""",
-    },
-}
+"""
 
 
-_RETIRED_UNITS: tuple[str, ...] = ("phileas-reflect",)
+def _health_unit(profile: str) -> str:
+    """Instanced unit base name for a profile, e.g. ``phileas-health@dev``."""
+    return f"{_HEALTH_UNIT}@{profile}"
+
+
+# Units Phileas no longer manages. ``phileas-health`` (no ``@``) is the
+# pre-profile, non-instanced timer; installs that predate profiles carry it and
+# it would otherwise linger beside the new instanced unit.
+_RETIRED_UNITS: tuple[str, ...] = ("phileas-reflect", _HEALTH_UNIT)
 
 
 def prune_retired_units() -> list[str]:
     """Disable and delete units Phileas no longer manages.
 
-    ``remove_timers()`` only iterates ``_UNITS``, so a unit dropped from that
-    map would otherwise linger on disk on installs that already enabled it.
-    This catches those orphans on the next daemon start. Returns the names
-    pruned.
+    Covers both genuinely retired units and the pre-profile non-instanced
+    ``phileas-health`` timer, neither of which ``remove_timers()`` would touch
+    (it only knows the instanced unit for a given profile). This catches those
+    orphans on the next daemon start. Returns the names pruned.
     """
     unit_dir = _unit_dir()
     pruned = []
@@ -96,55 +110,47 @@ def prune_retired_units() -> list[str]:
     return pruned
 
 
-def install_timers(home: Path, health_interval_min: int = 15) -> list[str]:
-    """Install and enable systemd user timers. Returns list of installed unit names."""
+def install_timers(home: Path, profile: str = DEFAULT_PROFILE, health_interval_min: int = 15) -> list[str]:
+    """Install and enable the profile's health timer. Returns installed unit names."""
     prune_retired_units()
     unit_dir = _unit_dir()
     phileas_bin = _phileas_bin()
-    installed = []
 
-    for name, units in _UNITS.items():
-        service_path = unit_dir / f"{name}.service"
-        timer_path = unit_dir / f"{name}.timer"
+    name = _health_unit(profile)
+    service_path = unit_dir / f"{name}.service"
+    timer_path = unit_dir / f"{name}.timer"
 
-        service_content = units["service"].format(bin=phileas_bin, home=str(home))
-        timer_content = units["timer"].format(interval_min=health_interval_min)
+    service_path.write_text(_SERVICE_TEMPLATE.format(bin=phileas_bin, home=str(home), profile=profile))
+    timer_path.write_text(_TIMER_TEMPLATE.format(interval_min=health_interval_min, profile=profile))
 
-        service_path.write_text(service_content)
-        timer_path.write_text(timer_content)
-        installed.append(name)
-
-    # Reload and enable
     subprocess.run(
         ["systemctl", "--user", "daemon-reload"],
         capture_output=True,
     )
-    for name in installed:
-        subprocess.run(
-            ["systemctl", "--user", "enable", "--now", f"{name}.timer"],
-            capture_output=True,
-        )
+    subprocess.run(
+        ["systemctl", "--user", "enable", "--now", f"{name}.timer"],
+        capture_output=True,
+    )
 
-    return installed
+    return [name]
 
 
-def remove_timers() -> list[str]:
-    """Disable and remove systemd user timers. Returns list of removed unit names."""
+def remove_timers(profile: str = DEFAULT_PROFILE) -> list[str]:
+    """Disable and remove the profile's health timer. Returns removed unit names."""
     unit_dir = _unit_dir()
+    name = _health_unit(profile)
+    timer_path = unit_dir / f"{name}.timer"
+    service_path = unit_dir / f"{name}.service"
     removed = []
 
-    for name in _UNITS:
-        timer_path = unit_dir / f"{name}.timer"
-        service_path = unit_dir / f"{name}.service"
-
-        if timer_path.exists() or service_path.exists():
-            subprocess.run(
-                ["systemctl", "--user", "disable", "--now", f"{name}.timer"],
-                capture_output=True,
-            )
-            timer_path.unlink(missing_ok=True)
-            service_path.unlink(missing_ok=True)
-            removed.append(name)
+    if timer_path.exists() or service_path.exists():
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", f"{name}.timer"],
+            capture_output=True,
+        )
+        timer_path.unlink(missing_ok=True)
+        service_path.unlink(missing_ok=True)
+        removed.append(name)
 
     if removed:
         subprocess.run(
@@ -155,10 +161,10 @@ def remove_timers() -> list[str]:
     return removed
 
 
-def timer_status() -> list[dict]:
-    """Check status of Phileas timers. Returns list of {name, active, next_trigger}."""
+def timer_status(profile: str = DEFAULT_PROFILE) -> list[dict]:
+    """Check status of the profile's timer. Returns list of {name, active, next_trigger}."""
     results = []
-    for name in _UNITS:
+    for name in [_health_unit(profile)]:
         try:
             active = subprocess.run(
                 ["systemctl", "--user", "is-active", f"{name}.timer"],

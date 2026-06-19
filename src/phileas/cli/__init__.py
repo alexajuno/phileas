@@ -6,6 +6,8 @@ Usage:
     phileas recall "what languages"
 """
 
+import os
+
 import click
 
 from phileas import __version__
@@ -42,13 +44,33 @@ from phileas.cli.commands import (
     update_cmd,
     usage,
 )
+from phileas.config import resolve_profile
 from phileas.stats.cli import stats
 
 
 @click.group()
 @click.version_option(version=__version__, prog_name="phileas")
-def app():
+@click.option(
+    "--profile",
+    "profile",
+    default=None,
+    metavar="NAME",
+    help=(
+        "Select a named Phileas instance with its own data dir, daemon, and timer. "
+        "Default profile lives at ~/.phileas; a named profile <p> at ~/.phileas-<p>. "
+        "Sets PHILEAS_PROFILE for this invocation."
+    ),
+)
+def app(profile: str | None):
     """Phileas -- persistent memory for AI."""
+    # Set the env var so every downstream load_config() in this process — including
+    # the module-level one in phileas.server when `serve` runs — sees the profile.
+    if profile:
+        try:
+            resolve_profile(profile)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="'--profile'") from exc
+        os.environ["PHILEAS_PROFILE"] = profile
 
 
 app.add_command(status)

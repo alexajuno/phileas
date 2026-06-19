@@ -2,10 +2,9 @@
 
 Walks the user through first-time configuration:
  1. Choose usage mode (Claude Code / Antigravity / Codex / Standalone / All)
- 2. Choose data directory
- 3. Write config.toml
- 4. Wire Claude Code MCP config (claude-code/both)
- 5. Download embedding + reranker models
+ 2. Choose a profile (which instance — its own data dir, daemon, timer)
+ 3. Wire the MCP config for the chosen clients
+ 4. Download embedding + reranker models
 """
 
 from __future__ import annotations
@@ -17,6 +16,8 @@ from pathlib import Path
 import click
 from rich.console import Console
 
+from phileas.config import DEFAULT_PROFILE, resolve_home
+
 console = Console()
 
 # -- Model defaults ---------------------------------------------------
@@ -25,58 +26,29 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
-# -- Helpers ----------------------------------------------------------
+# -- MCP entry helpers ------------------------------------------------
 
 
-def _resolve_default_home() -> str:
-    """Return the default home directory, respecting $PHILEAS_HOME."""
-    env = os.environ.get("PHILEAS_HOME")
-    if env:
-        return env
-    return str(Path.home() / ".phileas")
+def _server_key(profile: str) -> str:
+    """MCP server key for a profile: ``phileas`` for default, ``phileas-<p>`` else.
+
+    Distinct keys let a second instance sit beside the first instead of
+    overwriting its entry.
+    """
+    return "phileas" if profile == DEFAULT_PROFILE else f"phileas-{profile}"
 
 
-def _write_config(home: Path) -> Path:
-    """Write config.toml and return its path."""
-    home.mkdir(parents=True, exist_ok=True)
-    config_path = home / "config.toml"
+def _server_entry(profile: str) -> dict:
+    """Build the JSON MCP server entry for a profile.
 
-    lines: list[str] = []
-    lines.append("[storage]")
-    lines.append(f'home = "{home}"')
-    lines.append("")
-
-    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return config_path
-
-
-def _wire_claude_code(home: Path) -> bool:
-    """Add Phileas MCP server to Claude Code's .mcp.json. Returns True on success."""
-    mcp_json_path = Path.home() / ".claude" / ".mcp.json"
-
-    # Determine the best command for the MCP server
+    A non-default profile carries ``PHILEAS_PROFILE`` in ``env`` so the spawned
+    server resolves the right data home; the default profile needs none.
+    """
     phileas_exe = _find_phileas_command()
-
-    mcp_config: dict
-    if mcp_json_path.exists():
-        try:
-            mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            mcp_config = {}
-    else:
-        mcp_config = {}
-
-    mcp_config.setdefault("mcpServers", {})
-
     if phileas_exe:
-        mcp_config["mcpServers"]["phileas"] = {
-            "type": "stdio",
-            "command": phileas_exe,
-            "args": ["serve"],
-        }
+        entry: dict = {"type": "stdio", "command": phileas_exe, "args": ["serve"]}
     else:
-        # Fallback: use uv run
-        mcp_config["mcpServers"]["phileas"] = {
+        entry = {
             "type": "stdio",
             "command": "uv",
             "args": [
@@ -88,6 +60,24 @@ def _wire_claude_code(home: Path) -> bool:
                 "from phileas.server import mcp; mcp.run()",
             ],
         }
+    if profile != DEFAULT_PROFILE:
+        entry["env"] = {"PHILEAS_PROFILE": profile}
+    return entry
+
+
+def _write_json_mcp(mcp_json_path: Path, profile: str) -> bool:
+    """Merge the profile's Phileas entry into a JSON ``mcpServers`` file."""
+    mcp_config: dict
+    if mcp_json_path.exists() and mcp_json_path.stat().st_size > 0:
+        try:
+            mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            mcp_config = {}
+    else:
+        mcp_config = {}
+
+    mcp_config.setdefault("mcpServers", {})
+    mcp_config["mcpServers"][_server_key(profile)] = _server_entry(profile)
 
     try:
         mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,55 +87,18 @@ def _wire_claude_code(home: Path) -> bool:
         return False
 
 
-def _wire_antigravity(home: Path) -> bool:
-    """Add Phileas MCP server to Antigravity's mcp_config.json files. Returns True on success."""
+def _wire_claude_code(profile: str) -> bool:
+    """Add the profile's Phileas MCP server to Claude Code's config. Returns True on success."""
+    return _write_json_mcp(Path.home() / ".claude" / ".mcp.json", profile)
+
+
+def _wire_antigravity(profile: str) -> bool:
+    """Add the profile's Phileas MCP server to Antigravity's config. Returns True on success."""
     paths = [
         Path.home() / ".gemini" / "config" / "mcp_config.json",
         Path.home() / ".gemini" / "antigravity-cli" / "mcp_config.json",
     ]
-    phileas_exe = _find_phileas_command()
-    success = False
-
-    for mcp_json_path in paths:
-        mcp_config: dict
-        if mcp_json_path.exists() and mcp_json_path.stat().st_size > 0:
-            try:
-                mcp_config = json.loads(mcp_json_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                mcp_config = {}
-        else:
-            mcp_config = {}
-
-        mcp_config.setdefault("mcpServers", {})
-
-        if phileas_exe:
-            mcp_config["mcpServers"]["phileas"] = {
-                "type": "stdio",
-                "command": phileas_exe,
-                "args": ["serve"],
-            }
-        else:
-            mcp_config["mcpServers"]["phileas"] = {
-                "type": "stdio",
-                "command": "uv",
-                "args": [
-                    "run",
-                    "--project",
-                    str(Path(__file__).resolve().parents[2].parent),
-                    "python",
-                    "-c",
-                    "from phileas.server import mcp; mcp.run()",
-                ],
-            }
-
-        try:
-            mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
-            mcp_json_path.write_text(json.dumps(mcp_config, indent=2) + "\n", encoding="utf-8")
-            success = True
-        except OSError:
-            pass
-
-    return success
+    return any([_write_json_mcp(p, profile) for p in paths])
 
 
 def _codex_home() -> Path:
@@ -197,8 +150,8 @@ def _replace_toml_table(text: str, table: str, block: str) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def _wire_codex(home: Path) -> bool:
-    """Add Phileas MCP server to Codex's config.toml. Returns True on success."""
+def _wire_codex(profile: str) -> bool:
+    """Add the profile's Phileas MCP server to Codex's config.toml. Returns True on success."""
     config_path = _codex_home() / "config.toml"
     phileas_exe = _find_phileas_command()
 
@@ -216,13 +169,15 @@ def _wire_codex(home: Path) -> bool:
             "from phileas.server import mcp; mcp.run()",
         ]
 
-    block = "\n".join(
-        [
-            "[mcp_servers.phileas]",
-            f"command = {_toml_string(command)}",
-            f"args = {_toml_string_array(args)}",
-        ]
-    )
+    table = f"mcp_servers.{_server_key(profile)}"
+    block_lines = [
+        f"[{table}]",
+        f"command = {_toml_string(command)}",
+        f"args = {_toml_string_array(args)}",
+    ]
+    if profile != DEFAULT_PROFILE:
+        block_lines.append(f"env = {{ PHILEAS_PROFILE = {_toml_string(profile)} }}")
+    block = "\n".join(block_lines)
 
     try:
         if config_path.exists():
@@ -230,7 +185,7 @@ def _wire_codex(home: Path) -> bool:
         else:
             text = ""
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(_replace_toml_table(text, "mcp_servers.phileas", block), encoding="utf-8")
+        config_path.write_text(_replace_toml_table(text, table, block), encoding="utf-8")
         return True
     except OSError:
         return False
@@ -414,22 +369,26 @@ def run_wizard() -> None:
     use_codex = mode in ("3", "5")
     use_standalone = mode in ("4", "5")
 
-    # 2. Data directory
+    # 2. Profile — which instance to set up (its own data dir, daemon, timer)
     console.print()
-    default_home = _resolve_default_home()
-    home_str = click.prompt("Where should Phileas store data?", default=default_home)
-    home = Path(home_str).expanduser().resolve()
+    while True:
+        profile = click.prompt(
+            "Profile (use a new name for a second, separate instance)",
+            default=DEFAULT_PROFILE,
+        )
+        try:
+            home = resolve_home(profile)
+            break
+        except ValueError as exc:
+            console.print(f"  [yellow]{exc}[/yellow]")
+    home.mkdir(parents=True, exist_ok=True)
+    console.print(f"[green]Profile[/green] [cyan]{profile}[/cyan] -- data dir {home}")
 
-    # 3. Write config
-    console.print()
-    config_path = _write_config(home)
-    console.print(f"[green]Wrote[/green] {config_path}")
-
-    # 4. Wire integrations
+    # 3. Wire integrations
     if use_claude_code:
         console.print()
         console.print("[bold]Configuring Claude Code integration...[/bold]")
-        if _wire_claude_code(home):
+        if _wire_claude_code(profile):
             mcp_path = Path.home() / ".claude" / ".mcp.json"
             console.print(f"  MCP   [green]OK[/green] -- updated {mcp_path}")
         else:
@@ -445,7 +404,7 @@ def run_wizard() -> None:
     if use_antigravity:
         console.print()
         console.print("[bold]Configuring Antigravity integration...[/bold]")
-        if _wire_antigravity(home):
+        if _wire_antigravity(profile):
             console.print("  MCP   [green]OK[/green] -- updated mcp_config.json")
         else:
             console.print("  MCP   [yellow]could not write MCP config automatically[/yellow]")
@@ -460,7 +419,7 @@ def run_wizard() -> None:
     if use_codex:
         console.print()
         console.print("[bold]Configuring Codex CLI integration...[/bold]")
-        if _wire_codex(home):
+        if _wire_codex(profile):
             config_path = _codex_home() / "config.toml"
             console.print(f"  MCP   [green]OK[/green] -- updated {config_path}")
         else:
@@ -485,6 +444,13 @@ def run_wizard() -> None:
     console.print()
     console.print("[bold green]Phileas is ready.[/bold green]")
     console.print()
+
+    if profile != DEFAULT_PROFILE:
+        console.print(
+            f"[dim]This is the [cyan]{profile}[/cyan] instance. Address it from the CLI with "
+            f"[cyan]phileas --profile {profile} <cmd>[/cyan]; the MCP entry already carries the profile.[/dim]"
+        )
+        console.print()
 
     if use_claude_code and not use_standalone and not use_antigravity and not use_codex:
         console.print("Next steps:")

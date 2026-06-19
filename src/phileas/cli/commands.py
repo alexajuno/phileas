@@ -793,13 +793,11 @@ def serve():
 def init_cmd():
     """Set up Phileas interactively.
 
-    Picks usage mode (Claude Code / standalone / both), creates the
-    config file, optionally configures an LLM provider, wires the MCP
-    entry and recall skill into Claude Code, and downloads the
-    embedding and reranker models.
-
-    API keys are read from environment variables -- never written to
-    disk. Re-running overwrites the existing config file.
+    Picks usage mode (Claude Code / Antigravity / Codex / standalone),
+    selects a profile (each profile is a separate instance with its own
+    data dir, daemon, and timer), wires the MCP entry and recall skill
+    into the chosen clients, and downloads the embedding and reranker
+    models.
     """
     from phileas.cli.wizard import run_wizard
 

@@ -7,6 +7,7 @@ wiring remain.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ import pytest
 from phileas.cli.wizard import (
     _install_skill,
     _install_skill_codex,
+    _wire_claude_code,
     _wire_codex,
 )
 
@@ -77,11 +79,15 @@ class TestInstallSkill:
 # ------------------------------------------------------------------
 
 
+def _claude_mcp_file(home: Path) -> Path:
+    return home / ".claude" / ".mcp.json"
+
+
 class TestWireCodex:
     """Codex MCP config is written to ~/.codex/config.toml."""
 
     def test_writes_mcp_server_when_missing(self, fake_home):
-        changed = _wire_codex(fake_home / ".phileas")
+        changed = _wire_codex("default")
         assert changed is True
         text = _codex_config_file(fake_home).read_text(encoding="utf-8")
         assert "[mcp_servers.phileas]" in text
@@ -108,13 +114,51 @@ class TestWireCodex:
             encoding="utf-8",
         )
 
-        changed = _wire_codex(fake_home / ".phileas")
+        changed = _wire_codex("default")
         assert changed is True
         text = path.read_text(encoding="utf-8")
         assert 'trust_level = "trusted"' in text
         assert 'command = "old"' not in text
         assert "[mcp_servers.other]" in text
         assert text.count("[mcp_servers.phileas]") == 1
+
+    def test_named_profile_uses_distinct_table_and_env(self, fake_home):
+        """A named profile writes a separate table carrying PHILEAS_PROFILE."""
+        assert _wire_codex("dev") is True
+        text = _codex_config_file(fake_home).read_text(encoding="utf-8")
+        assert "[mcp_servers.phileas-dev]" in text
+        assert 'PHILEAS_PROFILE = "dev"' in text
+
+    def test_named_profile_coexists_with_default(self, fake_home):
+        """Wiring dev after default leaves both server tables in place."""
+        _wire_codex("default")
+        _wire_codex("dev")
+        text = _codex_config_file(fake_home).read_text(encoding="utf-8")
+        assert "[mcp_servers.phileas]" in text
+        assert "[mcp_servers.phileas-dev]" in text
+
+
+class TestWireClaudeCode:
+    """Claude Code MCP config is written to ~/.claude/.mcp.json."""
+
+    def test_default_profile_has_no_env(self, fake_home):
+        assert _wire_claude_code("default") is True
+        cfg = json.loads(_claude_mcp_file(fake_home).read_text(encoding="utf-8"))
+        entry = cfg["mcpServers"]["phileas"]
+        assert entry["args"] == ["serve"]
+        assert "env" not in entry
+
+    def test_named_profile_keyed_and_carries_env(self, fake_home):
+        assert _wire_claude_code("dev") is True
+        cfg = json.loads(_claude_mcp_file(fake_home).read_text(encoding="utf-8"))
+        assert "phileas-dev" in cfg["mcpServers"]
+        assert cfg["mcpServers"]["phileas-dev"]["env"] == {"PHILEAS_PROFILE": "dev"}
+
+    def test_named_profile_coexists_with_default(self, fake_home):
+        _wire_claude_code("default")
+        _wire_claude_code("dev")
+        cfg = json.loads(_claude_mcp_file(fake_home).read_text(encoding="utf-8"))
+        assert set(cfg["mcpServers"]) == {"phileas", "phileas-dev"}
 
 
 class TestInstallSkillCodex:
