@@ -703,6 +703,20 @@ def expand(memory_id: str) -> str:
 
 
 @_instrumented_tool()
+def get_thread_memories(thread_id: str) -> str:
+    """List the memories a conversation thread produced, newest first.
+
+    The cheap drill-in for a `recall_recent` thread line: pass the thread handle
+    shown there (the `↳<id>`) to see every memory that session produced, without
+    the verbatim turns. Use `thread` instead when you want the raw conversation.
+
+    Args:
+        thread_id: A thread handle, or any event id within it.
+    """
+    return tool_runner.get_thread_memories(engine, _entities_for, thread_id=thread_id)["text"]
+
+
+@_instrumented_tool()
 def survey(theme: str) -> str:
     """Survey a theme's un-consolidated cluster so you can roll it up: the consolidation read.
 

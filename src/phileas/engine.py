@@ -383,6 +383,32 @@ class MemoryEngine:
             "turns": turn_dicts,
         }
 
+    def get_thread_memories(self, handle: str) -> list[dict]:
+        """The memories a thread produced, newest first — the cheap thread drill-in.
+
+        ``handle`` is a thread_id, or an event_id that resolves to its thread.
+        Unlike ``thread``, this returns only the distilled memory pointers, not
+        the raw turns: the light expand for a recall_recent thread line, for when
+        the model wants the whole session's memories without the verbatim
+        conversation. Empty when the handle resolves to nothing.
+        """
+        events = self.db.get_events_for_thread(handle)
+        if not events:
+            event = self.db.get_event(handle)
+            if event is None:
+                return []
+            events = self.db.get_events_for_thread(event.thread_id or event.id) or [event]
+        seen: dict[str, MemoryItem] = {}
+        for ev in events:
+            for m in self.db.get_memories_for_event(ev.id):
+                seen[m.id] = m
+        items = sorted(
+            seen.values(),
+            key=lambda m: m.created_at.timestamp() if m.created_at else 0.0,
+            reverse=True,
+        )
+        return [_item_to_dict(m) for m in items]
+
     def hydrate(self, memory_id: str) -> dict | None:
         """Resolve a pointer id (full uuid or 8-char prefix) to a full record.
 

@@ -18,19 +18,22 @@ the daemon; the daemon owns the graph directly).
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 from datetime import date as _date
 from datetime import timedelta
 from typing import Callable
 
+from phileas import recent
 from phileas.recall_format import (
     ABOUT_MAX,
     POINTER_SUMMARY_CHARS,
-    day_header,
     id8,
-    pointer_line,
     render_pointers,
 )
+
+# recall_recent gathers at least this many days regardless of the requested
+# `days`, so a small or arbitrary `days` cannot starve the snapshot; the budget,
+# not the window, bounds the output. `days` is advisory.
+MIN_GATHER_DAYS = 30
 
 EntitiesFn = Callable[[list[dict]], dict[str, list[dict]]]
 ToolResult = dict  # {"items": list[dict], "text": str, "tokens": int}
@@ -57,48 +60,56 @@ def recall_recent(
     entities_fn: EntitiesFn,
     *,
     days: int = 7,
+    max_threads: int = recent.DEFAULT_MAX_THREADS,
+    max_chars: int = recent.DEFAULT_MAX_CHARS,
 ) -> ToolResult:
+    """Recent activity as a thread snapshot — the newest conversations, one line each.
+
+    Groups the gather window's memories by their conversation thread, ranks
+    threads newest first, and keeps the top ones under a budget. A single busy
+    session collapses to one line (its latest reflection, or latest memory)
+    carrying the thread's memory count and handle, so one burst can't drown the
+    snapshot and the size is bounded by the budget rather than by ``days``.
+    """
     end = _date.today()
-    start = end - timedelta(days=days)
+    start = end - timedelta(days=max(days, MIN_GATHER_DAYS))
     items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
     if not items:
         return {"items": [], "text": f"No memories found in the last {days} day(s)."}
 
-    by_day: dict[str, list[dict]] = defaultdict(list)
-    for item in items:
-        day = (item.get("created_at") or "")[:10]
-        by_day[day].append(item)
-
-    # Newest day first, newest memory within a day first.
-    ordered: list[dict] = []
-    day_blocks: list[tuple[str, list[dict]]] = []
-    for day in sorted(by_day.keys(), reverse=True):
-        day_items = sorted(by_day[day], key=lambda x: x.get("created_at") or "", reverse=True)
-        ordered.extend(day_items)
-        day_blocks.append((day, day_items))
-
-    # Entity tags batched across the whole window; no per-line date, the day
-    # header carries it. Each summary is clipped to a readable width with the
-    # full body one hydrate() away.
+    event_thread = engine.db.get_thread_ids_for_events([it.get("source_event_id") for it in items])
     clip = POINTER_SUMMARY_CHARS
-    ents = entities_fn(ordered)
-    lines = [f"Recent memories (last {days} day(s)):"]
-    for day, day_items in day_blocks:
-        lines.append(day_header(day, len(day_items)))
-        lines.extend(pointer_line(it, ents, show_date=False, max_summary_chars=clip) for it in day_items)
+    res = recent.group_recent_threads(items, event_thread, max_threads=max_threads, max_chars=max_chars, clip=clip)
+    threads = res["threads"]
+
+    # Entity tags only for the representative of each shown thread.
+    reps = [s["rep"] for s in threads]
+    ents = entities_fn(reps)
+    lines = [
+        f"Recent threads (newest first — {res['shown']} of {res['total_threads']}; "
+        "expand any with get_thread_memories(<id>)):"
+    ]
+    lines.extend(recent.render_thread_line(s, ents, clip=clip) for s in threads)
     output = "\n".join(lines)
 
-    # Per-summary clip effectiveness, carried to the caller's trace and surfaced
-    # by `phileas stats bounds`.
-    summary_lens = [len((it.get("summary") or "").strip()) for it in ordered]
     bounds = {
-        "pointer_summary_chars": clip,
-        "summaries_truncated": sum(1 for n in summary_lens if clip > 0 and n > clip),
-        "trim_saved_chars": sum(n - clip for n in summary_lens if clip > 0 and n > clip),
+        "threads_total": res["total_threads"],
+        "threads_shown": res["shown"],
+        "memories_in_window": len(items),
         "output_chars": len(output),
     }
+    return {"items": reps, "text": output, "bounds": bounds, "threads": threads}
 
-    return {"items": ordered, "text": output, "bounds": bounds}
+
+def get_thread_memories(engine, entities_fn: EntitiesFn, *, thread_id: str) -> ToolResult:
+    """The memories of one conversation thread, newest first — the snapshot drill-in."""
+    items = engine.get_thread_memories(thread_id)
+    if not items:
+        return {"items": [], "text": f"No memories found for thread {id8(thread_id)}."}
+    clip = POINTER_SUMMARY_CHARS
+    lines = [f"{len(items)} memory(ies) in thread {id8(thread_id)} (newest first):"]
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=clip))
+    return {"items": items, "text": "\n".join(lines)}
 
 
 def timeline(

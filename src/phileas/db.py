@@ -780,6 +780,25 @@ class Database:
         ).fetchall()
         return [self._row_to_event(row) for row in rows]
 
+    @_locked
+    def get_thread_ids_for_events(self, event_ids: list[str]) -> dict[str, str]:
+        """Map each event id to its thread id, in one batched lookup.
+
+        The recall_recent snapshot groups recent memories by conversation, and
+        each memory carries only its ``source_event_id``; this resolves a whole
+        gather window's events to their threads without a query per memory. An
+        event with a null ``thread_id`` stands as its own thread.
+        """
+        ids = [e for e in dict.fromkeys(event_ids) if e]
+        out: dict[str, str] = {}
+        chunk = 500
+        for i in range(0, len(ids), chunk):
+            part = ids[i : i + chunk]
+            q = f"SELECT id, thread_id FROM events WHERE id IN ({','.join('?' * len(part))})"
+            for row in self.conn.execute(q, part):
+                out[row["id"]] = row["thread_id"] or row["id"]
+        return out
+
     # --- Threads (conversations: ordered runs of raw turns) ---
 
     def _row_to_thread(self, row: sqlite3.Row) -> Thread:
