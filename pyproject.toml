@@ -1,6 +1,6 @@
 [project]
 name = "phileas-memory"
-version = "0.4.0"
+version = "0.4.1"
 description = "Local-first long-term memory for AI companions"
 readme = "README.md"
 license = "MIT"
@@ -52,6 +52,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/phileas"]
+
+[tool.hatch.build.targets.sdist]
+# Scope the source distribution to the package and its metadata. Without this,
+# hatchling sweeps in everything not VCS-ignored, including web/node_modules,
+# the Next.js build cache, and research data, bloating the tarball past PyPI's
+# size limit. only-include is a strict allowlist (README and pyproject are
+# added automatically as metadata).
+only-include = [
+    "src/phileas",
+    "tests",
+]
 
 [tool.ruff]
 line-length = 120
