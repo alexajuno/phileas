@@ -21,6 +21,7 @@ from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Thread
+from phileas.reconcile import candidate_pairs
 from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
@@ -2028,6 +2029,60 @@ class MemoryEngine:
             "existing_gists": existing_gists,
             "groups": groups,
         }
+
+    # ------------------------------------------------------------------
+    # reconcile (entity identity)
+    # ------------------------------------------------------------------
+
+    @timed_op("reconcile")
+    def reconcile(self, limit: int = 2000, sample_k: int = 3, include_shared_token: bool = False) -> dict:
+        """Surface same-referent entity candidates for a judge to fold: the reconciliation read.
+
+        The online linker is conservative and splits one referent across surface
+        forms ("Dan" / "Daniel"), an acronym ("TGH" / "the General"), or a
+        mistyped kind. This read looks back over the whole entity roster with
+        hindsight and blocks it into name-variant pairs worth a second look, each
+        side carrying a few sample memories. Blocking is high-recall and blunt:
+        it pairs "Priya" with both "Priya Nair" (the same nurse) and "Priyanka"
+        (a different one), and it cannot see that "TGH" is "the General".
+        Deciding each pair is the host's job: read the samples, then fold true
+        duplicates with ``merge_entities`` (``override_types`` to correct a
+        mistyped kind) and record the variant with ``alias`` so the split does
+        not recur.
+
+        Returns ``{"roster_total", "candidates": [{"reason", "a", "b"}]}`` where
+        each side is ``{"id", "name", "types", "memory_count", "samples"}``.
+        """
+        op_extra(limit=limit)
+        rows = self.graph.reconciliation_rows(limit=limit, sample_k=sample_k) or []
+        pairs = candidate_pairs(rows, include_shared_token=include_shared_token)
+
+        def _samples(row: dict) -> list[str]:
+            out: list[str] = []
+            for mid in row.get("sample_memory_ids", []):
+                item = self.db.get_item(mid)
+                if item and item.summary:
+                    out.append(item.summary)
+            return out
+
+        sample_cache: dict[str, list[str]] = {}
+        for a, b, _reason in pairs:
+            for row in (a, b):
+                if row["id"] not in sample_cache:
+                    sample_cache[row["id"]] = _samples(row)
+
+        def _side(row: dict) -> dict:
+            return {
+                "id": row["id"],
+                "name": row["name"],
+                "types": row.get("types", []),
+                "memory_count": row.get("memory_count", 0),
+                "samples": sample_cache.get(row["id"], []),
+            }
+
+        candidates = [{"reason": reason, "a": _side(a), "b": _side(b)} for a, b, reason in pairs]
+        op_extra(candidates=len(candidates))
+        return {"roster_total": len(rows), "candidates": candidates}
 
     # ------------------------------------------------------------------
     # scope (AA-118)

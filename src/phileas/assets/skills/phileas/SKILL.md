@@ -168,6 +168,14 @@ When calling `memorize` with `entities=[...]`, only tag an entity whose presence
 
 **Other people and entities** (colleagues, partners, projects, tools) can be tagged freely — they're not implicit narrators, so `about(them)` is a useful retrieval primitive.
 
+### Entity types — a small fixed vocabulary
+
+Pick each entity's `type` from this coarse set: `Person`, `Organization`, `Place`, `Project`, `Tool`, `Object`, `Animal`, `Activity`, `Event`, `Concept`. (`Context` exists too, but it's minted for you by context-scoping, not something you assign here.)
+
+The set is deliberately small. A `type` is a bucket the same referent should land in *every* time, not a description — the richness goes in the memory text and the optional `description`. So favour consistency over precision: if you called the hospital a `Place` once, call it `Place` again, not `Organization` the next time. Re-using the wrong-but-consistent bucket costs nothing; switching buckets splits the referent in two.
+
+**Leave the type off when the kind isn't yet clear.** A name mentioned before you can tell what it *is* — a "Jollof" that might be a person or might be the cat, an `@handle` you can't yet place — is better written with no type than a guessed one. An absent type is treated as compatible with anything and gets filled in when a later, clearer mention arrives; a wrong guess (`Person` for what turns out to be a cat) mints a second node that then has to be merged back. When in doubt, omit.
+
 ### Disambiguating same-name entities
 
 Identity in the graph is an opaque uuid; `name` and `type` are attributes. The linker decides whether a new mention reuses an existing entity or mints a new one. Provide an optional `description` (one short line) on entity records when the name is potentially ambiguous — `Apple` the fruit vs. `Apple` the company, two people both named Alex, etc. Description is written once at entity creation and never overwritten, so it stays a stable disambiguator.

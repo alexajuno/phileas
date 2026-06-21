@@ -82,11 +82,39 @@ def _new_entity_id() -> str:
     return _uuid.uuid4().hex
 
 
+# Recommended entity-type vocabulary. A deliberately small, coarse set: the
+# type's job is to be a collision-resistant bucket the same referent always
+# lands in, not to describe it richly (richness lives in `description` and the
+# memory text). A larger taxonomy gives the model more axes to drift on. This
+# is the vocabulary the extractor is pointed at (see the companion skill); it is
+# documented here as the single source of truth, and is a starting point — edit
+# this tuple to retune it. `Context` is system-managed (minted by the `contexts`
+# scoping path), so it is listed but not something an extractor assigns.
+CANONICAL_TYPES = (
+    "Person",
+    "Organization",
+    "Place",
+    "Project",
+    "Tool",
+    "Object",
+    "Animal",
+    "Activity",
+    "Event",
+    "Concept",
+    "Context",
+)
+
+
 def _norm_type(t: str) -> str:
     """Canonicalize a type string for storage and comparison.
 
     Title-case folds the LLM's call-to-call casing drift (Tool / tool /
-    TOOL → Tool) so the types-list set semantics aren't fooled by case.
+    TOOL → Tool) so the types-list set semantics aren't fooled by case. The
+    value is not forced onto `CANONICAL_TYPES`: an off-vocabulary type still
+    stores, because silently rewriting it here (without migrating existing
+    rows that used the old string) would itself split a referent across two
+    type spellings. Consistency is steered at the source, where the type is
+    chosen, not patched after the fact.
     """
     return t.strip().title()
 
@@ -846,13 +874,30 @@ class GraphStore:
         context_neighbors: list[str],
         max_count: int,
     ) -> float:
-        type_overlap = _jaccard(_types_lower(candidate["types"]), _types_lower(hint_types))
+        cand_types = _types_lower(candidate["types"])
+        hint_lower = _types_lower(hint_types)
         nbhd = self._neighborhood_overlap(candidate["id"], context_neighbors)
         if max_count > 0:
             prior = math.log1p(candidate["memory_count"]) / math.log1p(max_count)
         else:
             prior = 0.0
-        return _W_TYPE * type_overlap + _W_NEIGHBORHOOD * nbhd + _W_PRIOR * prior
+
+        if cand_types and hint_lower:
+            # Both sides carry a type, so overlap is informative. A disjoint
+            # result (0.0) is genuine evidence of a different referent and is
+            # left to suppress reuse — this is what keeps Apple-the-fruit and
+            # Apple-the-company on separate nodes.
+            type_overlap = _jaccard(cand_types, hint_lower)
+            return _W_TYPE * type_overlap + _W_NEIGHBORHOOD * nbhd + _W_PRIOR * prior
+
+        # One side has no type. The type signal is absent, not contradictory —
+        # an unknown type is compatible with anything, so it must not be scored
+        # like a conflict. Drop the type term and renormalize the rest so name
+        # plus context can still carry the mention to reuse. This is the path a
+        # mention takes when extraction deferred the type (a referent named
+        # before its kind is known) and a later, typed mention arrives.
+        denom = _W_NEIGHBORHOOD + _W_PRIOR
+        return (_W_NEIGHBORHOOD * nbhd + _W_PRIOR * prior) / denom
 
     def entity_lookup(
         self,
@@ -1213,7 +1258,12 @@ class GraphStore:
         }
 
     @_locked
-    def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:
+    def merge_entities(
+        self,
+        canonical_id: str,
+        duplicate_ids: list[str],
+        override_types: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Fold duplicate entity rows into a canonical one.
 
         For each duplicate: snapshot it to MergeLog, move its ABOUT and REL
@@ -1221,11 +1271,17 @@ class GraphStore:
         primary_name + aliases to canonical's alias list, union its types
         in, then delete the duplicate node. Returns an audit summary.
 
-        Cleanup primitive for AA-55 — used to reunify entities that drifted
-        apart because the linker didn't catch a name variant. Phase 2
-        (auto-alias learning) prevents the recurrence; this fixes already-split
-        clusters and is the same primitive Phase 5 will call from a periodic
-        dedup pass.
+        Reunifies entities that drifted into separate nodes because the linker
+        saw them as distinct mentions, and is the primitive a reconciliation
+        pass calls to apply a confirmed merge.
+
+        ``override_types`` replaces the canonical's final type list outright
+        instead of unioning the duplicates' types in. The union is right when
+        the types are additive (one referent that is genuinely a place and a
+        company), but wrong when one type was a mistake on an exclusive kind:
+        folding a cat that was once mistyped ``Person`` would otherwise leave
+        it ``["Person", "Animal"]``. Pass ``override_types=["Animal"]`` to
+        correct it to the single right kind.
         """
         if not self._ensure_connected():
             return {"canonical_id": canonical_id, "merged_count": 0, "edges_moved": 0, "aliases_added": 0}
@@ -1292,6 +1348,11 @@ class GraphStore:
                 parameters={"did": dup_id},
             )
             merged_count += 1
+
+        if override_types is not None:
+            # Caller corrected the kind outright (exclusive-type mistake) rather
+            # than accept the union of the folded nodes' types.
+            new_types = [_norm_type(t) for t in override_types if t and t.strip()]
 
         aliases_added = len(new_aliases) - len(canonical["aliases"])
         if merged_count:
@@ -2330,6 +2391,43 @@ class GraphStore:
                     "types": types,
                     "aliases": r[2] or "[]",
                     "memory_count": int(r[3]),
+                }
+            )
+            if len(rows) >= int(limit):
+                break
+        return rows
+
+    @_locked
+    def reconciliation_rows(self, limit: int = 1000, sample_k: int = 3) -> list[dict[str, Any]]:
+        """Entity roster for reconciliation: id, name, types, ABOUT count, sample memory ids.
+
+        Like ``list_all_entities`` but keyed by ``id`` (so a judged merge can name
+        the survivor) and carrying up to ``sample_k`` ABOUT-memory ids per entity,
+        the evidence a reconciliation judge reads to decide whether two
+        name-variant nodes are the same referent. Ordered by memory mass,
+        most-connected first.
+        """
+        if not self._ensure_connected():
+            return []
+        result = self._conn.execute(
+            "MATCH (e:Entity) "
+            "OPTIONAL MATCH (m:Memory)-[:ABOUT]->(e) "
+            "WITH e, COLLECT(m.id) AS mids, COUNT(m) AS cnt "
+            "RETURN e.id, e.primary_name, e.types, cnt, mids "
+            "ORDER BY cnt DESC, e.primary_name"
+        )
+        rows: list[dict[str, Any]] = []
+        k = max(0, int(sample_k))
+        while result.has_next():
+            r = result.get_next()
+            mids = [m for m in (r[4] or []) if m]
+            rows.append(
+                {
+                    "id": r[0],
+                    "name": r[1],
+                    "types": _parse_list(r[2]),
+                    "memory_count": int(r[3]),
+                    "sample_memory_ids": mids[:k],
                 }
             )
             if len(rows) >= int(limit):

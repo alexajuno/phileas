@@ -138,6 +138,11 @@ engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 # REPORT_COSINE_FLOOR); this just sets how big a loose cluster must be to surface.
 _RECALL_REPORT_MIN_LOOSE = 12
 
+# Cap how many name-variant pairs `reconcile` prints in one pass, so a graph with
+# many shared-token collisions doesn't flood the context. Overflow is reported,
+# not hidden: fold the clear pairs and re-run to see the rest.
+_RECONCILE_MAX_PAIRS = 40
+
 
 # ---------------------------------------------------------------------------
 # Pointer formatting
@@ -301,9 +306,15 @@ def memorize(
         memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
         daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
         entities: List or JSON string of {"name": str, "type": str, "description"?: str} objects.
-            description is an optional one-line disambiguator — written once at
-            entity creation, never overwritten. Helps the linker keep
-            same-name distinct referents apart (Apple fruit vs Apple Inc.).
+            type is a coarse bucket from a small fixed vocabulary (Person,
+            Organization, Place, Project, Tool, Object, Animal, Activity, Event,
+            Concept); pick the same bucket for a referent every time, since
+            switching buckets splits it in two. Leave type empty when the kind
+            isn't yet clear — an absent type is compatible with anything and
+            fills in on a later, clearer mention, whereas a wrong guess mints a
+            duplicate node. description is an optional one-line disambiguator —
+            written once at entity creation, never overwritten. Helps the linker
+            keep same-name distinct referents apart (Apple fruit vs Apple Inc.).
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
         contexts: List or JSON string of context names this memory is
             scoped to (e.g. ["phileas", "when sick"]). Use when the fact
@@ -932,25 +943,88 @@ def ingest_text(text: str, thread_id: str | None = None, source_kind: str = "age
 
 
 @_instrumented_tool()
-def merge_entities(canonical_id: str, duplicate_ids: list[str]) -> str:
+def reconcile() -> str:
+    """Surface same-referent entity candidates to fold: the reconciliation read.
+
+    The linker resolves identity at first write and stays conservative, so one
+    referent ends up split across surface forms ("Dan" / "Daniel"), an acronym
+    ("TGH" / "the General"), or a mistyped kind (a cat tagged Person once and
+    Animal once). This read looks back over the whole entity graph and blocks it
+    into name-variant pairs worth a second look, each side with a few sample
+    memories. Blocking is high-recall and blunt: it pairs "Priya" with both
+    "Priya Nair" (the same nurse) and "Priyanka" (a different one), and it cannot
+    tell that "TGH" is "the General" — so read the samples and judge each pair.
+
+    Per pair you judge to be the same referent:
+      • merge_entities(canonical_id, [duplicate_id]) — fold the lower-mass node
+        into the higher. Pass override_types=["Animal"] to correct a mistyped
+        kind rather than union the mistake.
+      • alias(name=<canonical name>, alias=<the variant>) — record the surface
+        form so the split does not recur.
+    Leave genuinely distinct people apart (the Priya / Priyanka case): a wrong
+    merge is unrecoverable, a miss is not.
+    """
+    data = engine.reconcile()
+    cands = data["candidates"]
+    if not cands:
+        return f"No name-variant candidates among {data['roster_total']} entities."
+
+    shown = cands[:_RECONCILE_MAX_PAIRS]
+    lines = [
+        f"{len(cands)} name-variant candidate pair(s) among {data['roster_total']} "
+        "entities (judge each: same referent or not?):"
+    ]
+    for c in shown:
+        a, b = c["a"], c["b"]
+        lines.append(
+            f"\n[{c['reason']}]  "
+            f"[{a['id'][:8]}] {a['name']} {a['types']} ({a['memory_count']})  <>  "
+            f"[{b['id'][:8]}] {b['name']} {b['types']} ({b['memory_count']})"
+        )
+        for side in (a, b):
+            for s in side["samples"]:
+                lines.append(f"    · {side['name']}: {s}")
+    if len(cands) > len(shown):
+        lines.append(f"\n(+{len(cands) - len(shown)} more pairs not shown — fold the clear ones, then re-run.)")
+    lines.append(
+        "\nSame referent → merge_entities(canonical_id, [duplicate_id]) "
+        "(override_types=[..] to fix a mistyped kind), then alias(name, alias). "
+        "Distinct → leave them; a wrong merge can't be undone."
+    )
+    return "\n".join(lines)
+
+
+@_instrumented_tool()
+def merge_entities(
+    canonical_id: str,
+    duplicate_ids: list[str],
+    override_types: list[str] | None = None,
+) -> str:
     """Fold duplicate entity rows into a canonical one.
 
-    Cleanup primitive for entity-aliasing drift (AA-55). Use when the same
+    Cleanup primitive for entity-aliasing drift. Use when the same
     person/place/topic was minted under multiple ids because the linker did
     not recognize a name variant — e.g. "Hélène", "Helene", and "helene_k" sitting
-    as three separate Person nodes for the same person.
+    as three separate Person nodes for the same person. `reconcile` surfaces these
+    candidates with sample memories so you can judge which to fold.
 
     Picks the canonical id by highest memory mass. Snapshots each duplicate
     to a MergeLog node before deleting it (so the merge is auditable). All
     ABOUT and REL edges are re-pointed at canonical and de-duplicated; the
     duplicates' primary_name + aliases are unioned into canonical's alias
-    list and types are unioned in.
+    list. Types are unioned by default — right for a referent that genuinely
+    carries several kinds (a person who is also the company they founded). When
+    the split was a mistype (a cat tagged Person once, Animal once), pass
+    `override_types` to set the canonical's kind outright instead of carrying the
+    mistake forward.
 
     Args:
         canonical_id: Entity uuid that should survive the merge.
         duplicate_ids: Entity uuids to fold into canonical and delete.
+        override_types: When set, replace the canonical's type list with these
+            (e.g. ["Animal"]) instead of unioning the duplicates' types in.
     """
-    summary = graph.merge_entities(canonical_id, duplicate_ids)
+    summary = graph.merge_entities(canonical_id, duplicate_ids, override_types=override_types)
     if not summary or not summary.get("merged_count"):
         return "No entities merged (graph unavailable, canonical missing, or no valid duplicates)."
     return (

@@ -92,13 +92,23 @@ class GraphProxy:
             pass
         return {"ok": False, "reason": "daemon unavailable"}
 
-    def merge_entities(self, canonical_id: str, duplicate_ids: list[str]) -> dict[str, Any]:
+    def merge_entities(
+        self,
+        canonical_id: str,
+        duplicate_ids: list[str],
+        override_types: list[str] | None = None,
+    ) -> dict[str, Any]:
         try:
             from phileas.daemon import call
 
             response = call(
                 "graph_write",
-                {"op": "merge_entities", "canonical_id": canonical_id, "duplicate_ids": duplicate_ids},
+                {
+                    "op": "merge_entities",
+                    "canonical_id": canonical_id,
+                    "duplicate_ids": duplicate_ids,
+                    "override_types": override_types,
+                },
             )
             if response is not None and response.get("ok", False):
                 inner = response.get("result") or {}
@@ -220,6 +230,13 @@ class GraphProxy:
         return self._read(
             "get_top_entities_by_type",
             {"entity_type": entity_type, "top_n": top_n},
+            default=[],
+        )
+
+    def reconciliation_rows(self, limit: int = 1000, sample_k: int = 3) -> list[dict[str, Any]]:
+        return self._read(
+            "reconciliation_rows",
+            {"limit": limit, "sample_k": sample_k},
             default=[],
         )
 

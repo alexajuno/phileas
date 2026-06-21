@@ -676,7 +676,11 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             graph.set_aliases(params["node_type"], params["name"], params["aliases"])
             return {"ok": True}
         elif op == "merge_entities":
-            summary = graph.merge_entities(params["canonical_id"], params["duplicate_ids"])
+            summary = graph.merge_entities(
+                params["canonical_id"],
+                params["duplicate_ids"],
+                override_types=params.get("override_types"),
+            )
             return {"ok": True, "summary": summary}
         elif op == "add_alias":
             summary = graph.add_alias(params["node_type"], params["name"], params["alias"])
@@ -750,6 +754,11 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return graph.list_all_entities(
                 limit=params.get("limit", 500),
                 type_filter=params.get("type_filter"),
+            )
+        elif op == "reconciliation_rows":
+            return graph.reconciliation_rows(
+                limit=params.get("limit", 1000),
+                sample_k=params.get("sample_k", 3),
             )
         elif op == "status":
             return graph.status()
