@@ -19,7 +19,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 
-from phileas.config import DEFAULT_PROFILE, resolve_home
+from phileas.config import DEFAULT_PROFILE, load_config, resolve_home
 
 console = Console()
 
@@ -27,6 +27,10 @@ console = Console()
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Where to point new users who want to reach out.
+CONTACT_EMAIL = "giolynx104@gmail.com"
+ISSUES_URL = "https://github.com/alexajuno/phileas/issues"
 
 
 # -- MCP entry helpers ------------------------------------------------
@@ -464,6 +468,55 @@ def _daemon_summary(status: str) -> str:
     }.get(status, status)
 
 
+# -- Telemetry opt-in + invitation ------------------------------------
+
+
+def _telemetry_optin(cfg, unattended: bool) -> None:
+    """Offer the anonymous-stats opt-in (default off) and honor the choice.
+
+    A disabling ``PHILEAS_TELEMETRY`` forces it off and skips the prompt.
+    Unattended runs keep the off default and never prompt. On opt-in, store the
+    choice and send a single ping, best-effort.
+    """
+    from phileas import telemetry
+
+    console.print()
+    console.print("[bold]Anonymous usage stats[/bold] [dim](off by default)[/dim]")
+
+    if telemetry.killed_by_env():
+        console.print(f"  [dim]Disabled by {telemetry.KILL_ENV}; nothing is sent.[/dim]")
+        return
+    if unattended:
+        console.print("  [dim]Left off (no prompt in unattended mode). Opt in later by re-running init.[/dim]")
+        return
+
+    console.print(f"  If you opt in, a ping sends {telemetry.WHAT_IS_SENT}.")
+    console.print(f"  It never sends {telemetry.WHAT_IS_NOT_SENT}.")
+    choice = click.confirm("  Help improve Phileas by contributing anonymous usage stats?", default=False)
+    telemetry.set_opt_in(cfg, choice)
+
+    if not choice:
+        console.print("  [dim]Left off. Opt in later by re-running init.[/dim]")
+        return
+
+    sent = telemetry.send_ping(cfg)
+    where = telemetry.endpoint()
+    if sent:
+        console.print(f"  [green]Thanks![/green] A first ping went to [cyan]{where}[/cyan].")
+    else:
+        console.print(f"  [green]On.[/green] Stats go to [cyan]{where}[/cyan] (the first ping didn't land; harmless).")
+    console.print(f"  Turn it off anytime with [cyan]{telemetry.KILL_ENV}=0[/cyan].")
+
+
+def _print_invitation() -> None:
+    """A friendly, opt-in invitation to reach out. The user contacts you, not the other way around."""
+    console.print()
+    console.print("[bold]One last thing[/bold]")
+    console.print("  Trying Phileas? I'd love to hear how it goes.")
+    console.print(f"  Email [cyan]{CONTACT_EMAIL}[/cyan] or open an issue: [cyan]{ISSUES_URL}[/cyan].")
+    console.print("  You reach out only if you want to.")
+
+
 # -- Main wizard ------------------------------------------------------
 
 
@@ -618,6 +671,11 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
         )
         console.print()
 
+    cfg = load_config(home=home, profile=profile)
+    _telemetry_optin(cfg, unattended)
+    _print_invitation()
+
+    console.print()
     console.print("Next steps:")
     console.print("  [cyan]1.[/cyan] Restart Claude Code")
     console.print("  [cyan]2.[/cyan] Start chatting -- Phileas will remember automatically")

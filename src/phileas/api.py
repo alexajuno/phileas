@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import anyio
@@ -38,6 +39,43 @@ if TYPE_CHECKING:
 # Mirror the daemon's bounded HTTP pool (daemon.py:ThreadedHTTPServer, 4 workers):
 # cap the threads FastAPI uses to run sync endpoints so bursts stay bounded.
 _SYNC_THREAD_LIMIT = 4
+
+# Opt-in telemetry sink. The collector route is mounted only where this env var
+# is truthy (the maintainer's box), so it never opens on a user's local daemon.
+# It is unauthenticated by design: arbitrary installs POST anonymous pings to it.
+_TELEMETRY_RECEIVER_ENV = "PHILEAS_TELEMETRY_RECEIVER"
+_TELEMETRY_MAX_BODY = 4096
+# Whitelist of accepted fields → coercion. Anything else in a ping is dropped, so
+# the sink can only ever store this fixed, documented shape.
+_TELEMETRY_FIELDS: dict[str, type] = {
+    "install_id": str,
+    "phileas_version": str,
+    "os": str,
+    "python_version": str,
+    "memorize_count": int,
+    "recall_count": int,
+}
+
+
+def _normalize_telemetry(payload: object) -> dict:
+    """Keep only the whitelisted fields, coercing and bounding each.
+
+    Strings are truncated; counts are clamped to non-negative ints. Unknown keys
+    and malformed values are dropped rather than rejected, so a slightly-off ping
+    still records what it can.
+    """
+    record: dict = {}
+    if not isinstance(payload, dict):
+        return record
+    for key, kind in _TELEMETRY_FIELDS.items():
+        if key not in payload:
+            continue
+        value = payload[key]
+        if kind is str and isinstance(value, str):
+            record[key] = value[:200]
+        elif kind is int and isinstance(value, bool) is False and isinstance(value, (int, float)):
+            record[key] = max(0, int(value))
+    return record
 
 
 # -- Response models = the read contract -------------------------------------
@@ -131,6 +169,30 @@ def create_app(engine: MemoryEngine, dispatch=None) -> FastAPI:
     def health() -> dict:
         # Unauthenticated on purpose: the liveness probe for push-health.
         return {"ok": True, "pid": os.getpid()}
+
+    if os.environ.get(_TELEMETRY_RECEIVER_ENV):
+        telemetry_log = engine.config.home / "telemetry.jsonl"
+
+        @app.post("/telemetry")
+        async def telemetry_collect(request: Request) -> Response:
+            # Unauthenticated by design: anonymous opt-in pings from any install.
+            # Bound the body, keep only the documented fields, append one line.
+            raw = await request.body()
+            if len(raw) > _TELEMETRY_MAX_BODY:
+                return Response('{"ok": false}', media_type="application/json", status_code=413)
+            try:
+                payload = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return Response('{"ok": false}', media_type="application/json", status_code=400)
+            record = _normalize_telemetry(payload)
+            record["received_at"] = datetime.now(timezone.utc).isoformat()
+            try:
+                telemetry_log.parent.mkdir(parents=True, exist_ok=True)
+                with open(telemetry_log, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record) + "\n")
+            except OSError:
+                pass
+            return Response('{"ok": true}', media_type="application/json", status_code=200)
 
     if dispatch is not None:
 

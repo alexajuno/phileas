@@ -311,6 +311,9 @@ class TestRunWizardReadiness:
 
     def _stub(self, monkeypatch, *, embedding, reranker="present", mcp="unchanged", daemon="running"):
         monkeypatch.setattr("phileas.cli.wizard.click.prompt", lambda *a, **k: "default")
+        # Decline the telemetry opt-in on the ready path so no prompt blocks and
+        # nothing is sent; the opt-in itself is covered in TestTelemetryOptin.
+        monkeypatch.setattr("phileas.cli.wizard.click.confirm", lambda *a, **k: False)
         monkeypatch.setattr("phileas.cli.wizard._wire_claude_code", lambda profile: mcp)
         monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (False, "already installed"))
         monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
@@ -495,3 +498,82 @@ class TestEstablishDaemon:
         monkeypatch.setattr("phileas.cli.wizard._wait_for_daemon", lambda cfg: False)
         monkeypatch.setattr("phileas.cli.wizard._spawn_daemon", lambda profile, home: True)
         assert _establish_daemon(fake_home, "dev") == "manual"
+
+
+# ------------------------------------------------------------------
+# _telemetry_optin -- the opt-in prompt + invitation
+# ------------------------------------------------------------------
+
+
+class TestTelemetryOptin:
+    """The opt-in defaults to off, persists the choice, and only sends on yes.
+    The kill switch and unattended mode both skip the prompt entirely."""
+
+    def _cfg(self, tmp_path):
+        from phileas.config import PhileasConfig
+
+        return PhileasConfig(home=tmp_path)
+
+    def test_decline_persists_off_and_sends_nothing(self, tmp_path, monkeypatch):
+        from phileas.cli import wizard
+        from phileas.config import load_config
+
+        monkeypatch.delenv("PHILEAS_TELEMETRY", raising=False)
+        monkeypatch.setattr("phileas.cli.wizard.click.confirm", lambda *a, **k: False)
+        sent: list[int] = []
+        monkeypatch.setattr("phileas.telemetry.send_ping", lambda cfg: sent.append(1) or True)
+
+        cfg = self._cfg(tmp_path)
+        wizard._telemetry_optin(cfg, unattended=False)
+
+        assert cfg.telemetry.enabled is False
+        assert sent == []
+        assert load_config(home=tmp_path).telemetry.enabled is False
+
+    def test_accept_persists_on_and_sends(self, tmp_path, monkeypatch):
+        from phileas.cli import wizard
+        from phileas.config import load_config
+
+        monkeypatch.delenv("PHILEAS_TELEMETRY", raising=False)
+        monkeypatch.setattr("phileas.cli.wizard.click.confirm", lambda *a, **k: True)
+        sent: list[int] = []
+        monkeypatch.setattr("phileas.telemetry.send_ping", lambda cfg: sent.append(1) or True)
+
+        cfg = self._cfg(tmp_path)
+        wizard._telemetry_optin(cfg, unattended=False)
+
+        assert cfg.telemetry.enabled is True
+        assert sent == [1]
+        assert load_config(home=tmp_path).telemetry.enabled is True
+
+    def test_unattended_never_prompts_or_sends(self, tmp_path, monkeypatch):
+        from phileas.cli import wizard
+
+        monkeypatch.delenv("PHILEAS_TELEMETRY", raising=False)
+
+        def no_prompt(*a, **k):
+            raise AssertionError("no telemetry prompt in unattended mode")
+
+        monkeypatch.setattr("phileas.cli.wizard.click.confirm", no_prompt)
+        monkeypatch.setattr(
+            "phileas.telemetry.send_ping",
+            lambda cfg: (_ for _ in ()).throw(AssertionError("must not send")),
+        )
+
+        cfg = self._cfg(tmp_path)
+        wizard._telemetry_optin(cfg, unattended=True)
+        assert cfg.telemetry.enabled is False
+
+    def test_kill_switch_skips_prompt(self, tmp_path, monkeypatch):
+        from phileas.cli import wizard
+
+        monkeypatch.setenv("PHILEAS_TELEMETRY", "0")
+
+        def no_prompt(*a, **k):
+            raise AssertionError("no prompt when killed by env")
+
+        monkeypatch.setattr("phileas.cli.wizard.click.confirm", no_prompt)
+
+        cfg = self._cfg(tmp_path)
+        wizard._telemetry_optin(cfg, unattended=False)
+        assert cfg.telemetry.enabled is False

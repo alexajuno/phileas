@@ -63,6 +63,28 @@ The tools work in any client, and the server ships usage guidance that every MCP
 
 For the full command list, run `phileas --help` or `phileas COMMAND --help`.
 
+## Anonymous usage stats (opt-in)
+
+Phileas collects nothing unless you turn it on. At the end of `phileas init` you are asked, with the default set to no:
+
+> Help improve Phileas by contributing anonymous usage stats? [y/N]
+
+Say yes and one ping is sent. It carries exactly:
+
+- A random install ID, a UUID generated on first run and stored at `~/.phileas/install_id`. It names an install, not you: no email, no name, no hostname.
+- The Phileas version.
+- Your operating system and Python version (for example `Linux` and `3.11.6`).
+- Counts of memorize and recall calls.
+
+It never sends memory content, query text, file paths, names, or hostnames. The whole payload is the six fields above.
+
+The choice is stored at `~/.phileas/config.toml` under `[telemetry]` and honored on later runs. Pings go to `https://phileas.tail348f25.ts.net/telemetry`, a small collector the maintainer runs; its code is the `/telemetry` route in [`src/phileas/api.py`](src/phileas/api.py), so you can read exactly what the other end does.
+
+To control it:
+
+- `PHILEAS_TELEMETRY=0` overrides everything and keeps stats off, whatever the stored choice says.
+- `PHILEAS_TELEMETRY_ENDPOINT=<url>` points pings somewhere else, such as a collector you run yourself.
+
 ## License
 
 MIT

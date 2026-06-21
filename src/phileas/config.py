@@ -114,6 +114,18 @@ class HealthConfig:
     rss_alert_mb: int = 3000
 
 
+@dataclass
+class TelemetryConfig:
+    """Opt-in anonymous telemetry, off until the user turns it on at init.
+
+    Only the choice lives here; everything about what is sent and where it goes
+    lives in ``phileas.telemetry``. ``PHILEAS_TELEMETRY=0`` overrides ``enabled``
+    at runtime, so this flag is the stored preference, not the final say.
+    """
+
+    enabled: bool = False
+
+
 # ------------------------------------------------------------------
 # Top-level config
 # ------------------------------------------------------------------
@@ -133,6 +145,7 @@ class PhileasConfig:
     profile: str = DEFAULT_PROFILE
     sync: SyncConfig = field(default_factory=SyncConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
 
     # -- Derived paths --
 
@@ -173,13 +186,16 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place.
 
-    The ``[sync]`` and ``[health]`` sections are configurable; every other
-    section (including retired ones like ``[recall]``) is silently ignored.
+    The ``[sync]``, ``[health]``, and ``[telemetry]`` sections are configurable;
+    every other section (including retired ones like ``[recall]``) is silently
+    ignored.
     """
     if "sync" in data:
         _apply_toml_section(cfg.sync, data["sync"])
     if "health" in data:
         _apply_toml_section(cfg.health, data["health"])
+    if "telemetry" in data:
+        _apply_toml_section(cfg.telemetry, data["telemetry"])
 
 
 def resolve_profile(profile: str | None = None) -> str:
