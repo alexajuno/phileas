@@ -7,6 +7,7 @@ Uses ChromaDB's built-in embedding function.
 from pathlib import Path
 
 import chromadb
+from chromadb.config import Settings
 
 DEFAULT_CHROMA_PATH = Path.home() / ".phileas" / "chroma"
 COLLECTION_NAME = "memories"
@@ -50,7 +51,13 @@ def _zip_embeddings(chroma_result: dict) -> dict[str, list[float]]:
 class VectorStore:
     def __init__(self, path: Path = DEFAULT_CHROMA_PATH):
         path.mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=str(path))
+        # Disable ChromaDB's phone-home telemetry: it sends usage events to a
+        # remote endpoint on writes, which contradicts the local-first promise
+        # and makes a write do a DNS lookup that fails when offline.
+        self._client = chromadb.PersistentClient(
+            path=str(path),
+            settings=Settings(anonymized_telemetry=False),
+        )
         self._collection = self._client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
