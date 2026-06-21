@@ -32,11 +32,27 @@ The first run downloads two models from [Hugging Face](https://huggingface.co/) 
 
 ## Connect other MCP clients
 
-Claude Code is configured by `phileas init`. For any other MCP client, start the server and point the client at it:
+`phileas init` wires up Claude Code. Any other MCP client connects to the same server: `phileas serve` speaks MCP over stdio, so register it the way that client registers a stdio server.
 
-```bash
-phileas serve
+Most clients (Cursor, Antigravity, and others) read a JSON config with the same shape. Add Phileas to its `mcpServers` map:
+
+```json
+{
+  "mcpServers": {
+    "phileas": {
+      "type": "stdio",
+      "command": "/absolute/path/to/phileas",
+      "args": ["serve"]
+    }
+  }
+}
 ```
+
+Use the absolute path to the `phileas` executable (run `command -v phileas` to find it), since the client launches it without your shell's PATH or an active venv. To point a client at a named profile, add `"env": {"PHILEAS_PROFILE": "<name>"}` to the entry.
+
+### Proactive recall and memorize
+
+The tools work in any client, and the server ships usage guidance that every MCP client receives on connect. The extra layer that makes memory feel automatic (recall before answering, memorize when something worth keeping comes up, the query shapes that retrieve well) lives in a skill file. `phileas init` installs it for Claude Code at `~/.claude/skills/phileas/SKILL.md`; its text uses bare tool names so it carries to any client. If your client has a rules or skills mechanism, put that file's content into it.
 
 ## Principles
 
