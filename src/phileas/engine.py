@@ -1309,25 +1309,30 @@ class MemoryEngine:
             # where its sigmoid is not.
             rerank_mode, rr_k, rr_pool = resolve_rerank(default="rank")
             if rerank_mode == "rank":
-                from phileas.reranker import rerank
+                from phileas.reranker import RerankerUnavailable, rerank
 
                 pool_ids = sorted(filtered, key=lambda m: relevance_map[m], reverse=True)[:rr_pool]
-                order = rerank(query, [(m, filtered[m].summary) for m in pool_ids])
-                ce_rel = rank_consume([mid for mid, _ in order], k=rr_k)
-                # The reranked head takes its rank-based relevance; the tail (beyond
-                # the pool) is scaled strictly below the lowest reranked score so a
-                # non-reranked candidate can't outrank a reranked one, while keeping
-                # its fused order within the tail.
-                tail_ceiling = min(ce_rel.values()) if ce_rel else 0.0
-                for mem_id in filtered:
-                    if mem_id in ce_rel:
-                        relevance_map[mem_id] = ce_rel[mem_id]
-                    else:
-                        relevance_map[mem_id] = relevance_map[mem_id] * tail_ceiling
+                try:
+                    order = rerank(query, [(m, filtered[m].summary) for m in pool_ids])
+                except RerankerUnavailable:
+                    # No reranker: keep the fused relevance untouched.
+                    order = None
+                if order:
+                    ce_rel = rank_consume([mid for mid, _ in order], k=rr_k)
+                    # The reranked head takes its rank-based relevance; the tail (beyond
+                    # the pool) is scaled strictly below the lowest reranked score so a
+                    # non-reranked candidate can't outrank a reranked one, while keeping
+                    # its fused order within the tail.
+                    tail_ceiling = min(ce_rel.values()) if ce_rel else 0.0
+                    for mem_id in filtered:
+                        if mem_id in ce_rel:
+                            relevance_map[mem_id] = ce_rel[mem_id]
+                        else:
+                            relevance_map[mem_id] = relevance_map[mem_id] * tail_ceiling
             _mark("rerank")
         else:
             # ----- Floor fusion -----
-            from phileas.reranker import rerank
+            from phileas.reranker import RerankerUnavailable, rerank
 
             # Candidates validated by keyword match or graph traversal
             # bypass cross-encoder — their relevance is structural
@@ -1339,7 +1344,11 @@ class MemoryEngine:
                 (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
             ]
             if ce_candidates:
-                reranked = rerank(query, ce_candidates)
+                try:
+                    reranked = rerank(query, ce_candidates)
+                except RerankerUnavailable:
+                    # No reranker: structural + cosine signals carry relevance.
+                    reranked = []
                 raw_ce = {mem_id: score for mem_id, score in reranked}
                 ce_scores = list(raw_ce.values())
                 min_score = min(ce_scores) if ce_scores else 0
