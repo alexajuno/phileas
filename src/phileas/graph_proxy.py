@@ -242,8 +242,8 @@ class GraphProxy:
 
     # -- Memory <-> Memory edges (MEM_REL) --
 
-    def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
-        self._write("link_memory_to_memory", {"from_id": from_id, "edge_type": edge_type, "to_id": to_id})
+    def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> bool:
+        return self._write("link_memory_to_memory", {"from_id": from_id, "edge_type": edge_type, "to_id": to_id})
 
     def add_contradiction(
         self,

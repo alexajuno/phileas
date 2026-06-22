@@ -90,6 +90,36 @@ def test_roll_up_unknown_parent_reports_error(tmp_dir: Path):
     assert "No memory found" in msg
 
 
+def test_roll_up_reports_graph_unavailable_instead_of_lying(tmp_dir: Path, monkeypatch):
+    """When edges can't persist (graph down), roll_up must say so, not report success."""
+    eng = _engine(tmp_dir)
+    gist = _seed(eng, "gist")
+    a = _seed(eng, "episode a")
+    b = _seed(eng, "episode b")
+
+    monkeypatch.setattr(eng.graph, "_ensure_connected", lambda: False)
+    msg = eng.roll_up(gist, [a, b])
+
+    assert "Graph unavailable" in msg
+    assert "0 of 2" in msg
+    assert "Rolled up 2" not in msg
+
+
+def test_roll_up_warns_when_some_edges_fail(tmp_dir: Path, monkeypatch):
+    """Partial failure is surfaced: confirmed links counted, dropped ones flagged."""
+    eng = _engine(tmp_dir)
+    gist = _seed(eng, "gist")
+    a = _seed(eng, "episode a")
+    b = _seed(eng, "episode b")
+
+    results = iter([True, False])
+    monkeypatch.setattr(eng.graph, "link_memory_to_memory", lambda *a, **k: next(results))
+    msg = eng.roll_up(gist, [a, b])
+
+    assert "Rolled up 1" in msg
+    assert "1 edge(s) were not written" in msg
+
+
 def test_indegree_absent_for_unlinked(tmp_dir: Path):
     """A memory nothing rolls up into is simply absent from the map (zero)."""
     eng = _engine(tmp_dir)

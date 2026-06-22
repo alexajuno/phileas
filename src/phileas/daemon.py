@@ -670,8 +670,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             )
             return {"ok": True}
         elif op == "link_memory_to_memory":
-            graph.link_memory_to_memory(params["from_id"], params["edge_type"], params["to_id"])
-            return {"ok": True}
+            ok = graph.link_memory_to_memory(params["from_id"], params["edge_type"], params["to_id"])
+            return {"ok": bool(ok)}
         elif op == "set_aliases":
             graph.set_aliases(params["node_type"], params["name"], params["aliases"])
             return {"ok": True}

@@ -1820,10 +1820,15 @@ class GraphStore:
     # ------------------------------------------------------------------
 
     @_locked
-    def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> None:
-        """Create an edge between two Memory nodes with a given edge_type."""
+    def link_memory_to_memory(self, from_id: str, edge_type: str, to_id: str) -> bool:
+        """Create an edge between two Memory nodes with a given edge_type.
+
+        Returns True when the edge is present after the call (created now or
+        already there), False when the graph was unavailable and nothing was
+        written. Callers that report a durable result to a user must check it.
+        """
         if not self._ensure_connected():
-            return
+            return False
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": from_id})
         self._conn.execute("MERGE (m:Memory {id: $id})", parameters={"id": to_id})
         count_result = self._conn.execute(
@@ -1832,11 +1837,12 @@ class GraphStore:
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
         if count_result.get_next()[0] > 0:
-            return
+            return True
         self._conn.execute(
             "MATCH (a:Memory {id: $fid}), (b:Memory {id: $tid}) CREATE (a)-[:MEM_REL {edge_type: $et}]->(b)",
             parameters={"fid": from_id, "tid": to_id, "et": edge_type},
         )
+        return True
 
     @_locked
     def add_contradiction(

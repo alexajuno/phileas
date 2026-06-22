@@ -1872,6 +1872,7 @@ class MemoryEngine:
         if isinstance(parent, str):
             return parent
         linked = 0
+        failed = 0
         skipped: list[str] = []
         for raw in child_ids or []:
             child = self._resolve_one(raw)
@@ -1881,9 +1882,19 @@ class MemoryEngine:
             if child.id == parent.id:
                 skipped.append(f"{raw}: a memory cannot roll up into itself")
                 continue
-            self.graph.link_memory_to_memory(child.id, "ROLLS_UP", parent.id)
-            linked += 1
+            if self.graph.link_memory_to_memory(child.id, "ROLLS_UP", parent.id):
+                linked += 1
+            else:
+                failed += 1
+        if failed and not linked:
+            return (
+                f"Graph unavailable: rolled up 0 of {failed} memory(ies) into "
+                f"[{parent.id[:8]}]. No edges were written; start the daemon "
+                "(phileas start) and retry."
+            )
         msg = f"Rolled up {linked} memory(ies) into [{parent.id[:8]}] {parent.summary}."
+        if failed:
+            msg += f" Warning: {failed} edge(s) were not written (graph unavailable); re-run after the daemon is up."
         if skipped:
             msg += " Skipped: " + "; ".join(skipped)
         return msg
