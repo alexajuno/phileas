@@ -321,6 +321,15 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     except Exception as e:
         log.warning(f"Daemon failed to pre-warm reranker: {e}")
 
+    try:
+        from phileas import nli
+
+        # Warm the NLI model the contradiction probe uses on the write path, so
+        # the first conflicting memorize doesn't pay the one-time load.
+        nli.prewarm()
+    except Exception as e:
+        log.warning(f"Daemon failed to pre-warm NLI model: {e}")
+
     # Bridge the legacy JSON-RPC to the engine, arming a push after a write
     # succeeds — never blocking the response on it (notify() is fire-and-forget).
     # The closure reads _sync_pusher at call time, after start() assigns it below.

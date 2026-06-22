@@ -27,6 +27,7 @@ console = Console()
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+NLI_MODEL = "cross-encoder/nli-deberta-v3-small"
 
 
 # -- MCP entry helpers ------------------------------------------------
@@ -347,6 +348,13 @@ def _ensure_reranker_model() -> str:
     return _ensure_model(lambda name: CrossEncoder(name, max_length=256), RERANKER_MODEL)
 
 
+def _ensure_nli_model() -> str:
+    """Ensure the NLI cross-encoder (contradiction probe) is available locally."""
+    from sentence_transformers import CrossEncoder
+
+    return _ensure_model(lambda name: CrossEncoder(name, max_length=256), NLI_MODEL)
+
+
 # -- Daemon establishment ---------------------------------------------
 
 
@@ -548,10 +556,12 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
         console.print("[bold]Models[/bold] -- [yellow]skipped[/yellow] (--skip-models)")
         embedding_status = "skipped"
         reranker_status = "skipped"
+        nli_status = "skipped"
     else:
         console.print("[bold]Setting up models...[/bold]")
         embedding_status = _ensure_embedding_model()
         reranker_status = _ensure_reranker_model()
+        nli_status = _ensure_nli_model()
 
     # 4. Daemon -- the single KuzuDB owner the MCP server proxies graph ops to.
     #    It loads the embedding model on start, so only attempt it once that's
@@ -572,6 +582,7 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
     console.print(f"  Skill      {'updated' if skill_changed else 'already current'}")
     console.print(f"  Embedding  {_model_summary(embedding_status)}")
     console.print(f"  Reranker   {_model_summary(reranker_status)}")
+    console.print(f"  NLI        {_model_summary(nli_status)}")
     console.print(f"  Daemon     {_daemon_summary(daemon_status)}")
     console.print()
 

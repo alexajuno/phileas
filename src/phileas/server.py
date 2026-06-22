@@ -178,7 +178,7 @@ def _pointer_lines(items: list[dict], *, show_date: bool = True) -> list[str]:
 
 
 def _contradiction_menu(contradiction: dict | None) -> str:
-    """Render the supersede/scope/coexist resolve menu for a flagged conflict (AA-120).
+    """Render the supersede/scope/coexist resolve menu for a flagged conflict.
 
     Returns "" when memorize surfaced no conflict candidate. Otherwise the agent
     reads the menu, judges whether the conflict is real, and — if so — calls
@@ -188,10 +188,18 @@ def _contradiction_menu(contradiction: dict | None) -> str:
         return ""
     new8 = contradiction["new_id"][:8]
     cand8 = contradiction["candidate_id"][:8]
+    method = contradiction.get("method")
+    similarity = contradiction.get("similarity")
+    if method == "structured":
+        basis = "same attribute, different value"
+    elif similarity is not None:
+        basis = f"similarity {similarity}"
+    else:
+        basis = "likely conflict"
     return "\n".join(
         [
             f'⚠ Possible conflict with [{cand8}] "{contradiction["candidate_summary"]}" '
-            f"(similarity {contradiction['similarity']}). If they genuinely conflict, resolve:",
+            f"({basis}). If they genuinely conflict, resolve:",
             f'  • supersede — new fact is right, old is wrong: resolve_contradiction("{new8}", "{cand8}", "supersede")',
             f"  • scope     — each true in its own context: "
             f'resolve_contradiction("{new8}", "{cand8}", "scope", contexts=[...], other_contexts=[...])',

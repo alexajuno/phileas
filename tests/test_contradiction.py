@@ -116,6 +116,82 @@ def test_archived_candidate_not_flagged(tmp_dir: Path):
     assert "contradiction" not in res
 
 
+# --- detection: structured functional-edge ---------------------------------
+
+
+def _rel(subj: str, edge: str, obj: str) -> dict:
+    return {"from_name": subj, "from_type": "Project", "edge": edge, "to_name": obj, "to_type": "Tool"}
+
+
+def test_structured_flags_functional_edge_conflict(tmp_dir: Path):
+    """A different value on a single-valued edge flags even when the summaries
+    are not cosine-similar — the conflict the cosine band misses."""
+    eng = _engine(tmp_dir)
+    first = eng.memorize(
+        "The backend service is implemented in Python",
+        entities=[{"name": "backend service", "type": "Project"}],
+        relationships=[_rel("backend service", "WRITTEN_IN", "Python")],
+    )
+    second = eng.memorize(
+        "We finished migrating everything over to Rust last sprint",
+        entities=[{"name": "backend service", "type": "Project"}],
+        relationships=[_rel("backend service", "WRITTEN_IN", "Rust")],
+    )
+    conflict = second.get("contradiction")
+    assert conflict is not None
+    assert conflict["method"] == "structured"
+    assert conflict["candidate_id"] == first["id"]
+
+
+def test_structured_ignores_non_functional_edge(tmp_dir: Path):
+    """A different target on a non-single-valued edge is an additional fact, not
+    a conflict; with dissimilar summaries nothing flags."""
+    eng = _engine(tmp_dir)
+    eng.memorize(
+        "The backend service talks to the billing API",
+        entities=[{"name": "backend service", "type": "Project"}],
+        relationships=[_rel("backend service", "TALKS_TO", "billing API")],
+    )
+    res = eng.memorize(
+        "A separate remark about weekend gardening plans",
+        entities=[{"name": "backend service", "type": "Project"}],
+        relationships=[_rel("backend service", "TALKS_TO", "metrics API")],
+    )
+    assert "contradiction" not in res
+
+
+# --- detection: semantic (NLI) and band fallback ---------------------------
+
+
+def test_semantic_flags_below_band_via_nli(tmp_dir: Path, monkeypatch):
+    """A conflict whose cosine sits below the old band still flags when NLI
+    judges it a contradiction."""
+    eng = _engine(tmp_dir)
+    first = eng.memorize("The user writes the daemon in Python", detect_conflict=False)
+    # Moderate cosine (below the 0.75 band, above the 0.45 gate) with a high NLI
+    # contradiction probability — the semantic stage should surface it.
+    monkeypatch.setattr(eng.vector, "search", lambda *a, **k: [(first["id"], 0.6)])
+    monkeypatch.setattr("phileas.nli.contradiction_prob", lambda a, b: 0.95)
+    second = eng.memorize("The user rewrote the daemon in Rust")
+    conflict = second.get("contradiction")
+    assert conflict is not None
+    assert conflict["method"] == "semantic"
+    assert conflict["candidate_id"] == first["id"]
+    assert conflict["similarity"] == 0.6
+
+
+def test_nli_unavailable_falls_back_to_band(tmp_dir: Path):
+    """With no NLI model (the autouse default), an in-band cosine neighbour still
+    flags via the cosine fallback, tagged 'band'."""
+    eng = _engine(tmp_dir)
+    eng.memorize("The user prefers dark mode in the editor")
+    second = eng.memorize("The user prefers light mode in the editor")
+    conflict = second.get("contradiction")
+    assert conflict is not None
+    assert conflict["method"] == "band"
+    assert 0.75 <= conflict["similarity"] < 0.98
+
+
 # --- resolution: supersede -------------------------------------------------
 
 

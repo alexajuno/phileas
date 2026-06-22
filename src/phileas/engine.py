@@ -15,6 +15,7 @@ import threading
 from datetime import date, datetime, timezone
 from typing import cast, get_args
 
+from phileas import contradiction
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
@@ -597,14 +598,21 @@ class MemoryEngine:
 
         self.db.save_item(item)
 
-        # 4. Probe for a possible conflict *before* the new embedding lands, so
-        # the nearest-neighbour search can't match the memory against itself
-        # (AA-120). Held aside and attached to the result after the write.
+        # 4. Probe for a possible conflict *before* the new embedding lands and
+        # before the new edges are written, so neither the nearest-neighbour
+        # search nor the structured check can match the memory against itself.
+        # Held aside and attached to the result after the write.
         conflict = None
         if detect_conflict:
             try:
-                conflict = self.vector.find_similar(
-                    summary, floor=CONTRADICTION_SIM_FLOOR, ceiling=CONTRADICTION_SIM_CEILING
+                conflict = contradiction.detect(
+                    self.db,
+                    self.vector,
+                    self.graph,
+                    summary=summary,
+                    relationships=relationships,
+                    floor=CONTRADICTION_SIM_FLOOR,
+                    ceiling=CONTRADICTION_SIM_CEILING,
                 )
             except Exception as e:
                 log.debug("contradiction probe failed", extra={"op": "memorize", "data": {"error": str(e)}})
@@ -665,25 +673,21 @@ class MemoryEngine:
 
         result: dict = {"id": item.id, "summary": item.summary}
 
-        # 9. Surface a conflict candidate for the caller to resolve (AA-120). The
-        # probe flags topical nearness; the agent decides whether it is a genuine
-        # contradiction and, if so, calls resolve_contradiction with the choice.
-        if conflict:
-            cand_id, similarity = conflict
-            cand = self.db.get_item(cand_id)
-            if cand and cand.status == "active":
-                result["contradiction"] = {
-                    "new_id": item.id,
-                    "candidate_id": cand.id,
-                    "candidate_summary": cand.summary,
-                    "similarity": round(similarity, 3),
-                    "options": ["supersede", "scope", "coexist"],
-                    "explanation": (
-                        f"Highly similar to active memory [{cand.id[:8]}] "
-                        f"(similarity {round(similarity, 3)}). If they genuinely conflict, "
-                        "resolve via resolve_contradiction; if not, ignore."
-                    ),
-                }
+        # 9. Surface a conflict candidate for the caller to resolve. The probe
+        # flags a likely conflict (structured edge, NLI, or cosine fallback); the
+        # agent decides whether it is genuine and, if so, calls
+        # resolve_contradiction with the choice. detect() returns only active
+        # candidates.
+        if conflict is not None:
+            result["contradiction"] = {
+                "new_id": item.id,
+                "candidate_id": conflict.candidate_id,
+                "candidate_summary": conflict.candidate_summary,
+                "similarity": round(conflict.similarity, 3) if conflict.similarity is not None else None,
+                "method": conflict.method,
+                "options": ["supersede", "scope", "coexist"],
+                "explanation": conflict.explanation(),
+            }
 
         try:
             self._metrics.record_ingest(
