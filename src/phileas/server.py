@@ -21,6 +21,7 @@ Tools:
 
 import functools
 import json
+from datetime import datetime, timezone
 from time import perf_counter
 
 from mcp.server.fastmcp import FastMCP
@@ -94,21 +95,13 @@ mcp = FastMCP(
         "record a judgment, prediction, or opinion with its holder, date, and basis, truth left open. "
         "A claim filed as fact has no holder; a claim filed as data names one.\n"
         "\n"
-        "Consolidation (the abstraction layer): when one entity (a person, project, or activity) "
-        "has accumulated many episodes, abstract them. Identify the distinct threads across the "
-        "cluster, then write one concise memory covering each (memorize, memory_type='reflection', "
-        "entities=[the entity]); a tight, focused summary stands in better than a long, term-stuffed "
-        "one. Then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes into it. A broad "
-        "query that gathers most of the cluster collapses the episodes into the gist and surfaces it "
-        "in their place; expand(<gist>) drills back down to the episodes it covers. "
-        "A recall that ends with a '↳ … aren't rolled up into a gist yet' line is your in-the-moment "
-        "cue that this theme's cluster has grown past what's surfaced. recall only signals it; survey "
-        "hands you the material: call survey(theme) to get the loose memories grouped into candidate "
-        "sub-threads (each with its id8s) plus any gist already covering part of the theme. Then per "
-        "sub-thread write one focused reflection and roll_up its members, into an existing gist when "
-        "survey shows one matches, rather than minting a sibling. Rolled memories leave the loose set, "
-        "so each pass shrinks the theme. Consolidating is part of using memory well, not a separate "
-        "chore: a tripped cue is the moment to spend a few seconds leaving the store tidier than you found it."
+        "Consolidation (the abstraction layer): episodes on a busy theme get consolidated into a "
+        "higher-level reflection (a gist) that they roll up into, by a separate consolidation pass, "
+        "not by you mid-conversation. You read that layer: a broad query collapses a consolidated "
+        "cluster into its gist and surfaces it in place of the episodes, and expand(<gist>) drills "
+        "back down to the episodes it covers. When a recall ends with a '↳ … queued for a "
+        "consolidation pass' line, that theme has grown past what recall surfaces and has been handed "
+        "to that pass; you don't need to act on it, just answer with what you have."
     ),
 )
 
@@ -137,6 +130,41 @@ engine = MemoryEngine(db=db, vector=vector, graph=graph, config=_config)
 # the consolidation nudge. The engine gates "related" on keyword + cosine (see
 # REPORT_COSINE_FLOOR); this just sets how big a loose cluster must be to surface.
 _RECALL_REPORT_MIN_LOOSE = 12
+
+_CONSOLIDATION_QUEUE = "consolidation_queue.jsonl"
+
+
+def _enqueue_consolidation(theme: str, report: dict) -> None:
+    """Record that a theme's cluster has grown past what recall surfaces.
+
+    Host-side and model-independent: the loose-cluster signal is appended to a
+    per-profile queue that a boundary consolidation pass drains, rather than
+    asking the conversational model to consolidate mid-answer. A theme already
+    queued (and not yet drained) is not duplicated. Best-effort: a failure here
+    never breaks the recall it rode in on.
+    """
+    try:
+        qpath = _config.home / _CONSOLIDATION_QUEUE
+        theme_norm = theme.strip().lower()
+        if qpath.exists():
+            for line in qpath.read_text().splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("theme", "").strip().lower() == theme_norm:
+                    return
+        entry = {
+            "theme": theme,
+            "loose": report.get("loose"),
+            "span": report.get("span"),
+            "queued_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with qpath.open("a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
 
 # Cap how many name-variant pairs `reconcile` prints in one pass, so a graph with
 # many shared-token collisions doesn't flood the context. Overflow is reported,
@@ -461,11 +489,10 @@ def recall(
     if report and report.get("loose", 0) >= _RECALL_REPORT_MIN_LOOSE:
         span = report.get("span")
         when = f" ({span[0]} → {span[1]})" if span else ""
+        _enqueue_consolidation(query, report)
         lines.append(
-            f"\n↳ {report['loose']} more memories on this theme aren't rolled up into a gist yet{when}. "
-            f'Cue to consolidate (see "Consolidation" in your instructions): call survey("{query}") to see '
-            "them grouped into sub-threads with their ids, then write one reflection per thread and roll_up "
-            "its members. A few seconds now keeps this theme compact next time."
+            f"\n↳ {report['loose']} more memories on this theme aren't gisted yet{when}; "
+            "queued for a consolidation pass."
         )
     return "\n".join(lines)
 
@@ -758,8 +785,9 @@ def survey(theme: str) -> str:
             ids = " ".join(grp["ids"])
             lines.append(f"  • {grp['label']} ({grp['count']}{gwhen}): {ids}{more}")
     lines.append(
-        '\nPer sub-thread: memorize(memory_type="reflection", entities=[the thread\'s entity]) the '
-        "synthesis, then roll_up(parent_id=<that reflection, or a matching gist above>, "
+        "\nPer sub-thread, anchor then write the gist: ingest_text(text=<your synthesis>) for an event_id, "
+        'then memorize(memory_type="reflection", entities=[the thread\'s entity], source_event_id=<that '
+        "event_id>) the synthesis, then roll_up(parent_id=<that reflection, or a matching gist above>, "
         "child_ids=[the group's id8s])."
     )
     return "\n".join(lines)
