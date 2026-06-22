@@ -15,6 +15,7 @@ import threading
 from datetime import date, datetime, timezone
 from typing import cast, get_args
 
+from phileas import recall_trace
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
@@ -745,6 +746,13 @@ class MemoryEngine:
         excluded, or expired-validity ones in stage 2. When omitted, no scope
         edges are read and the result is byte-identical to the pre-context path.
 
+        Observability: when an eval wraps the call in ``recall_trace.record()``,
+        the thin hooks below report the returned results, per-result sources and
+        score components, stage timings, latency, an output-size proxy, and the
+        candidates discarded at each gate (with the gate and reason). Outside such
+        a block ``recall_trace.is_active()`` is False and the path is byte-identical
+        to production.
+
         Returns list of dicts with id, summary, type, score.
         """
         from time import perf_counter
@@ -787,6 +795,11 @@ class MemoryEngine:
         # is the host agent's job — if it wants richer recall it calls this
         # tool multiple times with rewritten queries.
         referent_names: list[tuple[str, str]] = []
+
+        # Opt-in recall tracing: True only inside a recall_trace.record() block
+        # (an eval harness). Constant for this call, so read it once; every gate
+        # hook below guards on it, leaving production byte-identical.
+        _tracing = recall_trace.is_active()
 
         candidates: dict[str, MemoryItem] = {}  # id -> item
         keyword_ids: set[str] = set()  # track keyword-matched candidates
@@ -849,13 +862,23 @@ class MemoryEngine:
         if all_type_ids:
             semantic_hits = self.vector.search(query, top_k=_pool)
             query_cosine = dict(semantic_hits)
-            for k in standout_keep(
+            _sem_kept = standout_keep(
                 [sim for _, sim in semantic_hits],
                 hard_floor=COSINE_HARD_FLOOR,
                 min_keep=COSINE_MIN_KEEP,
                 method=_cut_method,
                 **_cut_params,
-            ):
+            )
+            if _tracing:
+                recall_trace.gate_cut(
+                    "cosine_entry",
+                    ids=[m for m, _ in semantic_hits],
+                    scores=[s for _, s in semantic_hits],
+                    kept=_sem_kept,
+                    floor=COSINE_HARD_FLOOR,
+                    universe=all_type_ids,
+                )
+            for k in _sem_kept:
                 mem_id, _sim = semantic_hits[k]
                 if mem_id not in all_type_ids:
                     continue
@@ -951,6 +974,15 @@ class MemoryEngine:
                     method=_cut_method,
                     **_cut_params,
                 )
+                if _tracing:
+                    recall_trace.gate_cut(
+                        "graph_entity",
+                        ids=list(memory_ids),
+                        scores=[query_cosine.get(m, 0.0) for m in memory_ids],
+                        kept=kept,
+                        floor=COSINE_HARD_FLOOR,
+                        entity=f"{etype}:{ename}",
+                    )
                 memory_ids = [memory_ids[i] for i in kept]
             for mem_id in memory_ids:
                 graph_ids.add(mem_id)
@@ -1244,6 +1276,12 @@ class MemoryEngine:
 
         if not filtered:
             op_extra(results=0)
+            if _tracing:
+                recall_trace.finalize_empty(
+                    candidate_count=len(candidates),
+                    stage_timings=_stage_timings,
+                    latency_ms=(perf_counter() - _t0) * 1000,
+                )
             return []
 
         # ----------------------------------------------------------
@@ -1434,13 +1472,30 @@ class MemoryEngine:
         # entirely and surface nothing in its place. It fired because the query
         # gathered most of the cluster, so it is on-topic by construction; keep
         # it at whatever rank it scored (demote, don't drop).
+        _top_rel = max((relevance_map.get(m, 0.0) for m in gate_ids), default=0.0)
         for idx, mem_id in enumerate(gate_ids):
             if idx not in keep_pos and mem_id not in collapsed_parent_ids:
+                if _tracing:
+                    _it = filtered.get(mem_id)
+                    recall_trace.discard(
+                        "relevance_cut",
+                        mem_id,
+                        score=relevance_map.get(mem_id, 0.0),
+                        floor=_hard_floor,
+                        top=round(_top_rel, 4),
+                        summary=(_it.summary[:80] if _it else ""),
+                    )
                 del filtered[mem_id]
         _mark("score_blend")
 
         if not filtered:
             op_extra(results=0)
+            if _tracing:
+                recall_trace.finalize_empty(
+                    candidate_count=len(gate_ids),
+                    stage_timings=_stage_timings,
+                    latency_ms=(perf_counter() - _t0) * 1000,
+                )
             return []
 
         # ----------------------------------------------------------
@@ -1722,6 +1777,19 @@ class MemoryEngine:
                 _dates = [_report_pool[mid].created_at for mid in _loose if _report_pool[mid].created_at]
                 _span = (min(_dates).date().isoformat(), max(_dates).date().isoformat()) if _dates else None
                 self._last_recall_report = {"related": len(_related), "loose": len(_loose), "span": _span}
+
+        if _tracing:
+            recall_trace.finalize_results(
+                results=results,
+                result_sources=result_sources,
+                gather_histogram=gather_histogram,
+                unique_path_counts=unique_path_counts,
+                components_by_id=components_by_id,
+                relevance_by_id=relevance_by_id,
+                stage_timings=_stage_timings,
+                candidate_count=len(gate_ids),
+                latency_ms=_elapsed_ms,
+            )
 
         return results
 
