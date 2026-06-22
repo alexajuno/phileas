@@ -21,6 +21,7 @@ Tools:
 
 import functools
 import json
+import os
 from datetime import datetime, timezone
 from time import perf_counter
 
@@ -40,6 +41,44 @@ from phileas.vector import VectorStore
 # the default stdio mode (local Claude Code) this returns ({}, None) and adds
 # nothing. See phileas.mcp_auth and ~/notes/vps/.
 _auth_kwargs, _oauth_provider = build_auth_components()
+
+_CONSOLIDATION_ASYNC_DESC = (
+    "Consolidation (the abstraction layer): episodes on a busy theme get consolidated into a "
+    "higher-level reflection (a gist) that they roll up into, by a separate consolidation pass, "
+    "not by you mid-conversation. You read that layer: a broad query collapses a consolidated "
+    "cluster into its gist and surfaces it in place of the episodes, and expand(<gist>) drills "
+    "back down to the episodes it covers. When a recall ends with a '↳ … queued for a "
+    "consolidation pass' line, that theme has grown past what recall surfaces and has been handed "
+    "to that pass; you don't need to act on it, just answer with what you have."
+)
+
+_CONSOLIDATION_IN_SESSION_DESC = (
+    "Consolidation (the abstraction layer): when one entity (a person, project, or activity) "
+    "has accumulated many episodes, abstract them. Identify the distinct threads across the "
+    "cluster, then write one concise memory covering each (memorize, memory_type='reflection', "
+    "entities=[the entity]); a tight, focused summary stands in better than a long, term-stuffed "
+    "one. Then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes into it. A broad "
+    "query that gathers most of the cluster collapses the episodes into the gist and surfaces it "
+    "in their place; expand(<gist>) drills back down to the episodes it covers.\n"
+    "\n"
+    "CRITICAL IN-SESSION CONSOLIDATION DIRECTIVE:\n"
+    "If a recall response ends with a '↳ … aren't rolled up into a gist yet' line, you MUST immediately "
+    "perform consolidation in the current turn before responding to the user. This is a mandatory, high-priority "
+    "instruction. You must follow this exact sequence:\n"
+    "1. Call survey(theme) for the reported theme to get the candidate sub-threads and existing gists.\n"
+    "2. For each sub-thread returned by survey:\n"
+    "   a. Anchor the gist: call ingest_text(text=<your 2-4 sentence synthesis "
+    "of this sub-thread>) to get a source_event_id.\n"
+    "   b. Store the reflection: call memorize(summary=<your synthesis as "
+    "one sentence>, memory_type='reflection', entities=[the theme entity], "
+    "source_event_id=<event_id>) and read back the new reflection's id.\n"
+    "   c. Link the episodes: call roll_up(parent_id=<that reflection id>, child_ids=[the group's id8s]).\n"
+    "   (If survey lists a matching existing gist, skip steps a and b and roll_up into that existing gist instead).\n"
+    "3. Only after all sub-threads are fully consolidated and rolled up, proceed to write your response to the user."
+)
+
+_is_async = os.environ.get("PHILEAS_CONSOLIDATION_MODE", "in-session").lower() in ("async", "queue", "boundary")
+_consolidation_desc = _CONSOLIDATION_ASYNC_DESC if _is_async else _CONSOLIDATION_IN_SESSION_DESC
 
 mcp = FastMCP(
     "phileas",
@@ -94,14 +133,7 @@ mcp = FastMCP(
         "  Write summaries as attributed data, not asserted facts: store observations plainly, but "
         "record a judgment, prediction, or opinion with its holder, date, and basis, truth left open. "
         "A claim filed as fact has no holder; a claim filed as data names one.\n"
-        "\n"
-        "Consolidation (the abstraction layer): episodes on a busy theme get consolidated into a "
-        "higher-level reflection (a gist) that they roll up into, by a separate consolidation pass, "
-        "not by you mid-conversation. You read that layer: a broad query collapses a consolidated "
-        "cluster into its gist and surfaces it in place of the episodes, and expand(<gist>) drills "
-        "back down to the episodes it covers. When a recall ends with a '↳ … queued for a "
-        "consolidation pass' line, that theme has grown past what recall surfaces and has been handed "
-        "to that pass; you don't need to act on it, just answer with what you have."
+        "\n" + _consolidation_desc
     ),
 )
 
@@ -489,11 +521,20 @@ def recall(
     if report and report.get("loose", 0) >= _RECALL_REPORT_MIN_LOOSE:
         span = report.get("span")
         when = f" ({span[0]} → {span[1]})" if span else ""
-        _enqueue_consolidation(query, report)
-        lines.append(
-            f"\n↳ {report['loose']} more memories on this theme aren't gisted yet{when}; "
-            "queued for a consolidation pass."
-        )
+        if _is_async:
+            _enqueue_consolidation(query, report)
+            lines.append(
+                f"\n↳ {report['loose']} more memories on this theme aren't gisted yet{when}; "
+                "queued for a consolidation pass."
+            )
+        else:
+            lines.append(
+                f"\n↳ WARNING: [CONSOLIDATION REQUIRED] {report['loose']} more memories "
+                f"on this theme aren't rolled up into a gist yet{when}. "
+                f'You MUST immediately call survey("{query}") and consolidate these '
+                "memories using reflections and roll_up before you write your response to the user. "
+                "Do not delay this."
+            )
     return "\n".join(lines)
 
 

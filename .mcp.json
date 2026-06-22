@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "phileas": {
+      "command": "./.venv/bin/phileas",
+      "args": [
+        "serve"
+      ]
+    }
+  }
+}
