@@ -30,10 +30,10 @@ from phileas.recall_format import (
     render_pointers,
 )
 
-# recall_recent gathers at least this many days regardless of the requested
-# `days`, so a small or arbitrary `days` cannot starve the snapshot; the budget,
-# not the window, bounds the output. `days` is advisory.
-MIN_GATHER_DAYS = 30
+# recall_recent gathers a fixed week: the snapshot is "where were we", and a
+# week is the natural span for that. The budget, not the window, bounds the
+# output, so the gather span is a flat constant with no caller knob.
+GATHER_DAYS = 7
 
 EntitiesFn = Callable[[list[dict]], dict[str, list[dict]]]
 ToolResult = dict  # {"items": list[dict], "text": str, "tokens": int}
@@ -59,23 +59,22 @@ def recall_recent(
     engine,
     entities_fn: EntitiesFn,
     *,
-    days: int = 7,
     max_threads: int = recent.DEFAULT_MAX_THREADS,
     max_chars: int = recent.DEFAULT_MAX_CHARS,
 ) -> ToolResult:
     """Recent activity as a thread snapshot — the newest conversations, one line each.
 
-    Groups the gather window's memories by their conversation thread, ranks
-    threads newest first, and keeps the top ones under a budget. A single busy
-    session collapses to one line (its latest reflection, or latest memory)
-    carrying the thread's memory count and handle, so one burst can't drown the
-    snapshot and the size is bounded by the budget rather than by ``days``.
+    Groups the past week's memories by their conversation thread, ranks threads
+    newest first, and keeps the top ones under a budget. A single busy session
+    collapses to one line (its latest reflection, or latest memory) carrying the
+    thread's memory count and handle, so one burst can't drown the snapshot and
+    the size is bounded by the budget.
     """
     end = _date.today()
-    start = end - timedelta(days=max(days, MIN_GATHER_DAYS))
+    start = end - timedelta(days=GATHER_DAYS)
     items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
     if not items:
-        return {"items": [], "text": f"No memories found in the last {days} day(s)."}
+        return {"items": [], "text": f"No memories found in the last {GATHER_DAYS} day(s)."}
 
     event_thread = engine.db.get_thread_ids_for_events([it.get("source_event_id") for it in items])
     clip = POINTER_SUMMARY_CHARS

@@ -4,7 +4,7 @@ These pin the behaviour the redesign is meant to guarantee, on a controlled
 corpus so they never depend on a model or a live database:
 
   1. a busy session collapses to one line, not a flood (burst-collapse);
-  2. a wide gather window cannot inflate a busy snapshot (`days` is advisory);
+  2. the budget, not the fixed week, bounds the snapshot (over-budget weeks cut);
   3. the representative is the thread's latest reflection when it has one;
   4. several distinct light threads all survive the cut;
   5. get_thread_memories round-trips a thread back to its full memory list.
@@ -82,24 +82,22 @@ def test_busy_session_collapses_to_one_line(tmp_dir: Path):
     assert "🧵20 memories" in res["text"]
 
 
-def test_wide_window_cannot_inflate_a_busy_snapshot(tmp_dir: Path):
-    """`days` is advisory: once recent activity fills the budget, a huge `days`
-    returns the same threads — older ones are cut, not added."""
+def test_budget_bounds_the_snapshot(tmp_dir: Path):
+    """The budget, not the window, caps the snapshot: a busy week with more
+    threads than the budget shows only the newest, and counts the rest."""
     eng = _engine(tmp_dir)
-    for d in range(8):  # 8 distinct recent threads, more than the budget below
-        _thread(eng, days_ago=d, types=["knowledge", "behavior"])
-    _thread(eng, days_ago=50, types=["knowledge"])  # old: only a wide window reaches it
+    # days_ago 0..6, newest first — record ids so we can name the expected cut.
+    by_age = {d: _thread(eng, days_ago=d, types=["knowledge", "behavior"]) for d in range(7)}
+    _thread(eng, days_ago=50, types=["knowledge"])  # outside the week: never gathered
 
-    small = _run(eng, days=2, max_threads=5, max_chars=8000)
-    huge = _run(eng, days=365, max_threads=5, max_chars=8000)
+    res = _run(eng, max_threads=5, max_chars=8000)
 
-    # The shown threads are identical; only the "of N total" header count moves,
-    # because a wider window discovers more threads than it shows.
-    assert [s["thread_id"] for s in small["threads"]] == [s["thread_id"] for s in huge["threads"]]
-    small_body = [ln for ln in small["text"].splitlines() if ln.startswith("  ")]
-    huge_body = [ln for ln in huge["text"].splitlines() if ln.startswith("  ")]
-    assert small_body == huge_body
-    assert len(small["threads"]) == 5  # budget bound, not window bound
+    assert res["bounds"]["threads_shown"] == 5  # budget bound
+    assert res["bounds"]["threads_total"] == 7  # the 50-day thread is outside the window
+    # The newest five threads survive; the oldest two in-window are cut.
+    assert [s["thread_id"] for s in res["threads"]] == [by_age[d] for d in range(5)]
+    body = [ln for ln in res["text"].splitlines() if ln.startswith("  ")]
+    assert len(body) == 5
 
 
 def test_representative_prefers_latest_reflection(tmp_dir: Path):
@@ -138,8 +136,8 @@ def test_get_thread_memories_round_trips(tmp_dir: Path):
 def test_empty_window_is_graceful(tmp_dir: Path):
     """No recent activity returns a clear message, never a crash or a dump."""
     eng = _engine(tmp_dir)
-    _thread(eng, days_ago=200, types=["knowledge"])  # far outside the gather floor
+    _thread(eng, days_ago=200, types=["knowledge"])  # far outside the week-long window
 
-    res = _run(eng, days=7)
+    res = _run(eng)
     assert res["items"] == []
     assert "No memories" in res["text"]

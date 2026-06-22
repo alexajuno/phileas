@@ -267,10 +267,9 @@ def _run_tool(method: str, params: dict) -> None:
 
 
 @click.command("recall-recent")
-@click.option("--days", default=7, type=int, help="How many days back to look.")
-def recall_recent(days: int):
-    """Each day's memories for the last N days (time-relative queries)."""
-    _run_tool("recall_recent", {"days": days})
+def recall_recent():
+    """The past week as a thread snapshot, newest conversation first (time-relative queries)."""
+    _run_tool("recall_recent", {})
 
 
 @click.command("timeline")

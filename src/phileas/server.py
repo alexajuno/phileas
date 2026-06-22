@@ -12,7 +12,7 @@ Tools:
   - relate: create a graph edge between entities
   - about: get memories connected to an entity
   - timeline: get memories in a date range
-  - recall_recent: get recent memories (last N days) for temporal queries
+  - recall_recent: the past week as a budget-bounded thread snapshot, for temporal queries
   - hydrate: full record of one memory by id/id8 — the drill-in for a pointer
   - serendipity: N high-signal memories NOT gated on query relevance
   - recall with memory_type="profile": get profile-type memories (ranked)
@@ -70,10 +70,11 @@ mcp = FastMCP(
         "  term queries and merge results by id. Example: instead of\n"
         "  recall('what did the user say about <person> and tennis'), call\n"
         "  recall('<person>') and recall('tennis') in parallel.\n"
-        "- recall_recent(days): recent memories by date (bounded by count and size) — for "
-        "topic-less time questions ('recently', 'yesterday', 'last chat', 'last night', "
-        "'last session', 'last time we talked'). If the question carries a topic, prefer "
-        "focused recall() — it already folds recency into its score.\n"
+        "- recall_recent(): the past week as a thread snapshot, newest conversation first, one "
+        "line each (budget-bounded) — for topic-less time questions ('recently', 'yesterday', "
+        "'last chat', 'last night', 'last session', 'last time we talked'). Expand a thread with "
+        "get_thread_memories(<id>). If the question carries a topic, prefer focused recall() — it "
+        "already folds recency into its score.\n"
         "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
         "- timeline(start, end): memories across a date range\n"
         "- about(name): memories linked to a person/entity (bounded; '+N more' when capped) — for 'who is X'\n"
@@ -809,24 +810,22 @@ def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> s
 
 
 @_instrumented_tool()
-def recall_recent(days: int = 7) -> str:
-    """Return each day's memories for the last N days, grouped newest-day first.
+def recall_recent() -> str:
+    """The past week as a thread snapshot — the newest conversations, one line each.
 
     Use for genuinely topic-less time queries: 'recently', 'yesterday',
     'last chat', 'last night', 'last session', 'last time we talked'. If the
     prompt already carries a topic, prefer a focused recall(query): recall
     folds recency into its score, so it's recency-aware without enumerating
-    the whole window. Output is POINTER lines, every memory in the window
-    grouped by day (summaries clipped; hydrate(id8) for the full body).
-
-    Args:
-        days: How many days back to look (default 7).
+    the window. Output groups the week's memories by conversation thread,
+    newest first, one POINTER line per thread (its latest reflection, else its
+    latest memory) carrying the thread's memory count and a `↳<id>` handle.
+    Expand any thread with get_thread_memories(<id>); hydrate(id8) for a full body.
     """
     _t0 = perf_counter()
-    result = tool_runner.recall_recent(engine, _entities_for, days=days)
+    result = tool_runner.recall_recent(engine, _entities_for)
     _trace_recent(
         items=result["items"],
-        days=days,
         latency_ms=(perf_counter() - _t0) * 1000,
         bounds=result.get("bounds"),
     )
@@ -853,14 +852,13 @@ def serendipity(n: int = 3, exclude_ids: list | str | None = None) -> str:
 
 def _trace_recent(
     items: list[dict],
-    days: int,
     latency_ms: float,
     bounds: dict | None = None,
 ) -> None:
     """Best-effort trace write for the recall_recent MCP tool.
 
-    ``bounds`` carries the per-summary clip counters (truncation hits/savings,
-    final output chars) into recall_traces.extra.
+    ``bounds`` carries the thread-snapshot counters (threads total/shown,
+    memories in window, final output chars) into recall_traces.extra.
     """
     try:
         from phileas.engine import _trace_recall
@@ -872,7 +870,7 @@ def _trace_recent(
             latency_ms=latency_ms,
             result=items,
             extra={
-                "days": days,
+                "gather_days": tool_runner.GATHER_DAYS,
                 **(bounds or {}),
             },
         )
