@@ -97,6 +97,61 @@ def test_indegree_absent_for_unlinked(tmp_dir: Path):
     assert eng.graph.get_rollup_indegree([lonely]) == {}
 
 
+# --- write: memorize(child_ids=...) — consolidation in one call ------------
+
+
+def test_memorize_with_child_ids_mints_gist_and_links(tmp_dir: Path):
+    eng = _engine(tmp_dir)
+    a = _seed(eng, "episode a")
+    b = _seed(eng, "episode b")
+
+    result = eng.memorize(
+        summary="themes of the week",
+        memory_type="reflection",
+        child_ids=[a, b],
+        detect_conflict=False,
+    )
+    gist = result["id"]
+    assert result["rolled_up"] == 2
+    assert eng.graph.get_rollup_indegree([gist]) == {gist: 2}
+    assert set(eng.graph.get_rollup_children(gist)) == {a, b}
+
+
+def test_memorize_without_child_ids_links_nothing(tmp_dir: Path):
+    eng = _engine(tmp_dir)
+    result = eng.memorize(summary="a plain memory", detect_conflict=False)
+    assert "rolled_up" not in result
+    assert eng.graph.get_rollup_indegree([result["id"]]) == {}
+
+
+def test_memorize_child_ids_skips_unknown(tmp_dir: Path):
+    eng = _engine(tmp_dir)
+    a = _seed(eng, "episode a")
+    result = eng.memorize(
+        summary="gist over one real episode",
+        memory_type="reflection",
+        child_ids=[a, "ffffffff"],
+        detect_conflict=False,
+    )
+    assert result["rolled_up"] == 1
+    assert any("No memory found" in s for s in result["rollup_skipped"])
+    assert set(eng.graph.get_rollup_children(result["id"])) == {a}
+
+
+def test_memorize_child_ids_matches_followup_roll_up(tmp_dir: Path):
+    """The combined call and the two-step memorize + roll_up land the same edges."""
+    eng = _engine(tmp_dir)
+    a = _seed(eng, "episode a")
+    b = _seed(eng, "episode b")
+
+    combined = eng.memorize(summary="gist one call", child_ids=[a, b], detect_conflict=False)["id"]
+
+    two_step = eng.memorize(summary="gist two step", detect_conflict=False)["id"]
+    eng.roll_up(two_step, [a, b])
+
+    assert eng.graph.get_rollup_children(combined) == eng.graph.get_rollup_children(two_step)
+
+
 # --- read: expand ----------------------------------------------------------
 
 

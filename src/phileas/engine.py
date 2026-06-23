@@ -553,24 +553,32 @@ class MemoryEngine:
         relationships: list[dict] | None = None,
         source_event_id: str | None = None,
         contexts: list[str] | None = None,
+        child_ids: list[str] | None = None,
         detect_conflict: bool = True,
     ) -> dict:
         """Store a memory across all three backends.
 
         `summary` is the canonical, AI-written fact. The raw source turn lives in
         the `events` table; pass `source_event_id` to reference it. Memories
-        MUST NOT contain raw verbatim text — that's what events are for.
+        must not contain raw verbatim text — that's what events are for.
 
         `contexts` scopes the memory: each name resolves (or mints) a
         Context-typed entity and gets a SCOPED_TO edge. No contexts ⇒ the
         memory is globally valid, exactly as before (AA-118).
+
+        `child_ids` makes this a consolidation write: the new memory becomes a
+        gist and each id (uuid or 8-char prefix) is linked up into it via a
+        ROLLS_UP edge, exactly as ``roll_up`` would — so a reflection and the
+        episodes it summarizes land in one call. Self-links can't occur, since
+        the parent id is minted here.
 
         `detect_conflict` runs a synchronous probe for an existing active memory
         the new one may contradict (AA-120). On a hit the result carries a
         ``contradiction`` payload — the resolve menu for the caller to act on.
         Disable for bulk/non-interactive writes that won't read the menu.
 
-        Returns a dict with keys: id, summary (plus contradiction when found).
+        Returns a dict with keys: id, summary (plus contradiction when found, and
+        rolled_up / rollup_skipped when child_ids were given).
         """
         op_extra(
             memory_type=memory_type,
@@ -666,12 +674,24 @@ class MemoryEngine:
         # 7. Link memory to Day entity in graph
         self._link_day_entity(item.id, daily_ref)
 
+        # 7b. Consolidation in one call: roll the episodes this memory summarizes
+        # up into it now, instead of a follow-up roll_up.
+        rolled_up = 0
+        rollup_skipped: list[str] = []
+        if child_ids:
+            rolled_up, rollup_skipped = self._link_rollup_children(item, child_ids)
+            op_extra(rolled_up=rolled_up)
+
         op_extra(id=item.id)
 
         # 8. Queue reinforcement check to daemon (async)
         self._queue_reinforcement(item.id, summary)
 
         result: dict = {"id": item.id, "summary": item.summary}
+        if child_ids:
+            result["rolled_up"] = rolled_up
+            if rollup_skipped:
+                result["rollup_skipped"] = rollup_skipped
 
         # 9. Surface a conflict candidate for the caller to resolve. The probe
         # flags a likely conflict (structured edge, NLI, or cosine fallback); the
@@ -1860,21 +1880,15 @@ class MemoryEngine:
     # roll_up / expand (abstraction layer)
     # ------------------------------------------------------------------
 
-    @timed_op("roll_up")
-    def roll_up(self, parent_id: str, child_ids: list[str]) -> str:
-        """Link concrete memories up into an abstraction via ROLLS_UP edges.
+    def _link_rollup_children(self, parent: MemoryItem, child_ids: list[str]) -> tuple[int, list[str]]:
+        """Link each child memory up into ``parent`` via a ROLLS_UP edge.
 
-        The consolidation write: the host synthesizes a higher-level
-        ``reflection`` memory over a cluster of episodes (with ``memorize``),
-        then calls this to connect each episode up into that gist. Recall ranks
-        the gist by how much rolls up into it, and ``expand`` drills back down.
-        Idempotent — re-linking a pair is a no-op. Ids may be full uuids or
-        8-char pointer prefixes.
+        Shared by ``roll_up`` (link episodes into an existing gist) and
+        ``memorize`` (mint the gist and roll its episodes up in the same call).
+        Returns ``(linked, skipped)``, where each skip is a ``"<raw id>: <reason>"``
+        line. Idempotent at the graph layer, so re-linking a pair just re-counts
+        without duplicating the edge.
         """
-        op_extra(parent_id=parent_id, children=len(child_ids or []))
-        parent = self._resolve_one(parent_id)
-        if isinstance(parent, str):
-            return parent
         linked = 0
         skipped: list[str] = []
         for raw in child_ids or []:
@@ -1887,6 +1901,25 @@ class MemoryEngine:
                 continue
             self.graph.link_memory_to_memory(child.id, "ROLLS_UP", parent.id)
             linked += 1
+        return linked, skipped
+
+    @timed_op("roll_up")
+    def roll_up(self, parent_id: str, child_ids: list[str]) -> str:
+        """Link concrete memories up into an abstraction via ROLLS_UP edges.
+
+        The consolidation write for an existing gist: synthesize a higher-level
+        ``reflection`` over a cluster (with ``memorize``), then call this to
+        connect each episode up into it. To mint the gist and link its episodes
+        in a single call, pass ``child_ids`` to ``memorize`` instead. Recall ranks
+        the gist by how much rolls up into it, and ``expand`` drills back down.
+        Idempotent — re-linking a pair is a no-op. Ids may be full uuids or
+        8-char pointer prefixes.
+        """
+        op_extra(parent_id=parent_id, children=len(child_ids or []))
+        parent = self._resolve_one(parent_id)
+        if isinstance(parent, str):
+            return parent
+        linked, skipped = self._link_rollup_children(parent, child_ids or [])
         msg = f"Rolled up {linked} memory(ies) into [{parent.id[:8]}] {parent.summary}."
         if skipped:
             msg += " Skipped: " + "; ".join(skipped)
