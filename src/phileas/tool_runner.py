@@ -453,8 +453,8 @@ def recall(
         lines.append(
             f"\n↳ {report['loose']} more memories on this theme aren't rolled up into a gist yet{when}. "
             f'Cue to consolidate (see "Consolidation" in your instructions): call survey("{query}") to see '
-            "them grouped into sub-threads with their ids, then write one reflection per thread and roll_up "
-            "its members. A few seconds now keeps this theme compact next time."
+            "them grouped into sub-threads with their ids, then write one reflection per thread with its "
+            "members as child_ids. A few seconds now keeps this theme compact next time."
         )
     return "\n".join(lines)
 
@@ -470,11 +470,13 @@ def memorize(
     entities: list | str | None = None,
     relationships: list | str | None = None,
     contexts: list | str | None = None,
+    child_ids: list | str | None = None,
 ) -> str:
     source_event_id = _validated_event_id(engine, source_event_id)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
     parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
+    parsed_children = json.loads(child_ids) if isinstance(child_ids, str) else child_ids
 
     result = engine.memorize(
         summary=summary,
@@ -484,9 +486,14 @@ def memorize(
         relationships=parsed_relationships,
         source_event_id=source_event_id,
         contexts=parsed_contexts,
+        child_ids=parsed_children,
     )
 
     stored = f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
+    if "rolled_up" in result:
+        stored += f"; rolled up {result['rolled_up']} memory(ies) into it"
+        if result.get("rollup_skipped"):
+            stored += " (skipped: " + "; ".join(result["rollup_skipped"]) + ")"
     menu = _contradiction_menu(result.get("contradiction"))
     return f"{stored}\n{menu}" if menu else stored
 
@@ -673,7 +680,7 @@ def survey(engine, entities_fn: EntitiesFn, *, theme: str) -> str:
         for g in data["existing_gists"]:
             lines.append(f"  [{g['id'][:8]}] {g['summary']}")
     if data["groups"]:
-        lines.append("\nSub-threads (one focused reflection each, then roll_up its members):")
+        lines.append("\nSub-threads (one focused reflection each, with its members as child_ids):")
         for grp in data["groups"]:
             gspan = grp.get("span")
             gwhen = f" {gspan[0]}→{gspan[1]}" if gspan else ""
@@ -681,9 +688,10 @@ def survey(engine, entities_fn: EntitiesFn, *, theme: str) -> str:
             ids = " ".join(grp["ids"])
             lines.append(f"  • {grp['label']} ({grp['count']}{gwhen}): {ids}{more}")
     lines.append(
-        '\nPer sub-thread: memorize(memory_type="reflection", entities=[the thread\'s entity]) the '
-        "synthesis, then roll_up(parent_id=<that reflection, or a matching gist above>, "
-        "child_ids=[the group's id8s])."
+        '\nPer sub-thread: memorize(memory_type="reflection", entities=[the thread\'s entity], '
+        "child_ids=[the group's id8s]) to write the synthesis and roll its episodes up in one call. "
+        "When a gist above already matches, roll_up(parent_id=<that gist>, child_ids=[the group's id8s]) "
+        "into it instead."
     )
     return "\n".join(lines)
 

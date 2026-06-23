@@ -88,18 +88,19 @@ mcp = FastMCP(
         "Consolidation (the abstraction layer): when one entity (a person, project, or activity) "
         "has accumulated many episodes, abstract them. Identify the distinct threads across the "
         "cluster, then write one concise memory covering each (memorize, memory_type='reflection', "
-        "entities=[the entity]); a tight, focused summary stands in better than a long, term-stuffed "
-        "one. Then roll_up(parent_id=<gist>, child_ids=[...]) to link the episodes into it. A broad "
-        "query that gathers most of the cluster collapses the episodes into the gist and surfaces it "
-        "in their place; expand(<gist>) drills back down to the episodes it covers. "
+        "entities=[the entity], child_ids=[the episodes' id8s]); a tight, focused summary stands in "
+        "better than a long, term-stuffed one. Passing child_ids mints the gist and rolls the episodes "
+        "up into it in one call; expand(<gist>) drills back down to them, and a broad query that gathers "
+        "most of the cluster collapses the episodes into the gist and surfaces it in their place. "
         "A recall that ends with a '↳ … aren't rolled up into a gist yet' line is your in-the-moment "
         "cue that this theme's cluster has grown past what's surfaced. recall only signals it; survey "
         "hands you the material: call survey(theme) to get the loose memories grouped into candidate "
         "sub-threads (each with its id8s) plus any gist already covering part of the theme. Then per "
-        "sub-thread write one focused reflection and roll_up its members, into an existing gist when "
-        "survey shows one matches, rather than minting a sibling. Rolled memories leave the loose set, "
-        "so each pass shrinks the theme. Consolidating is part of using memory well, not a separate "
-        "chore: a tripped cue is the moment to spend a few seconds leaving the store tidier than you found it."
+        "sub-thread write one focused reflection over its id8s; when survey shows an existing gist that "
+        "matches, roll_up the sub-thread into that gist instead of minting a sibling. Rolled memories "
+        "leave the loose set, so each pass shrinks the theme. Consolidating is part of using memory well, "
+        "not a separate chore: a tripped cue is the moment to spend a few seconds leaving the store tidier "
+        "than you found it."
     ),
 )
 
@@ -149,6 +150,7 @@ def memorize(
     entities: list | str | None = None,
     relationships: list | str | None = None,
     contexts: list | str | None = None,
+    child_ids: list | str | None = None,
 ) -> str:
     """Store a memory about the user.
 
@@ -193,6 +195,14 @@ def memorize(
             holds only in a context, not globally — each name resolves
             (or mints) a Context-typed entity and gets a SCOPED_TO edge.
             Omit for globally valid facts. Post-hoc scoping: `scope()`.
+        child_ids: Optional. List (or JSON string) of memory uuids / 8-char
+            prefixes that this memory summarizes — the consolidation write in
+            one call. Each is linked up into the new memory via a ROLLS_UP edge,
+            exactly as `roll_up` would, so a reflection and its episodes land
+            together. Use after `survey` hands you a sub-thread's id8s: pass them
+            here instead of a follow-up `roll_up`. To roll a sub-thread into a
+            gist that already exists, use `roll_up` directly. Omit for an
+            ordinary memory.
     """
     return _call(
         "memorize",
@@ -204,6 +214,7 @@ def memorize(
             "entities": entities,
             "relationships": relationships,
             "contexts": contexts,
+            "child_ids": child_ids,
         },
     )
 
@@ -518,10 +529,11 @@ def survey(theme: str) -> str:
     cue: it returns the loose (un-gisted) memories on the theme grouped into candidate
     sub-threads (by their most distinctive entity), each with its full id8 list, plus
     any gist already covering part of the theme. Then, per sub-thread: write one
-    focused reflection (`memorize(memory_type="reflection", entities=[the thread's
-    entity])`) and `roll_up` its id over that group's id8s, or when a sub-thread
-    matches an existing gist shown below, roll_up into that gist rather than minting a
-    sibling. Rolled memories leave the loose set, so the theme shrinks each pass.
+    focused reflection over that group's id8s (`memorize(memory_type="reflection",
+    entities=[the thread's entity], child_ids=[the id8s])`), which mints the gist and
+    rolls the episodes up into it together; or when a sub-thread matches an existing
+    gist shown below, `roll_up` into that gist rather than minting a sibling. Rolled
+    memories leave the loose set, so the theme shrinks each pass.
 
     Pass the same focused theme you would pass to recall (1-4 words).
 
