@@ -3,7 +3,7 @@
 One code path produces both the raw item dicts and the exact pointer-formatted
 string the MCP server returns, so three callers stay in lockstep:
 
-  - ``server.py`` (the stdio MCP tools) — delegates here and returns ``text``.
+  - ``mcp_server.py`` (the stdio MCP tools) — delegates here and returns ``text``.
   - ``daemon.py`` (the HTTP broker the web app calls) — returns the whole
     ``{"items", "text"}`` dict so the web can render cards *and* show the
     verbatim model-facing string.
@@ -350,3 +350,533 @@ def run(engine, entities_fn: EntitiesFn, name: str, params: dict | None = None) 
     result = fn(engine, entities_fn, **(params or {}))
     result["tokens"] = estimate_tokens(result.get("text", ""))
     return result
+
+
+# ===========================================================================
+# Action / write tools — the MCP surface beyond the read-only recall family.
+#
+# These produce the exact model-facing string (or dict) the MCP tools return,
+# from the same code path the daemon runs, so the stdio entrypoint can stay a
+# thin relay. Each takes (engine, entities_fn, **params) like the read family;
+# entities_fn is unused by most but kept uniform so one dispatcher fits all.
+# ===========================================================================
+
+# Minimum count of closely-related, not-yet-gisted memories before recall appends
+# the consolidation nudge. The engine gates "related" on keyword + cosine (see
+# REPORT_COSINE_FLOOR); this just sets how big a loose cluster must be to surface.
+RECALL_REPORT_MIN_LOOSE = 12
+
+# Cap how many name-variant pairs `reconcile` prints in one pass, so a graph with
+# many shared-token collisions doesn't flood the context. Overflow is reported,
+# not hidden: fold the clear pairs and re-run to see the rest.
+RECONCILE_MAX_PAIRS = 40
+
+# Tool names whose success should arm a sync push (canonical-store writes). Graph
+# mutations (relate/scope/roll_up/merge/alias) and events ride along on the next
+# push or are rebuilt on import, so they are intentionally absent — mirrors
+# daemon._WRITE_METHODS.
+TOOL_WRITE_NAMES = frozenset({"memorize", "memorize_batch", "forget", "update", "resolve_contradiction"})
+
+
+def _validated_event_id(engine, source_event_id: str | None) -> str:
+    """Enforce the provenance contract: every memory references a real event.
+
+    Returns the cleaned id, or raises ValueError pointing at ingest_text — the
+    capture step that mints the id. This is where a naked memorize is refused.
+    """
+    sid = (source_event_id or "").strip()
+    if not sid:
+        raise ValueError(
+            "source_event_id is required. Call ingest_text(text=<verbatim source>) "
+            "first, then pass the returned event_id here."
+        )
+    if engine.db.get_event(sid) is None:
+        raise ValueError(
+            f"source_event_id {sid!r} does not exist. Capture the source with "
+            "ingest_text(...) and pass the event_id it returns."
+        )
+    return sid
+
+
+def _contradiction_menu(contradiction: dict | None) -> str:
+    """Render the supersede/scope/coexist resolve menu for a flagged conflict.
+
+    Returns "" when memorize surfaced no conflict candidate. Otherwise the agent
+    reads the menu, judges whether the conflict is real, and — if so — calls
+    ``resolve_contradiction`` with the chosen branch.
+    """
+    if not contradiction:
+        return ""
+    new8 = contradiction["new_id"][:8]
+    cand8 = contradiction["candidate_id"][:8]
+    method = contradiction.get("method")
+    similarity = contradiction.get("similarity")
+    if method == "structured":
+        basis = "same attribute, different value"
+    elif similarity is not None:
+        basis = f"similarity {similarity}"
+    else:
+        basis = "likely conflict"
+    return "\n".join(
+        [
+            f'⚠ Possible conflict with [{cand8}] "{contradiction["candidate_summary"]}" '
+            f"({basis}). If they genuinely conflict, resolve:",
+            f'  • supersede — new fact is right, old is wrong: resolve_contradiction("{new8}", "{cand8}", "supersede")',
+            f"  • scope     — each true in its own context: "
+            f'resolve_contradiction("{new8}", "{cand8}", "scope", contexts=[...], other_contexts=[...])',
+            f"  • coexist   — genuine open contradiction: "
+            f'resolve_contradiction("{new8}", "{cand8}", "coexist", confidence=...)',
+            "  If they are unrelated or one merely restates the other, ignore this.",
+        ]
+    )
+
+
+def recall(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    query: str,
+    memory_type: str | None = None,
+    top_k: int = 30,
+    context: str | None = None,
+) -> str:
+    items = engine.recall(query, top_k=top_k, memory_type=memory_type, context=context)
+    if not items:
+        return "No relevant memories found."
+
+    lines = [f"Found {len(items)} memories:"]
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=POINTER_SUMMARY_CHARS))
+    report = getattr(engine, "_last_recall_report", None)
+    if report and report.get("loose", 0) >= RECALL_REPORT_MIN_LOOSE:
+        span = report.get("span")
+        when = f" ({span[0]} → {span[1]})" if span else ""
+        lines.append(
+            f"\n↳ {report['loose']} more memories on this theme aren't rolled up into a gist yet{when}. "
+            f'Cue to consolidate (see "Consolidation" in your instructions): call survey("{query}") to see '
+            "them grouped into sub-threads with their ids, then write one reflection per thread and roll_up "
+            "its members. A few seconds now keeps this theme compact next time."
+        )
+    return "\n".join(lines)
+
+
+def memorize(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    summary: str,
+    source_event_id: str,
+    memory_type: str = "knowledge",
+    daily_ref: str | None = None,
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
+    contexts: list | str | None = None,
+) -> str:
+    source_event_id = _validated_event_id(engine, source_event_id)
+    parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
+    parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
+    parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
+
+    result = engine.memorize(
+        summary=summary,
+        memory_type=memory_type,
+        daily_ref=daily_ref,
+        entities=parsed_entities,
+        relationships=parsed_relationships,
+        source_event_id=source_event_id,
+        contexts=parsed_contexts,
+    )
+
+    stored = f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
+    menu = _contradiction_menu(result.get("contradiction"))
+    return f"{stored}\n{menu}" if menu else stored
+
+
+def memorize_batch(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    memories: list | str,
+    source_event_id: str | None = None,
+) -> str:
+    items = json.loads(memories) if isinstance(memories, str) else memories
+    if not items:
+        return "No memories provided."
+
+    # Resolve + validate provenance for every item that will actually be
+    # written, before any write — so a bad batch fails atomically rather than
+    # leaving half its memories stored.
+    validated: dict[int, str] = {}
+    for i, mem in enumerate(items):
+        if mem.get("summary"):
+            validated[i] = _validated_event_id(engine, mem.get("source_event_id") or source_event_id)
+
+    results = []
+    for i, mem in enumerate(items):
+        summary = mem.get("summary")
+        if not summary:
+            results.append("Skipped — no summary provided")
+            continue
+
+        parsed_entities = mem.get("entities")
+        if isinstance(parsed_entities, str):
+            parsed_entities = json.loads(parsed_entities)
+        parsed_relationships = mem.get("relationships")
+        if isinstance(parsed_relationships, str):
+            parsed_relationships = json.loads(parsed_relationships)
+        parsed_contexts = mem.get("contexts")
+        if isinstance(parsed_contexts, str):
+            parsed_contexts = json.loads(parsed_contexts)
+
+        result = engine.memorize(
+            summary=summary,
+            memory_type=mem.get("memory_type", "knowledge"),
+            daily_ref=mem.get("daily_ref"),
+            entities=parsed_entities,
+            relationships=parsed_relationships,
+            source_event_id=validated[i],
+            # Bulk writes aren't a place to act on a per-item resolve menu;
+            # surface conflicts via the single-memory `memorize` path instead.
+            detect_conflict=False,
+        )
+
+        results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
+
+    return f"Batch complete ({len(results)} items):\n" + "\n".join(f"  {r}" for r in results)
+
+
+def forget(engine, entities_fn: EntitiesFn, *, memory_id: str, reason: str | None = None) -> str:
+    return engine.forget(memory_id, reason=reason)
+
+
+def relate(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    from_name: str,
+    from_type: str,
+    edge_type: str,
+    to_name: str,
+    to_type: str,
+    memory_id: str | None = None,
+) -> str:
+    return engine.relate(
+        from_name=from_name,
+        from_type=from_type,
+        edge_type=edge_type,
+        to_name=to_name,
+        to_type=to_type,
+        memory_id=memory_id,
+    )
+
+
+def scope(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    memory_id: str,
+    context: str,
+    polarity: str = "holds",
+    valid_from: str | None = None,
+    valid_to: str | None = None,
+    confidence: float | None = None,
+) -> str:
+    return engine.scope(
+        memory_id=memory_id,
+        context=context,
+        polarity=polarity,
+        valid_from=valid_from,
+        valid_to=valid_to,
+        confidence=confidence,
+    )
+
+
+def resolve_contradiction(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    memory_id: str,
+    other_id: str,
+    resolution: str,
+    contexts: list | str | None = None,
+    other_contexts: list | str | None = None,
+    confidence: float | None = None,
+) -> str:
+    parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
+    parsed_other = json.loads(other_contexts) if isinstance(other_contexts, str) else other_contexts
+    return engine.resolve_contradiction(
+        memory_id=memory_id,
+        other_id=other_id,
+        resolution=resolution,
+        contexts=parsed_contexts,
+        other_contexts=parsed_other,
+        confidence=confidence,
+    )
+
+
+def update(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    memory_id: str,
+    summary: str | None = None,
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
+) -> str:
+    parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
+    parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
+
+    result = engine.update(
+        memory_id,
+        summary=summary,
+        entities=parsed_entities,
+        relationships=parsed_relationships,
+    )
+    if "error" in result:
+        return result["error"]
+
+    parts = [f"Updated [{result['id']}] {result['summary']}"]
+    if result.get("snapshot_id"):
+        parts.append(f"Old version archived as [{result['snapshot_id']}]")
+    if parsed_entities:
+        parts.append(f"Linked {len(parsed_entities)} entities")
+    return "\n".join(parts)
+
+
+def roll_up(engine, entities_fn: EntitiesFn, *, parent_id: str, child_ids: list | str) -> str:
+    parsed = json.loads(child_ids) if isinstance(child_ids, str) else child_ids
+    return engine.roll_up(parent_id=parent_id, child_ids=parsed or [])
+
+
+def expand(engine, entities_fn: EntitiesFn, *, memory_id: str) -> str:
+    items = engine.expand(memory_id)
+    if not items:
+        return f"Nothing rolls up into [{memory_id[:8]}] (or no such memory)."
+    lines = [f"{len(items)} memory(ies) roll up into [{memory_id[:8]}]:"]
+    for it in items:
+        lines.append(f"  [{it['id'][:8]}] [{it.get('type', '?')}] {it.get('summary', '')}")
+    return "\n".join(lines)
+
+
+def survey(engine, entities_fn: EntitiesFn, *, theme: str) -> str:
+    data = engine.survey(theme)
+    if not data["groups"] and not data["existing_gists"]:
+        return f"Nothing to consolidate for '{data['theme']}': no loose cluster found."
+
+    span = data.get("span")
+    when = f" ({span[0]} → {span[1]})" if span else ""
+    lines = [
+        f"Survey of '{data['theme']}': {data['loose_total']} loose "
+        f"memories{when} across {len(data['groups'])} candidate sub-thread(s)."
+    ]
+    if data["existing_gists"]:
+        lines.append("\nGists already on this theme; roll a matching sub-thread into one of these, don't duplicate:")
+        for g in data["existing_gists"]:
+            lines.append(f"  [{g['id'][:8]}] {g['summary']}")
+    if data["groups"]:
+        lines.append("\nSub-threads (one focused reflection each, then roll_up its members):")
+        for grp in data["groups"]:
+            gspan = grp.get("span")
+            gwhen = f" {gspan[0]}→{gspan[1]}" if gspan else ""
+            more = f" +{grp['overflow']} more (re-survey after rolling these)" if grp["overflow"] else ""
+            ids = " ".join(grp["ids"])
+            lines.append(f"  • {grp['label']} ({grp['count']}{gwhen}): {ids}{more}")
+    lines.append(
+        '\nPer sub-thread: memorize(memory_type="reflection", entities=[the thread\'s entity]) the '
+        "synthesis, then roll_up(parent_id=<that reflection, or a matching gist above>, "
+        "child_ids=[the group's id8s])."
+    )
+    return "\n".join(lines)
+
+
+def reconcile(engine, entities_fn: EntitiesFn) -> str:
+    data = engine.reconcile()
+    cands = data["candidates"]
+    if not cands:
+        return f"No name-variant candidates among {data['roster_total']} entities."
+
+    shown = cands[:RECONCILE_MAX_PAIRS]
+    lines = [
+        f"{len(cands)} name-variant candidate pair(s) among {data['roster_total']} "
+        "entities (judge each: same referent or not?):"
+    ]
+    for c in shown:
+        a, b = c["a"], c["b"]
+        lines.append(
+            f"\n[{c['reason']}]  "
+            f"[{a['id'][:8]}] {a['name']} {a['types']} ({a['memory_count']})  <>  "
+            f"[{b['id'][:8]}] {b['name']} {b['types']} ({b['memory_count']})"
+        )
+        for side in (a, b):
+            for s in side["samples"]:
+                lines.append(f"    · {side['name']}: {s}")
+    if len(cands) > len(shown):
+        lines.append(f"\n(+{len(cands) - len(shown)} more pairs not shown — fold the clear ones, then re-run.)")
+    lines.append(
+        "\nSame referent → merge_entities(canonical_id, [duplicate_id]) "
+        "(override_types=[..] to fix a mistyped kind), then alias(name, alias). "
+        "Distinct → leave them; a wrong merge can't be undone."
+    )
+    return "\n".join(lines)
+
+
+def merge_entities(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    canonical_id: str,
+    duplicate_ids: list[str],
+    override_types: list[str] | None = None,
+) -> str:
+    summary = engine.graph.merge_entities(canonical_id, duplicate_ids, override_types=override_types)
+    if not summary or not summary.get("merged_count"):
+        return "No entities merged (graph unavailable, canonical missing, or no valid duplicates)."
+    return (
+        f"Merged {summary['merged_count']} entity/entities into {summary['canonical_id']} — "
+        f"{summary['edges_moved']} edges moved, {summary['aliases_added']} aliases added."
+    )
+
+
+def alias(engine, entities_fn: EntitiesFn, *, name: str, alias: str, entity_type: str | None = None) -> str:
+    result = engine.graph.add_alias(entity_type or "", name, alias)
+    if not result or not result.get("ok"):
+        reason = (result or {}).get("reason", "entity not found")
+        return f"No alias set — {reason}."
+    if not result.get("added"):
+        return f"'{alias}' is already an alias (or the primary name) of {result.get('primary_name', name)}; no change."
+    return (
+        f"Aliased '{alias}' → {result.get('primary_name', name)} "
+        f"[{result.get('entity_id')}]. Aliases now: {result.get('aliases')}."
+    )
+
+
+def status(engine, entities_fn: EntitiesFn) -> str:
+    from phileas.config import DEFAULT_PROFILE
+
+    stats = engine.status()
+
+    graph_nodes = stats.get("graph_nodes", 0)
+    graph_edges = stats.get("graph_edges", 0)
+    daemon_down = graph_nodes < 0 or graph_edges < 0
+
+    profile = engine.config.profile
+    lines = [
+        "Phileas Memory System Status",
+        "=" * 30,
+        f"Total memories:     {stats.get('total', 0)}",
+        f"  Active:           {stats.get('active', 0)}",
+        f"  Archived:         {stats.get('archived', 0)}",
+        f"Vector embeddings:  {stats.get('vector_count', 0)}",
+    ]
+    if daemon_down:
+        start_cmd = "phileas start" if profile == DEFAULT_PROFILE else f"phileas --profile {profile} start"
+        lines.append(f"Graph:              UNAVAILABLE (daemon not running). Start it with: {start_cmd}")
+    else:
+        lines.append(f"Graph nodes:        {graph_nodes}")
+        lines.append(f"Graph edges:        {graph_edges}")
+    return "\n".join(lines)
+
+
+def start_thread(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    label: str | None = None,
+    client_key: str | None = None,
+    source_kind: str = "agent",
+) -> dict:
+    return engine.start_thread(label=label, source_kind=source_kind, client_key=client_key)
+
+
+def ingest_text(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    text: str,
+    thread_id: str | None = None,
+    source_kind: str = "agent",
+) -> dict:
+    from phileas.models import Event
+
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("ingest_text requires non-empty verbatim text.")
+    event = Event(text=text, source_kind=source_kind, thread_id=thread_id)
+    engine.save_event(event)
+    return {
+        "event_id": event.id,
+        "thread_id": event.thread_id,
+        "received_at": event.received_at.isoformat(),
+        "source_kind": event.source_kind,
+    }
+
+
+def _trace_recent(engine, items: list[dict], days: int, latency_ms: float, bounds: dict | None = None) -> None:
+    """Best-effort trace write for the recall_recent MCP tool (mirrors the old
+    stdio-side trace). ``bounds`` carries the per-summary clip counters."""
+    try:
+        from phileas.engine import _trace_recall
+
+        _trace_recall(
+            engine._metrics,
+            source="engine.recall_recent",
+            query=None,
+            latency_ms=latency_ms,
+            result=items,
+            extra={"days": days, **(bounds or {})},
+        )
+    except Exception:
+        pass
+
+
+# Action tools that return their final string/dict directly (not via the
+# read-family pointer path).
+MCP_ACTIONS: dict[str, Callable[..., object]] = {
+    "recall": recall,
+    "memorize": memorize,
+    "memorize_batch": memorize_batch,
+    "forget": forget,
+    "relate": relate,
+    "scope": scope,
+    "resolve_contradiction": resolve_contradiction,
+    "update": update,
+    "roll_up": roll_up,
+    "expand": expand,
+    "survey": survey,
+    "reconcile": reconcile,
+    "merge_entities": merge_entities,
+    "alias": alias,
+    "status": status,
+    "start_thread": start_thread,
+    "ingest_text": ingest_text,
+}
+
+
+def run_mcp(engine, entities_fn: EntitiesFn, name: str, params: dict | None = None):
+    """Run one MCP tool by name and return its exact model-facing result.
+
+    The single execution path for every MCP tool: action tools return their
+    finished string/dict; read-family tools (``TOOLS``) return their ``text``.
+    Used by the daemon to serve the stdio relay and by the CLI/tests directly.
+    """
+    params = params or {}
+    action = MCP_ACTIONS.get(name)
+    if action is not None:
+        return action(engine, entities_fn, **params)
+    if name == "recall_recent":
+        from time import perf_counter
+
+        t0 = perf_counter()
+        result = recall_recent(engine, entities_fn, **params)
+        _trace_recent(
+            engine,
+            result["items"],
+            params.get("days", 7),
+            (perf_counter() - t0) * 1000,
+            result.get("bounds"),
+        )
+        return result["text"]
+    if name == "get_thread_memories":
+        return get_thread_memories(engine, entities_fn, **params)["text"]
+    if name in TOOL_NAMES:
+        return run(engine, entities_fn, name, params)["text"]
+    raise ValueError(f"Unknown MCP tool: {name}")

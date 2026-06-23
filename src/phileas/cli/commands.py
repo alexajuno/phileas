@@ -770,7 +770,19 @@ def serve():
     try:
         import os
 
-        from phileas.server import mcp
+        from phileas import daemon_client
+        from phileas.mcp_server import mcp
+
+        # The MCP entrypoint is a thin relay: it holds no models and no store, and
+        # forwards every tool call to the daemon. Ensure one is up (starting it
+        # under a lock if needed) before serving, so the first tool call doesn't
+        # race a cold start and so a missing daemon fails loudly here, not silently
+        # mid-session.
+        try:
+            daemon_client.ensure_running()
+        except Exception as exc:
+            print_error(f"Could not start the Phileas daemon (memory tools need it): {exc}")
+            raise SystemExit(1) from exc
 
         # HTTP mode (PHILEAS_MCP_TRANSPORT=http) serves the OAuth-gated MCP over
         # streamable-http for the phone connector; default stays stdio for local
