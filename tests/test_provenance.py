@@ -8,17 +8,21 @@ MCP tool boundary: `memorize` / `memorize_batch` refuse a missing or unknown
 
 from __future__ import annotations
 
-import importlib
+from types import SimpleNamespace
 
 import pytest
+
+from phileas import tool_runner
 
 
 @pytest.fixture
 def srv(tmp_dir, monkeypatch):
-    """The server module with its tool globals rebound to a temp engine.
+    """A temp engine plus the MCP tool functions bound to it.
 
-    PHILEAS_HOME is set (and auto-restored) so importing the module never opens
-    the real ~/.phileas; the engine then uses isolated temp stores.
+    The provenance contract lives in phileas.tool_runner (the shared execution
+    layer the daemon runs). These exercise it directly against isolated temp
+    stores — no daemon. PHILEAS_HOME is set (and auto-restored) so nothing
+    touches the real ~/.phileas.
     """
     monkeypatch.setenv("PHILEAS_HOME", str(tmp_dir))
 
@@ -28,8 +32,6 @@ def srv(tmp_dir, monkeypatch):
     from phileas.graph import GraphStore
     from phileas.vector import VectorStore
 
-    module = importlib.import_module("phileas.server")
-
     db = Database(path=tmp_dir / "test.db")
     eng = MemoryEngine(
         db=db,
@@ -37,9 +39,20 @@ def srv(tmp_dir, monkeypatch):
         graph=GraphStore(path=tmp_dir / "graph"),
         config=load_config(home=tmp_dir),
     )
-    monkeypatch.setattr(module, "engine", eng)
-    monkeypatch.setattr(module, "db", db)
-    return module
+    ef = tool_runner.no_entities
+    return SimpleNamespace(
+        engine=eng,
+        db=db,
+        ingest_text=lambda text, thread_id=None, source_kind="agent": tool_runner.ingest_text(
+            eng, ef, text=text, thread_id=thread_id, source_kind=source_kind
+        ),
+        memorize=lambda summary, source_event_id, **kw: tool_runner.memorize(
+            eng, ef, summary=summary, source_event_id=source_event_id, **kw
+        ),
+        memorize_batch=lambda memories, source_event_id=None: tool_runner.memorize_batch(
+            eng, ef, memories=memories, source_event_id=source_event_id
+        ),
+    )
 
 
 # -- ingest_text: the capture step -------------------------------------------

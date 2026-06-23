@@ -64,7 +64,7 @@ from phileas.stats.cli import stats
 def app(profile: str | None):
     """Phileas -- persistent memory for AI."""
     # Set the env var so every downstream load_config() in this process — including
-    # the module-level one in phileas.server when `serve` runs — sees the profile.
+    # the module-level one in phileas.mcp_server when `serve` runs — sees the profile.
     if profile:
         try:
             resolve_profile(profile)

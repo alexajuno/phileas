@@ -15,10 +15,20 @@ import os
 import signal
 import socket
 from collections import deque
-from pathlib import Path
 
 from phileas import api, tool_runner
 from phileas.config import PhileasConfig, load_config
+
+# The client side lives in an import-light module so the stdio relay can use it
+# without dragging in the engine/models. Re-exported here so the long-standing
+# `from phileas.daemon import is_running, call` call sites keep working.
+from phileas.daemon_client import (  # noqa: F401  (call/ensure_running/is_running re-exported)
+    _pid_path,
+    _port_path,
+    call,
+    ensure_running,
+    is_running,
+)
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
@@ -36,35 +46,6 @@ _sync_pusher: SyncPusher | None = None
 # push. Events ride along incrementally on the next push, and the derived graph
 # is rebuilt on import, so neither needs its own trigger here.
 _WRITE_METHODS = frozenset({"memorize", "forget", "update", "resolve_contradiction"})
-
-
-def _pid_path(config: PhileasConfig) -> Path:
-    return config.home / "daemon.pid"
-
-
-def _port_path(config: PhileasConfig) -> Path:
-    return config.home / "daemon.port"
-
-
-def is_running(config: PhileasConfig | None = None) -> int | None:
-    """Return daemon port if running, else None."""
-    config = config or load_config()
-    pid_file = _pid_path(config)
-    port_file = _port_path(config)
-
-    if not pid_file.exists() or not port_file.exists():
-        return None
-
-    pid = int(pid_file.read_text().strip())
-    try:
-        os.kill(pid, 0)  # Check if process exists
-    except OSError:
-        # Stale PID file
-        pid_file.unlink(missing_ok=True)
-        port_file.unlink(missing_ok=True)
-        return None
-
-    return int(port_file.read_text().strip())
 
 
 def stop(config: PhileasConfig | None = None) -> bool:
@@ -335,7 +316,8 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # The closure reads _sync_pusher at call time, after start() assigns it below.
     def _dispatch_for_api(method, params):
         result = _dispatch(engine, method, params)
-        if method in _WRITE_METHODS and _sync_pusher is not None:
+        armed = method in _WRITE_METHODS or (method == "tool" and params.get("name") in tool_runner.TOOL_WRITE_NAMES)
+        if armed and _sync_pusher is not None:
             _sync_pusher.notify()
         return result
 
@@ -560,6 +542,25 @@ def _read_vmrss_kb() -> int:
     except OSError:
         pass
     return 0
+
+
+def _entities_for_engine(engine: MemoryEngine):
+    """An ``entities_fn`` bound to the daemon's own graph (the single owner).
+
+    Pointer formatting in tool_runner needs entity tags; the daemon resolves
+    them directly rather than proxying back through itself.
+    """
+
+    def _ef(items: list[dict]) -> dict[str, list[dict]]:
+        ids = [it.get("id") for it in items if it.get("id")]
+        if not ids:
+            return {}
+        try:
+            return engine.graph.get_entities_for_memories(ids) or {}
+        except Exception:
+            return {}
+
+    return _ef
 
 
 def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | str:
@@ -827,53 +828,42 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     # playground renders cards from items and shows the verbatim text. The
     # daemon owns the graph, so it resolves entity tags directly rather than
     # proxying back through itself.
-    elif method in tool_runner.TOOL_NAMES:
+    elif method == "tool":
+        # The stdio MCP entrypoint relays every tool call here. run_mcp produces
+        # the exact model-facing string/dict; tool-call telemetry lives here now
+        # (the relay holds no engine), so it records where the work happens.
+        from time import perf_counter
 
-        def _entities_for(items: list[dict]) -> dict[str, list[dict]]:
-            ids = [it.get("id") for it in items if it.get("id")]
-            if not ids:
-                return {}
+        name = params["name"]
+        tool_params = params.get("params") or {}
+        t0 = perf_counter()
+        ok = True
+        err: str | None = None
+        output_chars: int | None = None
+        try:
+            result = tool_runner.run_mcp(engine, _entities_for_engine(engine), name, tool_params)
+            if isinstance(result, str):
+                output_chars = len(result)
+            return result
+        except Exception as e:
+            ok = False
+            err = type(e).__name__
+            raise
+        finally:
             try:
-                return engine.graph.get_entities_for_memories(ids) or {}
+                engine._metrics.record_tool_call(
+                    tool=name,
+                    latency_ms=(perf_counter() - t0) * 1000,
+                    ok=ok,
+                    error=err,
+                    output_chars=output_chars,
+                )
             except Exception:
-                return {}
-
-        return tool_runner.run(engine, _entities_for, method, params)
+                pass
+    elif method in tool_runner.TOOL_NAMES:
+        return tool_runner.run(engine, _entities_for_engine(engine), method, params)
     else:
         raise ValueError(f"Unknown method: {method}")
 
 
 # -- Client -----------------------------------------------------------
-
-
-def call(
-    method: str,
-    params: dict | None = None,
-    config: PhileasConfig | None = None,
-    timeout: float = 30,
-) -> dict | None:
-    """Call the daemon. Returns response dict or None if daemon not running.
-
-    `timeout` is bumped by callers like sync_apply whose work (re-embedding a
-    delta of memories) can exceed the default.
-    """
-    config = config or load_config()
-    port = is_running(config)
-    if port is None:
-        return None
-
-    import urllib.request
-
-    body = json.dumps({"method": method, "params": params or {}}).encode()
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())
-    except Exception:
-        return None

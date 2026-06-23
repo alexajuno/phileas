@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from phileas import server
+from phileas import tool_runner
 from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
@@ -141,11 +141,10 @@ def test_blank_and_unmatched_themes_are_empty(tmp_dir: Path):
     assert none["loose_total"] == 0 and none["groups"] == []
 
 
-def test_server_render_lists_subthreads(tmp_dir: Path, monkeypatch):
+def test_survey_render_lists_subthreads(tmp_dir: Path):
     eng = _engine(tmp_dir)
     _seed_cluster(eng)
-    monkeypatch.setattr(server, "engine", eng)
-    out = server.survey(THEME)
+    out = tool_runner.survey(eng, tool_runner.no_entities, theme=THEME)
     assert "Sub-threads" in out
     assert "Alpha" in out and "Beta" in out
     assert "roll_up(" in out  # the next-step recipe is spelled out

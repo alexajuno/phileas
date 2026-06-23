@@ -296,7 +296,7 @@ def register_login_routes(mcp, provider: SqliteOAuthProvider) -> None:
 
 
 # ----------------------------------------------------------------------------
-# Wiring entry point (called by server.py)
+# Wiring entry point (called by mcp_server.py)
 # ----------------------------------------------------------------------------
 
 

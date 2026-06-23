@@ -61,7 +61,7 @@ def _server_command() -> tuple[str, list[str]]:
     phileas_exe = _find_phileas_command()
     if phileas_exe:
         return phileas_exe, ["serve"]
-    return sys.executable, ["-c", "from phileas.server import mcp; mcp.run()"]
+    return sys.executable, ["-c", "from phileas.mcp_server import mcp; mcp.run()"]
 
 
 def _server_entry(profile: str) -> dict:
