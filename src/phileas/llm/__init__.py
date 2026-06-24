@@ -6,7 +6,7 @@ constructed once at daemon start and is a no-op until ``LLMConfig.available``
 (enabled + key present), so a keyless install never reaches the network.
 
 Public surface:
-    from phileas.llm import LLMClient, known_models, parse_json_response, text_from, tool_input_from
+    from phileas.llm import LLMClient, extract_memories, known_models
 """
 
 from __future__ import annotations
@@ -18,5 +18,14 @@ from phileas.llm.client import (
     text_from,
     tool_input_from,
 )
+from phileas.llm.extraction import ExtractionUnavailable, extract_memories
 
-__all__ = ["LLMClient", "known_models", "parse_json_response", "text_from", "tool_input_from"]
+__all__ = [
+    "ExtractionUnavailable",
+    "LLMClient",
+    "extract_memories",
+    "known_models",
+    "parse_json_response",
+    "text_from",
+    "tool_input_from",
+]
