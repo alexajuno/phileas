@@ -97,13 +97,17 @@ CREATE TABLE IF NOT EXISTS memory_items (
 
 -- A raw turn. ``source_kind`` records the surface that captured it, so health
 -- can track per-source recency. ``thread_id`` is the conversation it belongs
--- to: a thread is the ordered run of turns sharing this id.
+-- to: a thread is the ordered run of turns sharing this id. ``attribution`` is
+-- whose words the segment is (self/other/source); ``extraction_status`` is the
+-- distillation queue state, 'extracted' unless ingest marks a turn 'pending'.
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
     received_at TEXT NOT NULL,
     source_kind TEXT,
-    thread_id TEXT NOT NULL
+    thread_id TEXT NOT NULL,
+    attribution TEXT,
+    extraction_status TEXT NOT NULL DEFAULT 'extracted'
 );
 
 CREATE TABLE IF NOT EXISTS threads (
@@ -154,7 +158,25 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self._reconcile_fts()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        The schema is CREATE TABLE IF NOT EXISTS, which never alters an existing
+        table, and ``extraction_status`` has to be filterable (the worker selects
+        ``WHERE extraction_status='pending'``), so a pre-existing events table must
+        actually gain the column. Each ALTER is column-guarded, so this is
+        idempotent; existing rows backfill to 'extracted', leaving turns captured
+        before the observer pipeline out of the worker's queue.
+        """
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(events)")}
+        if "attribution" not in cols:
+            self.conn.execute("ALTER TABLE events ADD COLUMN attribution TEXT")
+        if "extraction_status" not in cols:
+            self.conn.execute("ALTER TABLE events ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'extracted'")
+        self.conn.commit()
 
     def _reconcile_fts(self) -> None:
         """Seed the FTS index for any active memory it doesn't yet hold.
@@ -718,14 +740,17 @@ class Database:
     @_locked
     def save_event(self, event: Event) -> None:
         self.conn.execute(
-            """INSERT OR REPLACE INTO events (id, text, received_at, source_kind, thread_id)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT OR REPLACE INTO events
+               (id, text, received_at, source_kind, thread_id, attribution, extraction_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.id,
                 event.text,
                 event.received_at.isoformat(),
                 event.source_kind,
                 event.thread_id or event.id,
+                event.attribution,
+                event.extraction_status,
             ),
         )
         self.conn.commit()
@@ -742,18 +767,24 @@ class Database:
         return [self._row_to_item(row) for row in rows]
 
     def _row_to_event(self, row: sqlite3.Row) -> Event:
+        keys = row.keys()
         return Event(
             id=row["id"],
             text=row["text"],
             received_at=datetime.fromisoformat(row["received_at"]),
             source_kind=row["source_kind"] or "unknown",
-            thread_id=(row["thread_id"] if "thread_id" in row.keys() else None) or row["id"],
+            thread_id=(row["thread_id"] if "thread_id" in keys else None) or row["id"],
+            attribution=row["attribution"] if "attribution" in keys else None,
+            extraction_status=row["extraction_status"] if "extraction_status" in keys else "extracted",
         )
 
     @_locked
     def get_all_events(self, limit: int | None = None) -> list[Event]:
         """All events in insertion order — used by the embed-backfill script."""
-        sql = "SELECT id, text, received_at, source_kind, thread_id FROM events ORDER BY received_at ASC"
+        sql = (
+            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status "
+            "FROM events ORDER BY received_at ASC"
+        )
         params: tuple = ()
         if limit is not None:
             sql += " LIMIT ?"
@@ -764,7 +795,8 @@ class Database:
     @_locked
     def get_event(self, event_id: str) -> Event | None:
         row = self.conn.execute(
-            "SELECT id, text, received_at, source_kind, thread_id FROM events WHERE id = ?",
+            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status "
+            "FROM events WHERE id = ?",
             (event_id,),
         ).fetchone()
         if not row:
@@ -775,7 +807,7 @@ class Database:
     def get_events_for_thread(self, thread_id: str) -> list[Event]:
         """All raw turns in a thread, oldest first — the conversation in order."""
         rows = self.conn.execute(
-            "SELECT id, text, received_at, source_kind, thread_id FROM events "
+            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status FROM events "
             "WHERE thread_id = ? ORDER BY received_at ASC",
             (thread_id,),
         ).fetchall()
@@ -799,6 +831,55 @@ class Database:
             for row in self.conn.execute(q, part):
                 out[row["id"]] = row["thread_id"] or row["id"]
         return out
+
+    @_locked
+    def get_pending_events_for_thread(self, thread_id: str) -> list[Event]:
+        """A thread's turns still awaiting distillation, oldest first.
+
+        The extraction worker's per-thread work list: the window it builds a
+        transcript from, then marks extracted (or failed).
+        """
+        rows = self.conn.execute(
+            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status "
+            "FROM events WHERE thread_id = ? AND extraction_status = 'pending' "
+            "ORDER BY received_at ASC",
+            (thread_id,),
+        ).fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    @_locked
+    def pending_thread_ids(self) -> list[str]:
+        """Distinct threads holding at least one pending turn — the worker's recovery seed.
+
+        On daemon start this reseeds the dirty map so turns buffered before a
+        restart still flush instead of stalling unseen.
+        """
+        rows = self.conn.execute("SELECT DISTINCT thread_id FROM events WHERE extraction_status = 'pending'").fetchall()
+        return [row["thread_id"] for row in rows]
+
+    @_locked
+    def mark_events_extracted(self, event_ids: list[str]) -> None:
+        """Flip a flushed window from 'pending' to 'extracted'."""
+        self._set_extraction_status(event_ids, "extracted")
+
+    @_locked
+    def mark_events_failed(self, event_ids: list[str]) -> None:
+        """Flip a window the worker gave up on to 'failed' after its retries."""
+        self._set_extraction_status(event_ids, "failed")
+
+    def _set_extraction_status(self, event_ids: list[str], status: str) -> None:
+        ids = [e for e in dict.fromkeys(event_ids) if e]
+        if not ids:
+            return
+        chunk = 500
+        for i in range(0, len(ids), chunk):
+            part = ids[i : i + chunk]
+            placeholders = ",".join("?" * len(part))
+            self.conn.execute(
+                f"UPDATE events SET extraction_status = ? WHERE id IN ({placeholders})",
+                [status, *part],
+            )
+        self.conn.commit()
 
     # --- Threads (conversations: ordered runs of raw turns) ---
 

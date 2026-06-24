@@ -15,6 +15,18 @@ MemoryType = Literal[
 
 MemoryStatus = Literal["active", "archived"]
 
+Attribution = Literal[
+    "self",  # the user's own words; first person resolves to them
+    "other",  # another voice in the exchange (a person or an agent)
+    "source",  # external material the user brought in
+]
+
+ExtractionStatus = Literal[
+    "pending",  # ingested, waiting for the distillation worker
+    "extracted",  # distilled into memories, or born needing none
+    "failed",  # distillation gave up after repeated misses
+]
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -54,6 +66,10 @@ class Event:
     # memorize), "claude_code" (session poller), "reflection" (synthesis basis), …
     thread_id: str | None = None  # conversation this turn belongs to; a thread is the
     # ordered run of turns sharing this id. Defaults to the turn's own id — a one-turn thread.
+    attribution: Attribution | None = None  # whose words this segment is; None when there
+    # is no clean speaker (a monologue, or a turn captured before the observer pipeline).
+    extraction_status: ExtractionStatus = "extracted"  # distillation queue state. Born
+    # "extracted" (nothing for the worker to do); only ingest mints "pending".
 
     def __post_init__(self) -> None:
         if self.thread_id is None:
