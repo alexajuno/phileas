@@ -13,6 +13,7 @@ import click
 from phileas import __version__
 from phileas.cli.commands import (
     about,
+    config_cmd,
     contradictions,
     export_cmd,
     find_entities,
@@ -100,6 +101,7 @@ app.add_command(init_cmd)
 app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)
+app.add_command(config_cmd)
 app.add_command(retry_events)
 app.add_command(sync_export_cmd)
 app.add_command(sync_plan_cmd)

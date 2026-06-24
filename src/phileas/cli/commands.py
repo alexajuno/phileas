@@ -922,3 +922,99 @@ def usage(ctx, since: str):
     from phileas.stats.cli import stats_llm
 
     ctx.invoke(stats_llm, since=since, bucket="auto", as_json=False)
+
+
+# ------------------------------------------------------------------
+# config
+# ------------------------------------------------------------------
+
+
+def _project_llm_override():
+    """Return the project ``.phileas.toml`` path when it carries an ``[llm]`` section.
+
+    These commands write the *user* config; a project file layered on top by
+    ``load_config`` shadows it, so callers warn when one would mask the write.
+    Returns ``None`` when there is no such overriding file.
+    """
+    import tomllib
+
+    from phileas.config import _find_project_config
+
+    proj = _find_project_config()
+    if proj is None:
+        return None
+    try:
+        with open(proj, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return proj if "llm" in data else None
+
+
+@click.group("config")
+def config_cmd():
+    """View and change the internal extraction LLM settings.
+
+    These write the ``[llm]`` block of the user ``config.toml``. The settings
+    name the model Phileas would run for its own memory extraction; that path is
+    driven by the host Claude Code session today, so changes here take effect
+    once it is wired to the daemon.
+    """
+
+
+@config_cmd.command("show")
+def config_show():
+    """Print the effective extraction-LLM settings and where they resolve from."""
+    cfg = load_config()
+    llm = cfg.llm
+    key_set = bool(os.environ.get(llm.api_key_env))
+    console.print(f"[bold]Extraction LLM[/bold]  ({cfg.config_path})")
+    console.print(f"  enabled      {llm.enabled}")
+    console.print(f"  provider     {llm.provider}")
+    console.print(f"  model        {llm.model}")
+    console.print(f"  max_tokens   {llm.max_tokens}")
+    console.print(f"  api_key_env  {llm.api_key_env}  ({'set' if key_set else 'unset'} in this shell)")
+    override = _project_llm_override()
+    if override is not None:
+        print_warning(f"{override} has an llm section and overrides the user config shown above.")
+
+
+@config_cmd.command("set-model")
+@click.argument("model")
+def config_set_model(model: str):
+    """Set the extraction LLM model — writes [llm].model to the user config."""
+    from phileas.config import update_user_config
+    from phileas.llm import known_models
+
+    cfg = load_config()
+    path = update_user_config(cfg.home, "llm", {"model": model})
+    print_success(f"Set llm.model = {model}")
+    console.print(f"[dim]{path}[/dim]")
+    if model not in known_models():
+        print_warning(f"{model!r} has no known pricing, so usage cost records as 0. Known: {', '.join(known_models())}")
+    if _project_llm_override() is not None:
+        print_warning("A project .phileas.toml llm section shadows this write.")
+
+
+@config_cmd.command("enable")
+def config_enable():
+    """Turn the internal extraction LLM on — writes [llm].enabled = true."""
+    from phileas.config import update_user_config
+
+    cfg = load_config()
+    update_user_config(cfg.home, "llm", {"enabled": True})
+    print_success("Enabled the internal extraction LLM (llm.enabled = true).")
+    if not os.environ.get(cfg.llm.api_key_env):
+        print_warning(
+            f"{cfg.llm.api_key_env} is not set in this shell, so the client stays a no-op until a key is reachable."
+        )
+
+
+@config_cmd.command("disable")
+def config_disable():
+    """Turn the internal extraction LLM off — writes [llm].enabled = false."""
+    from phileas.config import update_user_config
+
+    cfg = load_config()
+    update_user_config(cfg.home, "llm", {"enabled": False})
+    print_success("Disabled the internal extraction LLM (llm.enabled = false).")

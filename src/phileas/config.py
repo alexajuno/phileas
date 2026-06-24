@@ -31,6 +31,7 @@ import os
 import re
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -331,3 +332,39 @@ def load_config(
             _apply_toml_data(cfg, tomllib.load(f))
 
     return cfg
+
+
+# ------------------------------------------------------------------
+# Config writing
+# ------------------------------------------------------------------
+
+
+def update_user_config(home: Path, section: str, values: dict[str, Any]) -> Path:
+    """Merge ``values`` into ``[section]`` of ``<home>/config.toml``; return the path.
+
+    Reads the existing user TOML when present, updates the named section in
+    place (creating it if absent), and writes the whole file back. Other
+    sections are preserved. The file is rewritten from the parsed table, so it
+    is normalized rather than patched in place. The home directory is created if
+    missing.
+
+    This writes only the *user* config; the project ``.phileas.toml`` layered on
+    top by :func:`load_config` is never touched, so a project override stays the
+    operator's to manage by hand.
+    """
+    import tomli_w
+
+    home.mkdir(parents=True, exist_ok=True)
+    path = home / "config.toml"
+    data: dict[str, Any] = {}
+    if path.is_file():
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    table = data.get(section)
+    if not isinstance(table, dict):
+        table = {}
+    table.update(values)
+    data[section] = table
+    with open(path, "wb") as f:
+        tomli_w.dump(data, f)
+    return path
