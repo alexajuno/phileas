@@ -63,3 +63,35 @@ def test_invalid_profile_rejected_cleanly():
     result = _run(["--profile", "bad/name", "_whereami_test"])
     assert result.exit_code == 2
     assert "invalid profile" in result.output
+
+
+# ------------------------------------------------------------------
+# Active profile marker: `phileas profile use` / `list`
+# ------------------------------------------------------------------
+
+
+def test_use_sets_active_profile_for_flagless_commands():
+    assert _run(["profile", "use", "dev"]).exit_code == 0
+    result = _run(["_whereami_test"])
+    profile, home = result.output.strip().split("\t")
+    assert profile == "dev"
+    assert home.endswith("/.config/phileas/profiles/dev")
+
+
+def test_flag_overrides_active_marker():
+    _run(["profile", "use", "dev"])
+    result = _run(["--profile", "work", "_whereami_test"])
+    assert result.output.strip().split("\t")[0] == "work"
+
+
+def test_env_overrides_active_marker():
+    _run(["profile", "use", "dev"])
+    result = CliRunner().invoke(app, ["_whereami_test"], env={"PHILEAS_PROFILE": "work", "PHILEAS_HOME": None})
+    assert result.output.strip().split("\t")[0] == "work"
+
+
+def test_profile_list_runs_and_shows_active():
+    _run(["profile", "use", "dev"])
+    result = _run(["profile", "list"])
+    assert result.exit_code == 0
+    assert "dev" in result.output

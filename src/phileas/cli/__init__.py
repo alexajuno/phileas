@@ -45,7 +45,8 @@ from phileas.cli.commands import (
     update_cmd,
     usage,
 )
-from phileas.config import resolve_profile
+from phileas.cli.profile import profile_group
+from phileas.config import cli_default_profile, resolve_profile
 from phileas.stats.cli import stats
 
 
@@ -59,10 +60,12 @@ from phileas.stats.cli import stats
     help=(
         "Select a named Phileas instance with its own data dir, daemon, and timer. "
         "Each profile lives at ~/.config/phileas/profiles/<name>. "
-        "Sets PHILEAS_PROFILE for this invocation."
+        "Sets PHILEAS_PROFILE for this invocation. Without it, flag-less commands "
+        "use the active profile set by `phileas profile use`, else `default`."
     ),
 )
-def app(profile: str | None):
+@click.pass_context
+def app(ctx: click.Context, profile: str | None):
     """Phileas -- persistent memory for AI."""
     # Set the env var so every downstream load_config() in this process — including
     # the module-level one in phileas.mcp_server when `serve` runs — sees the profile.
@@ -72,6 +75,12 @@ def app(profile: str | None):
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="'--profile'") from exc
         os.environ["PHILEAS_PROFILE"] = profile
+        return
+    # No explicit flag: fall back to the active-profile marker (CLI only; `serve`
+    # is exempt so an MCP client keeps the profile its own config pins).
+    active = cli_default_profile(ctx.invoked_subcommand)
+    if active:
+        os.environ["PHILEAS_PROFILE"] = active
 
 
 app.add_command(status)
@@ -102,6 +111,7 @@ app.add_command(start)
 app.add_command(stop_cmd, "stop")
 app.add_command(usage)
 app.add_command(config_cmd)
+app.add_command(profile_group)
 app.add_command(retry_events)
 app.add_command(sync_export_cmd)
 app.add_command(sync_plan_cmd)

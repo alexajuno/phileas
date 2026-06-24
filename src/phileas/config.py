@@ -15,7 +15,11 @@ several independent instances coexist. A pre-XDG install at ``~/.phileas`` (or
 ``~/.phileas-<p>``) is still honored when present, so an existing store keeps
 working until it is moved. The active profile comes from ``--profile`` /
 ``PHILEAS_PROFILE``; ``PHILEAS_HOME`` is a low-level override that pins the
-directory regardless of profile. Unknown TOML keys are ignored, so a stale
+directory regardless of profile. Flag-less CLI commands additionally fall back
+to the profile recorded by ``phileas profile use`` (a marker at
+``~/.config/phileas/active``), with ``serve`` exempt so an MCP client keeps the
+profile its own config pins. That fallback is layered in at the CLI boundary;
+``resolve_profile``/``resolve_home`` stay flag/env/default. Unknown TOML keys are ignored, so a stale
 config.toml carrying the old ``[recall]``/``[scoring]``/… sections loads cleanly
 (those sections are simply dropped).
 
@@ -282,6 +286,95 @@ def resolve_home(profile: str | None = None) -> Path:
     if legacy.exists():
         return legacy
     return xdg_home
+
+
+# ------------------------------------------------------------------
+# Active profile marker (CLI default)
+# ------------------------------------------------------------------
+
+
+def active_profile_path() -> Path:
+    """Path to the marker recording the active CLI profile.
+
+    Honors ``XDG_CONFIG_HOME`` (default ``~/.config``); the marker sits beside
+    the ``profiles/`` directory at ``~/.config/phileas/active``.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME")
+    root = Path(base) if base else Path.home() / ".config"
+    return root / "phileas" / "active"
+
+
+def read_active_profile() -> str | None:
+    """The persisted active profile name, or ``None`` when unset/blank/invalid."""
+    try:
+        name = active_profile_path().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not name or not _PROFILE_RE.match(name):
+        return None
+    return name
+
+
+def write_active_profile(name: str) -> Path:
+    """Persist ``name`` as the active CLI profile; return the marker path.
+
+    Validates the name (filesystem/unit safe, via :func:`resolve_profile`) and
+    writes atomically so a torn write can't leave a half-written marker.
+    """
+    resolve_profile(name)  # validate; raises ValueError on a bad name
+    path = active_profile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(name + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+# Subcommands an MCP client launches: the active-profile marker must not reach
+# them, so a client keeps the profile its own config pins (env, else default).
+_MARKER_EXEMPT_SUBCOMMANDS = frozenset({"serve"})
+
+
+def cli_default_profile(invoked_subcommand: str | None) -> str | None:
+    """Active-profile marker to apply for a flag-less CLI invocation, or ``None``.
+
+    Returns ``None`` when an explicit ``PHILEAS_PROFILE`` is already set (the
+    caller pinned it), when the subcommand is exempt (``serve``), or when no
+    marker is set. Otherwise returns the recorded active profile. This keeps the
+    marker a CLI-only convenience: :func:`resolve_profile`/:func:`resolve_home`
+    stay flag/env/default, so the daemon, the MCP server, and library callers
+    never see it.
+    """
+    if os.environ.get("PHILEAS_PROFILE"):
+        return None
+    if invoked_subcommand in _MARKER_EXEMPT_SUBCOMMANDS:
+        return None
+    return read_active_profile()
+
+
+def discover_profiles() -> list[tuple[str, Path]]:
+    """Profiles on this machine as sorted ``(name, home)`` pairs.
+
+    Scans the XDG profiles root and the pre-XDG homes (``~/.phileas`` and the
+    ``~/.phileas-<p>`` siblings). When a name exists in both layouts the XDG home
+    wins, matching :func:`resolve_home`. The ``default`` profile is always
+    present even before anything lands on disk.
+    """
+    homes: dict[str, Path] = {}
+    legacy_default = Path.home() / ".phileas"
+    if legacy_default.is_dir():
+        homes[DEFAULT_PROFILE] = legacy_default
+    for child in sorted(Path.home().glob(".phileas-*")):
+        name = child.name[len(".phileas-") :]
+        if child.is_dir() and _PROFILE_RE.match(name):
+            homes[name] = child
+    root = _profiles_root()
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if child.is_dir() and _PROFILE_RE.match(child.name):
+                homes[child.name] = child
+    homes.setdefault(DEFAULT_PROFILE, root / DEFAULT_PROFILE)
+    return sorted(homes.items())
 
 
 def _find_project_config(start: Path | None = None) -> Path | None:
