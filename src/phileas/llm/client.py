@@ -35,6 +35,15 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
+def known_models() -> list[str]:
+    """Model names with known pricing — the CLI's suggestion set for ``set-model``.
+
+    Any model string is accepted by the SDK; these are the ones whose cost the
+    usage ledger can derive, so they make the natural offered choices.
+    """
+    return sorted(_PRICE_PER_MTOK)
+
+
 def parse_json_response(text: str) -> Any:
     """Parse the first JSON value out of a model response.
 

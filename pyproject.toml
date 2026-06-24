@@ -25,6 +25,7 @@ dependencies = [
     "rich>=14.3.3",
     "fastapi>=0.136.3",
     "uvicorn>=0.42.0",
+    "tomli-w>=1.0.0",
 ]
 
 [project.urls]
