@@ -1,6 +1,6 @@
 """Best-effort SQLite writer for phileas metrics.
 
-Writes to ~/.phileas/metrics.db. All public methods swallow exceptions and
+Writes to metrics.db in the active profile home. All public methods swallow exceptions and
 log at debug — metrics must never break user operations.
 """
 

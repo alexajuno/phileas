@@ -12,11 +12,32 @@ import pytest
 
 from phileas.config import (
     DEFAULT_PROFILE,
+    LLMConfig,
     _find_project_config,
     load_config,
     resolve_home,
     resolve_profile,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home(tmp_path, monkeypatch):
+    """Hermetic home resolution: point HOME at a fresh dir and clear the env
+    knobs, so resolve_home() depends only on what each test creates, not on the
+    developer's real ``~/.config`` or ``~/.phileas``.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("PHILEAS_HOME", raising=False)
+    monkeypatch.delenv("PHILEAS_PROFILE", raising=False)
+    return fake_home
+
+
+def _xdg_home(home: Path, profile: str = DEFAULT_PROFILE) -> Path:
+    return home / ".config" / "phileas" / "profiles" / profile
+
 
 # ------------------------------------------------------------------
 # Defaults (no file, no env)
@@ -26,9 +47,10 @@ from phileas.config import (
 class TestDefaults:
     """Config defaults without any file or env vars."""
 
-    def test_default_home(self):
+    def test_default_home(self, _isolate_home):
+        # Fresh install (neither layout present) resolves to the XDG home.
         cfg = load_config()
-        assert cfg.home == Path.home() / ".phileas"
+        assert cfg.home == _xdg_home(_isolate_home)
 
     def test_default_sync(self, tmp_path):
         cfg = load_config(home=tmp_path)
@@ -40,9 +62,9 @@ class TestDefaults:
         assert cfg.sync.peer_url is None
         assert cfg.sync.pull_command is None
 
-    def test_derived_paths(self):
+    def test_derived_paths(self, _isolate_home):
         cfg = load_config()
-        home = Path.home() / ".phileas"
+        home = _xdg_home(_isolate_home)
         assert cfg.db_path == home / "memory.db"
         assert cfg.chroma_path == home / "chroma"
         assert cfg.graph_path == home / "graph"
@@ -235,21 +257,26 @@ class TestProjectConfig:
 class TestProfiles:
     """A profile selects the data home so several instances coexist."""
 
-    def test_default_profile_maps_to_phileas(self):
-        assert resolve_home() == Path.home() / ".phileas"
-        assert resolve_home("default") == Path.home() / ".phileas"
+    def test_default_profile_maps_to_xdg(self, _isolate_home):
+        assert resolve_home() == _xdg_home(_isolate_home)
+        assert resolve_home("default") == _xdg_home(_isolate_home)
 
-    def test_named_profile_maps_to_sibling(self):
-        assert resolve_home("dev") == Path.home() / ".phileas-dev"
+    def test_named_profile_maps_to_sibling(self, _isolate_home):
+        assert resolve_home("dev") == _xdg_home(_isolate_home, "dev")
 
-    def test_profile_from_env(self, monkeypatch):
+    def test_xdg_config_home_respected(self, tmp_path, monkeypatch):
+        custom = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(custom))
+        assert resolve_home() == custom / "phileas" / "profiles" / "default"
+
+    def test_profile_from_env(self, _isolate_home, monkeypatch):
         monkeypatch.setenv("PHILEAS_PROFILE", "work")
         assert resolve_profile() == "work"
-        assert resolve_home() == Path.home() / ".phileas-work"
+        assert resolve_home() == _xdg_home(_isolate_home, "work")
 
-    def test_explicit_profile_beats_env(self, monkeypatch):
+    def test_explicit_profile_beats_env(self, _isolate_home, monkeypatch):
         monkeypatch.setenv("PHILEAS_PROFILE", "work")
-        assert resolve_home("dev") == Path.home() / ".phileas-dev"
+        assert resolve_home("dev") == _xdg_home(_isolate_home, "dev")
 
     def test_phileas_home_overrides_profile(self, tmp_path, monkeypatch):
         """PHILEAS_HOME pins the directory regardless of profile."""
@@ -257,11 +284,11 @@ class TestProfiles:
         monkeypatch.setenv("PHILEAS_PROFILE", "dev")
         assert resolve_home() == tmp_path
 
-    def test_load_config_records_profile(self, monkeypatch):
+    def test_load_config_records_profile(self, _isolate_home, monkeypatch):
         monkeypatch.setenv("PHILEAS_PROFILE", "dev")
         cfg = load_config()
         assert cfg.profile == "dev"
-        assert cfg.home == Path.home() / ".phileas-dev"
+        assert cfg.home == _xdg_home(_isolate_home, "dev")
 
     def test_explicit_home_keeps_default_profile(self, tmp_path):
         cfg = load_config(home=tmp_path)
@@ -272,6 +299,103 @@ class TestProfiles:
     def test_invalid_profile_rejected(self, bad):
         with pytest.raises(ValueError):
             resolve_profile(bad)
+
+
+# ------------------------------------------------------------------
+# Legacy (pre-XDG) home fallback
+# ------------------------------------------------------------------
+
+
+class TestLegacyFallback:
+    """A pre-XDG ``~/.phileas`` store keeps working until it is moved."""
+
+    def test_legacy_used_when_only_legacy_exists(self, _isolate_home):
+        legacy = _isolate_home / ".phileas"
+        legacy.mkdir()
+        assert resolve_home() == legacy
+
+    def test_xdg_wins_when_both_exist(self, _isolate_home):
+        (_isolate_home / ".phileas").mkdir()
+        xdg = _xdg_home(_isolate_home)
+        xdg.mkdir(parents=True)
+        assert resolve_home() == xdg
+
+    def test_named_profile_legacy_sibling(self, _isolate_home):
+        legacy = _isolate_home / ".phileas-dev"
+        legacy.mkdir()
+        assert resolve_home("dev") == legacy
+
+    def test_fresh_install_ignores_legacy_default_for_named(self, _isolate_home):
+        # A legacy default store must not capture a named profile's resolution.
+        (_isolate_home / ".phileas").mkdir()
+        assert resolve_home("dev") == _xdg_home(_isolate_home, "dev")
+
+
+# ------------------------------------------------------------------
+# LLM (extraction) config section
+# ------------------------------------------------------------------
+
+
+class TestLLMConfig:
+    """The ``[llm]`` section configures the internal extraction call."""
+
+    def test_defaults_off(self, tmp_path):
+        cfg = load_config(home=tmp_path)
+        assert cfg.llm.enabled is False
+        assert cfg.llm.provider == "anthropic"
+        assert cfg.llm.model == "claude-haiku-4-5-20251001"
+        assert cfg.llm.api_key_env == "ANTHROPIC_API_KEY"
+
+    def test_available_requires_enabled_and_key(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        cfg = LLMConfig()
+        assert cfg.available is False
+        cfg.enabled = True
+        assert cfg.available is False  # enabled but no key
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        assert cfg.available is True
+
+    def test_available_honors_custom_key_env(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        cfg = LLMConfig(enabled=True, api_key_env="PHILEAS_ANTHROPIC_API_KEY")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-wrong")
+        assert cfg.available is False
+        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-right")
+        assert cfg.available is True
+
+    def test_toml_overrides(self, tmp_path):
+        (tmp_path / "config.toml").write_text(
+            textwrap.dedent("""\
+            [llm]
+            enabled = true
+            model = "claude-sonnet-4-6"
+            max_tokens = 4096
+            extract_debounce_seconds = 12.0
+        """)
+        )
+        cfg = load_config(home=tmp_path)
+        assert cfg.llm.enabled is True
+        assert cfg.llm.model == "claude-sonnet-4-6"
+        assert cfg.llm.max_tokens == 4096
+        assert cfg.llm.extract_debounce_seconds == 12.0
+        # Untouched fields stay at defaults.
+        assert cfg.llm.provider == "anthropic"
+
+    def test_stale_nested_operations_table_ignored(self, tmp_path):
+        """A pre-existing ``[llm.operations]`` subtable loads cleanly (dropped)."""
+        (tmp_path / "config.toml").write_text(
+            textwrap.dedent("""\
+            [llm]
+            provider = "anthropic"
+            model = "claude-haiku-4-5-20251001"
+
+            [llm.operations]
+            consolidation = "claude-sonnet-4-6"
+        """)
+        )
+        cfg = load_config(home=tmp_path)
+        assert cfg.llm.model == "claude-haiku-4-5-20251001"
+        assert not hasattr(cfg.llm, "operations")
 
 
 def marker_outside_tmp_path(result: Path, tmp_path: Path) -> bool:

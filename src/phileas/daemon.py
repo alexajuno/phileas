@@ -2,7 +2,7 @@
 
 Architecture:
   - Starts a lightweight HTTP server on localhost (random port)
-  - Writes port to ~/.phileas/daemon.port and PID to ~/.phileas/daemon.pid
+  - Writes daemon.port and daemon.pid into the active profile's home dir
   - Engine + models loaded once at startup, reused across requests
   - CLI commands detect the daemon and route through it for speed
 """

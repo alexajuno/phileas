@@ -53,6 +53,8 @@ from pydantic import AnyHttpUrl
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
+from phileas.config import resolve_home
+
 # Lifetimes (seconds).
 _CODE_TTL = 300  # authorization code: short-lived, single use
 _PENDING_TTL = 600  # pending login: how long the password page stays valid
@@ -308,7 +310,7 @@ def build_auth_components() -> tuple[dict, SqliteOAuthProvider | None]:
       PHILEAS_AUTH_PASSWORD (required) single-user login password
       PHILEAS_MCP_HOST      bind host (default 127.0.0.1 — Funnel fronts it)
       PHILEAS_MCP_PORT      bind port (default 8848)
-      PHILEAS_OAUTH_DB      sqlite path (default ~/.phileas/oauth.db)
+      PHILEAS_OAUTH_DB      sqlite path (default <profile home>/oauth.db)
     """
     if os.environ.get("PHILEAS_MCP_TRANSPORT", "stdio").lower() != "http":
         return {}, None
@@ -324,7 +326,7 @@ def build_auth_components() -> tuple[dict, SqliteOAuthProvider | None]:
 
     host = os.environ.get("PHILEAS_MCP_HOST", "127.0.0.1")
     port = int(os.environ.get("PHILEAS_MCP_PORT", "8848"))
-    db_path = Path(os.environ.get("PHILEAS_OAUTH_DB", str(Path.home() / ".phileas" / "oauth.db")))
+    db_path = Path(os.environ.get("PHILEAS_OAUTH_DB", str(resolve_home() / "oauth.db")))
 
     provider = SqliteOAuthProvider(db_path, public_url, password)
     kwargs = {

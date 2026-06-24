@@ -45,6 +45,8 @@ from typing import Any
 
 import kuzu
 
+from phileas.config import resolve_home
+
 log = logging.getLogger("phileas.graph")
 
 
@@ -74,7 +76,7 @@ def _locked(method):
     return wrapper
 
 
-DEFAULT_GRAPH_PATH = Path.home() / ".phileas" / "graph"
+DEFAULT_GRAPH_PATH = resolve_home() / "graph"
 
 
 def _new_entity_id() -> str:

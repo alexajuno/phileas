@@ -12,6 +12,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from phileas.config import resolve_home
 from phileas.models import Event, MemoryItem, Thread
 from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength
 
@@ -68,7 +69,7 @@ def _fts_match_query(query: str) -> str | None:
     return " OR ".join(terms) if terms else None
 
 
-DEFAULT_DB_PATH = Path.home() / ".phileas" / "memory.db"
+DEFAULT_DB_PATH = resolve_home() / "memory.db"
 
 # Sentinel provenance ids. A memory whose source turn was never captured, or a
 # turn whose conversation was never recorded, points here, so source_event_id

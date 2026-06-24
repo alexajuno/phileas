@@ -1,6 +1,6 @@
 """Read-only Kuzu probes for graph health.
 
-The daemon holds an exclusive lock on ~/.phileas/graph. We snapshot-copy the
+The daemon holds an exclusive lock on the profile's graph dir. We snapshot-copy the
 graph files to a tempdir and open a read-only kuzu connection.
 """
 

@@ -9,7 +9,9 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 
-DEFAULT_CHROMA_PATH = Path.home() / ".phileas" / "chroma"
+from phileas.config import resolve_home
+
+DEFAULT_CHROMA_PATH = resolve_home() / "chroma"
 COLLECTION_NAME = "memories"
 EVENTS_COLLECTION_NAME = "events"
 

@@ -57,7 +57,7 @@ from phileas.stats.cli import stats
     metavar="NAME",
     help=(
         "Select a named Phileas instance with its own data dir, daemon, and timer. "
-        "Default profile lives at ~/.phileas; a named profile <p> at ~/.phileas-<p>. "
+        "Each profile lives at ~/.config/phileas/profiles/<name>. "
         "Sets PHILEAS_PROFILE for this invocation."
     ),
 )
