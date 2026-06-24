@@ -82,6 +82,13 @@ class IdList(BaseModel):
     ids: list[str] = []
 
 
+class IngestRequest(BaseModel):
+    text: str
+    thread_id: str | None = None
+    attribution: str | None = None
+    source_kind: str | None = None
+
+
 # -- Auth --------------------------------------------------------------------
 
 
@@ -151,6 +158,12 @@ def create_app(engine: MemoryEngine, dispatch=None) -> FastAPI:
                 payload, status = {"ok": False, "error": str(exc)}, 500
             # default=str matches the legacy server's datetime handling.
             return Response(json.dumps(payload, default=str), media_type="application/json", status_code=status)
+
+        @app.post("/ingest", dependencies=[auth])
+        async def ingest_endpoint(body: IngestRequest) -> dict:
+            # The typed capture surface: routes through the same dispatch as the
+            # CLI/MCP `ingest`, so the worker gets notified the same way.
+            return await anyio.to_thread.run_sync(dispatch, "ingest", body.model_dump(exclude_none=True))
 
     # -- Memories read group (the direct-SQLite paths web must stop using) ---
 

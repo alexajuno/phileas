@@ -2,7 +2,7 @@
 
 Usage:
     phileas status
-    phileas memorize "I like Python"
+    phileas ingest "I moved to Bangkok last month"
     phileas recall "what languages"
 """
 
@@ -24,7 +24,6 @@ from phileas.cli.commands import (
     init_cmd,
     list_cmd,
     list_day,
-    memorize,
     recall,
     recall_recent,
     resolve_cmd,
@@ -85,7 +84,6 @@ def app(ctx: click.Context, profile: str | None):
 
 app.add_command(status)
 app.add_command(health)
-app.add_command(memorize)
 app.add_command(recall)
 app.add_command(recall_recent)
 app.add_command(timeline)

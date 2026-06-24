@@ -1,12 +1,12 @@
 """Phileas MCP server.
 
-Pure storage + retrieval. LLM client is the brain, extracting memories
-via skills/agents and calls these tools to store and retrieve them.
+A thin stdio/HTTP relay to the daemon. Clients stream conversation turns in
+with `ingest`; Phileas distills durable memories from them internally. The
+rest of the surface retrieves and curates what it kept.
 
 Tools:
+  - ingest: hand a conversation turn to Phileas to remember; returns its event_id
   - start_thread: open/resume a conversation thread; returns its thread_id
-  - ingest_text: capture a verbatim turn as an event in a thread; returns its event_id
-  - memorize: store a pre-extracted memory (must reference a source event_id)
   - recall: retrieve relevant memories
   - forget: archive a memory
   - relate: create a graph edge between entities
@@ -123,14 +123,13 @@ if _oauth_provider is not None:
 # per-session process stays a thin pipe: it does no retrieval and loads no model.
 # The shared execution + formatting lives in phileas.tool_runner.run_mcp, which
 # the daemon runs (phileas.daemon._dispatch "tool" branch).
-def _call(name: str, params: dict):
-    """Relay one tool call to the daemon and return its finished result.
+def _call_method(method: str, params: dict):
+    """Relay a call to a daemon dispatch method and return its result.
 
-    Most tools return a string; start_thread / ingest_text return a dict. When
-    the daemon is unreachable or the call errors, return a clear message rather
-    than degrade silently — a running daemon is required.
+    When the daemon is unreachable or the call errors, return a clear message
+    rather than degrade silently; a running daemon is required.
     """
-    resp = daemon_client.call("tool", {"name": name, "params": params})
+    resp = daemon_client.call(method, params)
     if resp is None:
         return (
             "Phileas memory daemon is not reachable. Start it with `phileas start` "
@@ -141,116 +140,38 @@ def _call(name: str, params: dict):
     return resp.get("result")
 
 
-@mcp.tool()
-def memorize(
-    summary: str,
-    source_event_id: str,
-    memory_type: str = "knowledge",
-    daily_ref: str | None = None,
-    entities: list | str | None = None,
-    relationships: list | str | None = None,
-    contexts: list | str | None = None,
-    child_ids: list | str | None = None,
-) -> str:
-    """Store a memory about the user.
+def _call(name: str, params: dict):
+    """Relay one MCP tool call (the daemon 'tool' branch) and return its result.
 
-    Scope: facts that code and git alone will not preserve — personal
-    context, preferences, patterns, emotional throughlines, life events,
-    and project decisions with stated reasoning (why X over Y, what was
-    rejected, deadline/constraint that forced the call). Skip
-    forward-prescriptive conventions ("always do X") — those belong in
-    the repo's CLAUDE.md.
-
-    Write `summary` as attributed data, not an asserted verdict. State
-    observations plainly ("PR #202 merged"). Record a judgment, prediction,
-    or opinion with its holder, date, and basis, truth left open: "Giao
-    judged (2026-04-08) ImagenHub can't scale; basis: crowded routing
-    market." A claim filed as fact has no holder; a claim filed as data names
-    one. Record your own reframes as yours, not as the user's.
-
-    Never paste raw conversation verbatim. Raw turns belong in the events
-    table: capture one with `ingest_text` and reference it via
-    `source_event_id`; memories *reference* events, they don't contain them.
-
-    Args:
-        summary: What to remember (1-2 sentences, in your own words).
-        source_event_id: Required. Event id this memory was distilled from —
-            the value returned by `ingest_text(text=<verbatim source>)`. Recall
-            hydrates the memory with its originating thread through this link.
-        memory_type: One of "profile", "event", "knowledge", "behavior", "reflection".
-        daily_ref: Date linking to ~/life/daily/{date}.md (YYYY-MM-DD). Defaults to today.
-        entities: List or JSON string of {"name": str, "type": str, "description"?: str} objects.
-            type is a coarse bucket from a small fixed vocabulary (Person,
-            Organization, Place, Project, Tool, Object, Animal, Activity, Event,
-            Concept); pick the same bucket for a referent every time, since
-            switching buckets splits it in two. Leave type empty when the kind
-            isn't yet clear — an absent type is compatible with anything and
-            fills in on a later, clearer mention, whereas a wrong guess mints a
-            duplicate node. description is an optional one-line disambiguator —
-            written once at entity creation, never overwritten. Helps the linker
-            keep same-name distinct referents apart (Apple fruit vs Apple Inc.).
-        relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"} objects.
-        contexts: List or JSON string of context names this memory is
-            scoped to (e.g. ["phileas", "when sick"]). Use when the fact
-            holds only in a context, not globally — each name resolves
-            (or mints) a Context-typed entity and gets a SCOPED_TO edge.
-            Omit for globally valid facts. Post-hoc scoping: `scope()`.
-        child_ids: Optional. List (or JSON string) of memory uuids / 8-char
-            prefixes that this memory summarizes — the consolidation write in
-            one call. Each is linked up into the new memory via a ROLLS_UP edge,
-            exactly as `roll_up` would, so a reflection and its episodes land
-            together. Use after `survey` hands you a sub-thread's id8s: pass them
-            here instead of a follow-up `roll_up`. To roll a sub-thread into a
-            gist that already exists, use `roll_up` directly. Omit for an
-            ordinary memory.
+    Most tools return a string; start_thread / ingest return a dict.
     """
-    return _call(
-        "memorize",
-        {
-            "summary": summary,
-            "source_event_id": source_event_id,
-            "memory_type": memory_type,
-            "daily_ref": daily_ref,
-            "entities": entities,
-            "relationships": relationships,
-            "contexts": contexts,
-            "child_ids": child_ids,
-        },
-    )
+    return _call_method("tool", {"name": name, "params": params})
 
 
 @mcp.tool()
-def memorize_batch(memories: list | str, source_event_id: str | None = None) -> str:
-    """Store multiple memories in one call.
+def ingest(content: str, thread_id: str | None = None, attribution: str = "self") -> dict:
+    """Hand a conversation turn to Phileas. It decides what, if anything, to remember.
 
-    Use when catching up on a conversation or saving several related memories at once.
-    Same scope as `memorize`: facts that code and git won't preserve —
-    personal context, patterns, life events, and project decisions with
-    reasoning. Skip forward-prescriptive conventions (those go in CLAUDE.md).
-    Phrase each summary as attributed data, not an asserted fact (see
-    `memorize`).
+    This is the capture surface. Stream turns in as they happen; Phileas watches
+    from the outside and distills durable memories on its own, so you never judge
+    what is worth keeping or run a memorize step. Read back what it kept with
+    `recall(query)`.
 
-    A batch usually comes from one passage: capture it once with `ingest_text`
-    and pass the returned id as the batch-level `source_event_id` below — every
-    item links to it. The whole batch is rejected before any write if a source
-    is missing or unknown.
+    Pass the `thread_id` from `start_thread` so the turns of one conversation read
+    back together; omit it and the turn is its own one-turn thread.
 
     Args:
-        memories: List or JSON string of memory objects. Each object has:
-            - summary (required): What to remember (1-2 sentences).
-            - memory_type: One of "profile", "event", "knowledge", "behavior", "reflection". Default "knowledge".
-            - daily_ref: YYYY-MM-DD. Defaults to today.
-            - entities: List of {"name": str, "type": str, "description"?: str}.
-            - relationships: List of {"from_name", "from_type", "edge", "to_name", "to_type"}.
-            - source_event_id: Event id this memory came from (from ingest_text).
-              Overrides the batch-level value; required unless that is set.
-            - contexts: List of context names the memory is scoped to
-              (optional — omit for globally valid facts).
-        source_event_id: Event id shared by every item in the batch — the value
-            from a single ingest_text call covering the source passage. Items
-            may override it. Required unless every item carries its own.
+        content: The turn's text, verbatim.
+        thread_id: Conversation this turn belongs to (from `start_thread`).
+        attribution: Whose words these are, from the user's standpoint. "self" is
+            the user (the default); "other" is someone or some agent the user is
+            talking with; "source" is external material the user brought in, like
+            a pasted article.
+
+    Returns:
+        {"queued": bool, "event_id": str, "thread_id": str}
     """
-    return _call("memorize_batch", {"memories": memories, "source_event_id": source_event_id})
+    return _call_method("ingest", {"text": content, "thread_id": thread_id, "attribution": attribution})
 
 
 @mcp.tool()
@@ -641,7 +562,7 @@ def start_thread(label: str | None = None, client_key: str | None = None, source
     """Open (or resume) a conversation thread — the frame a run of turns lives in.
 
     Call this at the start of a conversation, then pass the returned `thread_id`
-    to every `ingest_text` for that conversation so the turns read back in order
+    to every `ingest` for that conversation so the turns read back in order
     via `thread(thread_id)`.
 
     Pass a stable `client_key` (e.g. "claude_code:<session_id>") to make this
@@ -658,32 +579,6 @@ def start_thread(label: str | None = None, client_key: str | None = None, source
         {"thread_id": str, "started_at": ISO-8601, "resumed": bool, ...}
     """
     return _call("start_thread", {"label": label, "client_key": client_key, "source_kind": source_kind})
-
-
-@mcp.tool()
-def ingest_text(text: str, thread_id: str | None = None, source_kind: str = "agent") -> dict:
-    """Capture a verbatim turn as an event, the first step of memorizing.
-
-    Call this with the exact words you are about to summarize (the user's
-    message, the relevant turn, a quoted passage), then pass the returned
-    `event_id` to `memorize` / `memorize_batch` as `source_event_id`.
-
-    Pass the `thread_id` from `start_thread` so every turn of one conversation
-    reads back as a single ordered thread via `thread(thread_id)`. Omit it and
-    the turn becomes its own one-turn thread.
-
-    One call per turn: if several memories all come from the same turn, capture
-    it once and reuse the `event_id` across them.
-
-    Args:
-        text: The verbatim turn (not a summary). Stored as-is.
-        thread_id: Conversation this turn belongs to (from `start_thread`).
-        source_kind: Which surface this came from. Default "agent" (you, mid-session).
-
-    Returns:
-        {"event_id": str, "thread_id": str, "received_at": ISO-8601, "source_kind": str}
-    """
-    return _call("ingest_text", {"text": text, "thread_id": thread_id, "source_kind": source_kind})
 
 
 @mcp.tool()

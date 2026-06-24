@@ -668,10 +668,14 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             return {"queued": False, "reason": "empty text"}
         from phileas.models import Event
 
+        attribution = params.get("attribution")
+        if attribution not in ("self", "other", "source"):
+            attribution = None
         event = Event(
             text=text,
             source_kind=params.get("source_kind", "claude_code"),
             thread_id=params.get("thread_id"),
+            attribution=attribution,
             extraction_status="pending" if engine.config.llm.enabled else "extracted",
         )
         engine.save_event(event)
