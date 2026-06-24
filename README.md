@@ -54,16 +54,6 @@ Use the absolute path to the `phileas` executable (run `command -v phileas` to f
 
 The tools work in any client, and the server ships usage guidance that every MCP client receives on connect. The extra layer that makes memory feel automatic (recall before answering, memorize when something worth keeping comes up, the query shapes that retrieve well) lives in a skill file. `phileas init` installs it for Claude Code at `~/.claude/skills/phileas/SKILL.md`; its text uses bare tool names so it carries to any client. If your client has a rules or skills mechanism, put that file's content into it.
 
-## Profiles: separate memories, and switching between them
-
-A profile is an isolated Phileas instance with its own data directory, daemon, and memories, so a `work` brain and a `personal` brain never mix. Each lives at `~/.config/phileas/profiles/<name>`. Create one with `phileas init --profile <name>`, and run `phileas profile list` to see the profiles on this machine and which one is active.
-
-Which profile is in use is decided independently for two surfaces.
-
-The `phileas` CLI follows an active profile you set once: `phileas profile use <name>` makes flag-less commands (`phileas memorize`, `phileas recall`, `phileas status`) target that brain until you switch again. A `--profile <name>` flag or the `PHILEAS_PROFILE` env var overrides it for a single invocation.
-
-An MCP client (Claude Code, the phone app) follows the profile its own config pins, not the CLI's active profile. To bind a client per directory, run `phileas profile pin <name>` there: it writes a `phileas` server override carrying `PHILEAS_PROFILE=<name>`, so a client launched in that directory connects to that brain regardless of your global default. Reopen the client and approve the server for it to take effect; `phileas profile unpin` removes the pin. The pin is private to you by default; `--scope project` writes a shared `.mcp.json` instead.
-
 ## Principles
 
 - **Local-first:** memories stay on your machine.
