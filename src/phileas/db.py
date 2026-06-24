@@ -555,11 +555,20 @@ class Database:
         ]
 
     @_locked
+    def event_status_counts(self) -> dict[str, int]:
+        """Event counts grouped by extraction_status — the worker's queue depth."""
+        return {
+            row[0]: row[1]
+            for row in self.conn.execute("SELECT extraction_status, COUNT(*) FROM events GROUP BY extraction_status")
+        }
+
+    @_locked
     def web_ingestion_health(self) -> dict:
-        """Event-ingestion counts (1h / 24h / total) — mirrors phileas-db.ts:fetchIngestionHealth."""
+        """Event-ingestion counts (1h / 24h / total), plus the extraction queue depth."""
         now = datetime.now(timezone.utc)
         h1 = (now - timedelta(hours=1)).isoformat()
         d1 = (now - timedelta(days=1)).isoformat()
+        status_counts = self.event_status_counts()
         return {
             "events_received_1h": self.conn.execute(
                 "SELECT COUNT(*) FROM events WHERE received_at >= ?", (h1,)
@@ -568,6 +577,8 @@ class Database:
                 "SELECT COUNT(*) FROM events WHERE received_at >= ?", (d1,)
             ).fetchone()[0],
             "events_total": self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            "events_pending": status_counts.get("pending", 0),
+            "events_failed": status_counts.get("failed", 0),
         }
 
     @_locked

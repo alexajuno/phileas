@@ -68,6 +68,8 @@ class IngestionHealth(BaseModel):
     events_received_1h: int
     events_received_24h: int
     events_total: int
+    events_pending: int = 0
+    events_failed: int = 0
 
 
 class IngestionEvent(BaseModel):

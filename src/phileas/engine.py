@@ -2493,11 +2493,14 @@ class MemoryEngine:
         """Aggregate stats from all three backends."""
         counts = self.db.get_counts()
         graph_stats = self.graph.get_stats()
+        event_status = self.db.event_status_counts()
         return {
             **counts,
             "vector_count": self.vector.count(),
             "event_vector_count": self.vector.event_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],
+            "events_pending": event_status.get("pending", 0),
+            "events_failed": event_status.get("failed", 0),
             "storage_health": self.db.storage_health(),
         }
