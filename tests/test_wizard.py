@@ -23,8 +23,15 @@ from phileas.config import DEFAULT_PROFILE
 
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
-    """Point Path.home() at tmp_path for the duration of a test."""
+    """Point Path.home() at tmp_path for the duration of a test.
+
+    Also clear the home/profile env knobs so profile resolution depends only on
+    the fixture, landing the XDG home under ``tmp_path/.config/phileas/profiles``.
+    """
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("PHILEAS_HOME", raising=False)
+    monkeypatch.delenv("PHILEAS_PROFILE", raising=False)
     return tmp_path
 
 
@@ -393,13 +400,13 @@ class TestRunWizardUnattended:
         self._stub_helpers(monkeypatch)
         self._forbid_prompt(monkeypatch)
         assert run_wizard(profile="dev") == 0
-        assert (fake_home / ".phileas-dev").is_dir()
+        assert (fake_home / ".config" / "phileas" / "profiles" / "dev").is_dir()
 
     def test_yes_uses_default_profile_without_prompt(self, fake_home, monkeypatch):
         self._stub_helpers(monkeypatch)
         self._forbid_prompt(monkeypatch)
         assert run_wizard(assume_yes=True) == 0
-        assert (fake_home / ".phileas").is_dir()
+        assert (fake_home / ".config" / "phileas" / "profiles" / "default").is_dir()
 
     def test_invalid_profile_flag_returns_2(self, fake_home, monkeypatch):
         self._stub_helpers(monkeypatch)

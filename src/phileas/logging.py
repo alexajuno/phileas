@@ -9,7 +9,9 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
-_DEFAULT_LOG_DIR = Path.home() / ".phileas"
+from phileas.config import resolve_home
+
+_DEFAULT_LOG_DIR = resolve_home()
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 _DEFAULT_BACKUP_COUNT = 3
 
@@ -39,7 +41,7 @@ def get_logger(
     """Return the Phileas logger, creating it on first call.
 
     All parameters are optional and default to the original hardcoded values:
-      log_dir     – directory for log files (default ``~/.phileas``)
+      log_dir     – directory for log files (default: the active profile home)
       level       – logging level name (default ``"INFO"``)
       max_bytes   – max bytes per rotated log file (default 5 MB)
       backup_count – number of rotated backup files (default 3)

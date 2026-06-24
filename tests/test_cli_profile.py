@@ -9,6 +9,7 @@ another.
 from __future__ import annotations
 
 import click
+import pytest
 from click.testing import CliRunner
 
 from phileas.cli import app
@@ -24,6 +25,20 @@ def _whereami_test():
     click.echo(f"{cfg.profile}\t{cfg.home}")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_home(tmp_path, monkeypatch):
+    """Pin HOME to a fresh dir and clear the XDG override so the CLI resolves a
+    deterministic home regardless of the developer's real ``~/.config`` or
+    ``~/.phileas``. A fresh install (neither layout present) lands in the XDG
+    home ``~/.config/phileas/profiles/<profile>``.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    return fake_home
+
+
 def _run(args):
     return CliRunner().invoke(app, args, env=_ISOLATE)
 
@@ -33,7 +48,7 @@ def test_default_profile():
     assert result.exit_code == 0
     profile, home = result.output.strip().split("\t")
     assert profile == "default"
-    assert home.endswith("/.phileas")
+    assert home.endswith("/.config/phileas/profiles/default")
 
 
 def test_named_profile_selects_sibling_home():
@@ -41,7 +56,7 @@ def test_named_profile_selects_sibling_home():
     assert result.exit_code == 0
     profile, home = result.output.strip().split("\t")
     assert profile == "dev"
-    assert home.endswith("/.phileas-dev")
+    assert home.endswith("/.config/phileas/profiles/dev")
 
 
 def test_invalid_profile_rejected_cleanly():

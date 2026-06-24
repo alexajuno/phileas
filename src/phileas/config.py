@@ -7,14 +7,17 @@ them (recall hyperparameters in ``engine.py``, output bounds in
 ``recall_format.py``, scoring weights/decay in ``scoring.py``).
 
 Config loading priority (later wins): code defaults < user ``config.toml`` <
-project ``.phileas.toml``. The home directory is selected by *profile*: the
-``default`` profile lives at ``~/.phileas`` and a named profile ``<p>`` lives at
-the sibling ``~/.phileas-<p>``, so several independent instances coexist. The
-active profile comes from ``--profile`` / ``PHILEAS_PROFILE``; ``PHILEAS_HOME``
-is a low-level override that pins the directory regardless of profile. Unknown
-TOML keys are ignored, so a stale config.toml carrying the old
-``[recall]``/``[scoring]``/… sections loads cleanly (those sections are simply
-dropped).
+project ``.phileas.toml``. The home directory is selected by *profile* under the
+XDG config root: the ``default`` profile lives at
+``~/.config/phileas/profiles/default`` and a named profile ``<p>`` at
+``~/.config/phileas/profiles/<p>`` (the root honors ``XDG_CONFIG_HOME``), so
+several independent instances coexist. A pre-XDG install at ``~/.phileas`` (or
+``~/.phileas-<p>``) is still honored when present, so an existing store keeps
+working until it is moved. The active profile comes from ``--profile`` /
+``PHILEAS_PROFILE``; ``PHILEAS_HOME`` is a low-level override that pins the
+directory regardless of profile. Unknown TOML keys are ignored, so a stale
+config.toml carrying the old ``[recall]``/``[scoring]``/… sections loads cleanly
+(those sections are simply dropped).
 
 Usage:
     from phileas.config import load_config
@@ -114,25 +117,80 @@ class HealthConfig:
     rss_alert_mb: int = 3000
 
 
+@dataclass
+class LLMConfig:
+    """The extraction LLM Phileas runs internally to memorize ingested turns.
+
+    This is Phileas's own model call, not the MCP client's model. It is off by
+    default; turn it on by setting ``enabled`` and making a key reachable. The
+    key itself never lives in config: it is read at call time from the env var
+    named by ``api_key_env``, the same way the sync and API bearer secrets stay
+    out of a committed ``config.toml``. ``available`` is the runtime gate the
+    daemon checks before each call, so a keyless install simply leaves ingested
+    turns unextracted (and visible as pending) rather than failing a write.
+
+    Debounce knobs control the per-thread extraction window: turns buffer, and a
+    thread flushes once it has been quiet for ``extract_debounce_seconds`` or has
+    buffered for ``extract_max_buffer_seconds`` (the cap that keeps a long, still
+    active conversation from starving).
+    """
+
+    enabled: bool = False
+    provider: str = "anthropic"
+    model: str = "claude-haiku-4-5-20251001"
+    api_key_env: str = "ANTHROPIC_API_KEY"
+    max_tokens: int = 2048
+    extract_debounce_seconds: float = 8.0
+    extract_max_buffer_seconds: float = 120.0
+
+    @property
+    def available(self) -> bool:
+        """True when extraction is enabled and the key env var is set."""
+        return self.enabled and bool(os.environ.get(self.api_key_env))
+
+
 # ------------------------------------------------------------------
 # Top-level config
 # ------------------------------------------------------------------
 
-_DEFAULT_HOME = Path.home() / ".phileas"
 DEFAULT_PROFILE = "default"
 # A profile names a directory and a systemd instance, so keep it filesystem- and
 # unit-safe: start alphanumeric, then alphanumerics / dash / underscore.
 _PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
+def _profiles_root() -> Path:
+    """The directory holding one subdirectory per profile.
+
+    Honors ``XDG_CONFIG_HOME`` (default ``~/.config``), so a profile ``<p>``
+    lives at ``~/.config/phileas/profiles/<p>``.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME")
+    root = Path(base) if base else Path.home() / ".config"
+    return root / "phileas" / "profiles"
+
+
+def default_home() -> Path:
+    """Home directory for the default profile under the XDG layout."""
+    return _profiles_root() / DEFAULT_PROFILE
+
+
+def _legacy_home(profile: str) -> Path:
+    """Pre-XDG home for a profile: ``~/.phileas`` or the sibling ``~/.phileas-<p>``."""
+    if profile == DEFAULT_PROFILE:
+        return Path.home() / ".phileas"
+    return Path.home() / f".phileas-{profile}"
+
+
 @dataclass
 class PhileasConfig:
     """Top-level Phileas configuration."""
 
-    home: Path = field(default_factory=lambda: _DEFAULT_HOME)
+    home: Path = field(default_factory=lambda: resolve_home())
     profile: str = DEFAULT_PROFILE
     sync: SyncConfig = field(default_factory=SyncConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
 
     # -- Derived paths --
 
@@ -173,13 +231,17 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place.
 
-    The ``[sync]`` and ``[health]`` sections are configurable; every other
-    section (including retired ones like ``[recall]``) is silently ignored.
+    The ``[sync]``, ``[health]``, and ``[llm]`` sections are configurable; every
+    other section (including retired ones like ``[recall]``) is silently ignored.
+    A nested table inside a section (such as a stale ``[llm.operations]``) is an
+    unknown key on the dataclass and is dropped along with it.
     """
     if "sync" in data:
         _apply_toml_section(cfg.sync, data["sync"])
     if "health" in data:
         _apply_toml_section(cfg.health, data["health"])
+    if "llm" in data:
+        _apply_toml_section(cfg.llm, data["llm"])
 
 
 def resolve_profile(profile: str | None = None) -> str:
@@ -200,16 +262,25 @@ def resolve_home(profile: str | None = None) -> Path:
     Precedence (first match wins):
       1. ``PHILEAS_HOME`` — used verbatim, the low-level override that pins the
          directory regardless of profile.
-      2. The profile (arg, else ``PHILEAS_PROFILE``, else ``default``): the
-         ``default`` profile maps to ``~/.phileas`` so an existing store needs no
-         migration; any other name ``<p>`` maps to the sibling ``~/.phileas-<p>``.
+      2. The XDG home ``~/.config/phileas/profiles/<profile>`` when it exists.
+      3. The pre-XDG home (``~/.phileas`` for the default profile, the sibling
+         ``~/.phileas-<p>`` otherwise) when it exists, so an existing store keeps
+         working until it is moved.
+      4. The XDG home — a fresh install lands in the new layout.
+
+    The profile comes from ``profile`` (arg), else ``PHILEAS_PROFILE``, else
+    ``default``.
     """
     if env_home := os.environ.get("PHILEAS_HOME"):
         return Path(env_home)
     name = resolve_profile(profile)
-    if name == DEFAULT_PROFILE:
-        return Path.home() / ".phileas"
-    return Path.home() / f".phileas-{name}"
+    xdg_home = _profiles_root() / name
+    if xdg_home.exists():
+        return xdg_home
+    legacy = _legacy_home(name)
+    if legacy.exists():
+        return legacy
+    return xdg_home
 
 
 def _find_project_config(start: Path | None = None) -> Path | None:

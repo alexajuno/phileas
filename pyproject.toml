@@ -37,6 +37,9 @@ phileas = "phileas.cli:app"
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers"]
+# Internal extraction LLM (the observer capture path). Off unless [llm] is
+# enabled with a key present, so the SDK stays an opt-in install.
+extraction = ["anthropic"]
 
 [dependency-groups]
 dev = [
