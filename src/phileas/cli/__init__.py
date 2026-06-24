@@ -2,7 +2,7 @@
 
 Usage:
     phileas status
-    phileas remember "I like Python"
+    phileas memorize "I like Python"
     phileas recall "what languages"
 """
 
@@ -24,9 +24,9 @@ from phileas.cli.commands import (
     init_cmd,
     list_cmd,
     list_day,
+    memorize,
     recall,
     recall_recent,
-    remember,
     resolve_cmd,
     retry_events,
     scope_cmd,
@@ -76,7 +76,7 @@ def app(profile: str | None):
 
 app.add_command(status)
 app.add_command(health)
-app.add_command(remember)
+app.add_command(memorize)
 app.add_command(recall)
 app.add_command(recall_recent)
 app.add_command(timeline)

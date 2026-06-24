@@ -142,7 +142,7 @@ def health(notify: bool, as_json: bool):
 
 
 # ------------------------------------------------------------------
-# remember
+# memorize
 # ------------------------------------------------------------------
 
 
@@ -154,7 +154,7 @@ def health(notify: bool, as_json: bool):
     default="knowledge",
     help="Memory type (profile, event, knowledge, behavior, reflection).",
 )
-def remember(text: str, memory_type: str):
+def memorize(text: str, memory_type: str):
     """Store a memory.
 
     \b
