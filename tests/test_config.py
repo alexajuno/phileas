@@ -14,9 +14,14 @@ from phileas.config import (
     DEFAULT_PROFILE,
     LLMConfig,
     _find_project_config,
+    active_profile_path,
+    cli_default_profile,
+    discover_profiles,
     load_config,
+    read_active_profile,
     resolve_home,
     resolve_profile,
+    write_active_profile,
 )
 
 
@@ -405,3 +410,79 @@ def marker_outside_tmp_path(result: Path, tmp_path: Path) -> bool:
     except ValueError:
         return True
     return False
+
+
+# ------------------------------------------------------------------
+# Active profile marker (CLI default)
+# ------------------------------------------------------------------
+
+
+class TestActiveProfileMarker:
+    """``phileas profile use`` records an active profile that flag-less CLI
+    commands fall back to. The marker lives beside the profiles root and never
+    touches ``resolve_profile``/``resolve_home`` directly.
+    """
+
+    def test_marker_path_under_xdg(self, _isolate_home):
+        assert active_profile_path() == _isolate_home / ".config" / "phileas" / "active"
+
+    def test_read_missing_is_none(self, _isolate_home):
+        assert read_active_profile() is None
+
+    def test_write_then_read_roundtrips(self, _isolate_home):
+        path = write_active_profile("dev")
+        assert path == active_profile_path()
+        assert read_active_profile() == "dev"
+
+    def test_write_rejects_bad_name(self, _isolate_home):
+        with pytest.raises(ValueError):
+            write_active_profile("bad/name")
+
+    @pytest.mark.parametrize("contents", ["", "   \n", "bad/name", "with space"])
+    def test_blank_or_invalid_marker_reads_none(self, _isolate_home, contents):
+        path = active_profile_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+        assert read_active_profile() is None
+
+
+class TestCliDefaultProfile:
+    """The gating that layers the marker in at the CLI boundary, and only there."""
+
+    def test_marker_applies_for_a_normal_subcommand(self, _isolate_home):
+        write_active_profile("dev")
+        assert cli_default_profile("status") == "dev"
+
+    def test_no_marker_is_none(self, _isolate_home):
+        assert cli_default_profile("status") is None
+
+    def test_serve_is_exempt(self, _isolate_home):
+        write_active_profile("dev")
+        assert cli_default_profile("serve") is None
+
+    def test_explicit_env_wins_over_marker(self, _isolate_home, monkeypatch):
+        write_active_profile("dev")
+        monkeypatch.setenv("PHILEAS_PROFILE", "work")
+        assert cli_default_profile("status") is None
+
+
+class TestDiscoverProfiles:
+    """``discover_profiles`` enumerates both layouts; XDG wins on a name clash."""
+
+    def test_default_always_present(self, _isolate_home):
+        names = [name for name, _ in discover_profiles()]
+        assert names == [DEFAULT_PROFILE]
+
+    def test_lists_xdg_and_legacy(self, _isolate_home):
+        (_xdg_home(_isolate_home, "dev")).mkdir(parents=True)
+        (_isolate_home / ".phileas-work").mkdir()
+        found = dict(discover_profiles())
+        assert found["dev"] == _xdg_home(_isolate_home, "dev")
+        assert found["work"] == _isolate_home / ".phileas-work"
+        assert DEFAULT_PROFILE in found
+
+    def test_xdg_wins_over_legacy_on_clash(self, _isolate_home):
+        (_isolate_home / ".phileas-dev").mkdir()
+        xdg_dev = _xdg_home(_isolate_home, "dev")
+        xdg_dev.mkdir(parents=True)
+        assert dict(discover_profiles())["dev"] == xdg_dev

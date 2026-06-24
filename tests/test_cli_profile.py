@@ -8,6 +8,8 @@ another.
 
 from __future__ import annotations
 
+import json
+
 import click
 import pytest
 from click.testing import CliRunner
@@ -63,3 +65,99 @@ def test_invalid_profile_rejected_cleanly():
     result = _run(["--profile", "bad/name", "_whereami_test"])
     assert result.exit_code == 2
     assert "invalid profile" in result.output
+
+
+# ------------------------------------------------------------------
+# Active profile marker: `phileas profile use` / `list`
+# ------------------------------------------------------------------
+
+
+def test_use_sets_active_profile_for_flagless_commands():
+    assert _run(["profile", "use", "dev"]).exit_code == 0
+    result = _run(["_whereami_test"])
+    profile, home = result.output.strip().split("\t")
+    assert profile == "dev"
+    assert home.endswith("/.config/phileas/profiles/dev")
+
+
+def test_flag_overrides_active_marker():
+    _run(["profile", "use", "dev"])
+    result = _run(["--profile", "work", "_whereami_test"])
+    assert result.output.strip().split("\t")[0] == "work"
+
+
+def test_env_overrides_active_marker():
+    _run(["profile", "use", "dev"])
+    result = CliRunner().invoke(app, ["_whereami_test"], env={"PHILEAS_PROFILE": "work", "PHILEAS_HOME": None})
+    assert result.output.strip().split("\t")[0] == "work"
+
+
+def test_profile_list_runs_and_shows_active():
+    _run(["profile", "use", "dev"])
+    result = _run(["profile", "list"])
+    assert result.exit_code == 0
+    assert "dev" in result.output
+
+
+# ------------------------------------------------------------------
+# Per-project pin: `phileas profile pin` / `unpin`
+# ------------------------------------------------------------------
+
+
+def _no_claude(monkeypatch):
+    """Force the no-`claude`-on-PATH path so pins go through the .mcp.json writer."""
+    monkeypatch.setattr("phileas.cli.profile._claude_cli", lambda: None)
+
+
+def test_pin_project_scope_writes_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _no_claude(monkeypatch)
+    result = _run(["profile", "pin", "dev", "--scope", "project"])
+    assert result.exit_code == 0
+    entry = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]["phileas"]
+    assert entry["env"]["PHILEAS_PROFILE"] == "dev"
+    assert entry["type"] == "stdio"
+
+
+def test_pin_preserves_other_servers(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _no_claude(monkeypatch)
+    (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
+    _run(["profile", "pin", "dev", "--scope", "project"])
+    servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
+    assert servers["other"] == {"command": "x"}
+    assert servers["phileas"]["env"]["PHILEAS_PROFILE"] == "dev"
+
+
+def test_pin_local_scope_without_claude_errors(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _no_claude(monkeypatch)
+    result = _run(["profile", "pin", "dev"])  # default scope is local
+    assert result.exit_code != 0
+    assert "claude" in result.output.lower()
+    assert not (tmp_path / ".mcp.json").exists()
+
+
+def test_pin_rejects_bad_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _no_claude(monkeypatch)
+    result = _run(["profile", "pin", "bad/name", "--scope", "project"])
+    assert result.exit_code == 2
+    assert "invalid profile" in result.output
+
+
+def test_unpin_project_scope_removes_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _no_claude(monkeypatch)
+    _run(["profile", "pin", "dev", "--scope", "project"])
+    result = _run(["profile", "unpin", "--scope", "project"])
+    assert result.exit_code == 0
+    assert "phileas" not in json.loads((tmp_path / ".mcp.json").read_text()).get("mcpServers", {})
+
+
+def test_unpin_when_nothing_pinned_is_graceful(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _no_claude(monkeypatch)
+    result = _run(["profile", "unpin", "--scope", "project"])
+    assert result.exit_code == 0
+    assert "No profile pin" in result.output
