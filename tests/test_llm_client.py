@@ -122,11 +122,11 @@ def _message(text="ok", input_tokens=10, output_tokens=20):
 
 class TestAvailability:
     def test_unavailable_without_enable(self, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         assert LLMClient(LLMConfig()).available is False
 
     def test_available_with_enable_and_key(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         assert LLMClient(LLMConfig(enabled=True)).available is True
 
 

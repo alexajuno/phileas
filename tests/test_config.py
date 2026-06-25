@@ -349,15 +349,15 @@ class TestLLMConfig:
         assert cfg.llm.enabled is False
         assert cfg.llm.provider == "anthropic"
         assert cfg.llm.model == "claude-haiku-4-5-20251001"
-        assert cfg.llm.api_key_env == "ANTHROPIC_API_KEY"
+        assert cfg.llm.api_key_env == "PHILEAS_ANTHROPIC_API_KEY"
 
     def test_available_requires_enabled_and_key(self, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         cfg = LLMConfig()
         assert cfg.available is False
         cfg.enabled = True
         assert cfg.available is False  # enabled but no key
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         assert cfg.available is True
 
     def test_available_honors_custom_key_env(self, monkeypatch):
