@@ -23,7 +23,7 @@ from phileas.cli.formatter import (
     print_warning,
 )
 from phileas.config import load_config
-from phileas.db import UNKNOWN_EVENT_ID, Database
+from phileas.db import Database, clean_source_event_id
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
 from phileas.models import MemoryItem
@@ -80,14 +80,13 @@ def _as_utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
-def _is_extracted(item: MemoryItem) -> bool:
-    """True when a memory was distilled from an ingested turn.
+def _is_sourced(item: MemoryItem) -> bool:
+    """True when a memory traces to a captured turn (a real source event).
 
-    A real ``source_event_id`` points at the turn it came from; the
-    ``UNKNOWN_EVENT_ID`` sentinel (the column default) marks a memory written
-    directly, with no originating turn.
+    A NULL ``source_event_id`` means no single source: a reflection or rollup
+    derived from other memories, or a legacy row from before turns were tracked.
     """
-    return bool(item.source_event_id) and item.source_event_id != UNKNOWN_EVENT_ID
+    return clean_source_event_id(item.source_event_id) is not None
 
 
 def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
@@ -496,10 +495,10 @@ def update_cmd(memory_id: str, summary: str):
 @click.option(
     "--source",
     "source_filter",
-    type=click.Choice(["all", "extracted", "manual"]),
+    type=click.Choice(["all", "sourced", "unsourced"]),
     default="all",
     show_default=True,
-    help="extracted = distilled from an ingested turn; manual = written directly.",
+    help="sourced = traces to a captured turn; unsourced = derived or legacy (no source turn).",
 )
 @click.option(
     "--since",
@@ -522,7 +521,7 @@ def list_cmd(
     Examples:
       phileas list                      # 20 most recent active memories
       phileas list --since 24h          # everything from the last day
-      phileas list --source extracted   # only memories distilled from ingested turns
+      phileas list --source sourced     # only memories that trace to a captured turn
       phileas list --type reflection -n 50
       phileas list --status all --json  # every memory, machine-readable
     """
@@ -532,10 +531,10 @@ def list_cmd(
 
         if memory_type:
             items = [item for item in items if item.memory_type == memory_type]
-        if source_filter == "extracted":
-            items = [item for item in items if _is_extracted(item)]
-        elif source_filter == "manual":
-            items = [item for item in items if not _is_extracted(item)]
+        if source_filter == "sourced":
+            items = [item for item in items if _is_sourced(item)]
+        elif source_filter == "unsourced":
+            items = [item for item in items if not _is_sourced(item)]
         if since:
             cutoff = _since_cutoff(since)
             items = [item for item in items if item.created_at and _as_utc(item.created_at) >= cutoff]
@@ -550,7 +549,7 @@ def list_cmd(
                     "id": item.id,
                     "type": item.memory_type,
                     "status": item.status,
-                    "source": "extracted" if _is_extracted(item) else "manual",
+                    "source": "sourced" if _is_sourced(item) else "unsourced",
                     "source_event_id": item.source_event_id,
                     "created_at": item.created_at.isoformat() if item.created_at else None,
                     "summary": item.summary,
@@ -566,7 +565,7 @@ def list_cmd(
                 "created": item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "",
                 "type": item.memory_type,
                 "status": item.status,
-                "source": "extracted" if _is_extracted(item) else "manual",
+                "source": "sourced" if _is_sourced(item) else "unsourced",
                 "summary": item.summary,
             }
             for item in items

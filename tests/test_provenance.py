@@ -1,9 +1,11 @@
-"""Provenance contract: a memory must reference a real source event.
+"""Provenance contract: a memory's source event, when given, must be real.
 
-The capture stall that motivated this hid for two weeks because nothing required
-a memory to name where it came from. These tests pin the enforced contract at the
-MCP tool boundary: `memorize` / `memorize_batch` refuse a missing or unknown
-`source_event_id`, and `ingest_text` is the step that mints one.
+A memory either traces to one captured turn (a real ``source_event_id``) or has
+no single source — a reflection or rollup derived from other memories, or a
+legacy row from before turns were tracked — which is stored as NULL. These tests
+pin that at the MCP tool boundary (`memorize` / `memorize_batch` reject a
+*fabricated* id but accept none) and at the storage layer (the legacy 'unknown'
+sentinel collapses to NULL, and an old store migrates in place).
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ from types import SimpleNamespace
 import pytest
 
 from phileas import tool_runner
+from phileas.db import Database, clean_source_event_id
+from phileas.models import MemoryItem
 
 
 @pytest.fixture
@@ -27,7 +31,6 @@ def srv(tmp_dir, monkeypatch):
     monkeypatch.setenv("PHILEAS_HOME", str(tmp_dir))
 
     from phileas.config import load_config
-    from phileas.db import Database
     from phileas.engine import MemoryEngine
     from phileas.graph import GraphStore
     from phileas.vector import VectorStore
@@ -46,7 +49,7 @@ def srv(tmp_dir, monkeypatch):
         ingest_text=lambda text, thread_id=None, source_kind="agent": tool_runner.ingest_text(
             eng, ef, text=text, thread_id=thread_id, source_kind=source_kind
         ),
-        memorize=lambda summary, source_event_id, **kw: tool_runner.memorize(
+        memorize=lambda summary, source_event_id=None, **kw: tool_runner.memorize(
             eng, ef, summary=summary, source_event_id=source_event_id, **kw
         ),
         memorize_batch=lambda memories, source_event_id=None: tool_runner.memorize_batch(
@@ -71,22 +74,25 @@ def test_ingest_text_rejects_empty(srv):
         srv.ingest_text("   ")
 
 
-def test_ingest_text_records_source_kind(srv):
-    out = srv.ingest_text("a captured turn", source_kind="claude_code")
-    assert srv.db.get_event(out["event_id"]).source_kind == "claude_code"
+# -- memorize: a given source must be real, a missing one is allowed ---------
 
 
-# -- memorize: the contract --------------------------------------------------
-
-
-def test_memorize_rejects_missing_source(srv):
-    with pytest.raises(ValueError):
-        srv.memorize(summary="naked memory", source_event_id="")
-
-
-def test_memorize_rejects_unknown_event(srv):
+def test_memorize_rejects_fabricated_event(srv):
     with pytest.raises(ValueError):
         srv.memorize(summary="memory citing a fabricated id", source_event_id="does-not-exist")
+
+
+def test_memorize_allows_missing_source(srv):
+    # A derived memory (no single source turn) is stored NULL-sourced, not refused.
+    out = srv.memorize(summary="a reflection drawn across several memories")
+    assert out.startswith("Stored")
+
+
+def test_memorize_unknown_sentinel_stored_as_null(srv):
+    # The legacy 'unknown' string is not a real source; it collapses to NULL.
+    srv.memorize(summary="legacy-style write", source_event_id="unknown")
+    item = next(i for i in srv.db.get_active_items() if i.summary == "legacy-style write")
+    assert item.source_event_id is None
 
 
 def test_memorize_happy_path_threads_back(srv):
@@ -113,8 +119,28 @@ def test_memorize_batch_shares_one_source(srv):
     assert len(srv.db.get_memories_for_event(event_id)) == 2
 
 
-def test_memorize_batch_rejects_when_any_item_lacks_source(srv):
-    # No batch-level source and no per-item source → whole batch refused,
-    # before any write lands.
-    with pytest.raises(ValueError):
-        srv.memorize_batch(memories=[{"summary": "no source here"}])
+def test_memorize_batch_allows_missing_source(srv):
+    # No batch-level source and no per-item source → all items are NULL-sourced.
+    out = srv.memorize_batch(memories=[{"summary": "derived one"}, {"summary": "derived two"}])
+    assert "Batch complete (2 items)" in out
+
+
+# -- storage layer: the sentinel collapses to NULL ---------------------------
+
+
+def test_clean_source_event_id_collapses_sentinel_and_empty():
+    assert clean_source_event_id("unknown") is None
+    assert clean_source_event_id("") is None
+    assert clean_source_event_id("   ") is None
+    assert clean_source_event_id(None) is None
+    assert clean_source_event_id("evt-123") == "evt-123"
+
+
+def test_save_item_stores_null_for_sourceless(tmp_dir):
+    db = Database(path=tmp_dir / "s.db")
+    db.save_item(MemoryItem(id="a", summary="no source", source_event_id=None))
+    db.save_item(MemoryItem(id="b", summary="sentinel", source_event_id="unknown"))
+    db.save_item(MemoryItem(id="c", summary="real", source_event_id="evt-9"))
+    assert db.get_item("a").source_event_id is None
+    assert db.get_item("b").source_event_id is None
+    assert db.get_item("c").source_event_id == "evt-9"

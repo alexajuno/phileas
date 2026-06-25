@@ -23,6 +23,7 @@ from datetime import timedelta
 from typing import Callable
 
 from phileas import recent
+from phileas.db import clean_source_event_id
 from phileas.recall_format import (
     ABOUT_MAX,
     POINTER_SUMMARY_CHARS,
@@ -378,22 +379,20 @@ RECONCILE_MAX_PAIRS = 40
 TOOL_WRITE_NAMES = frozenset({"memorize", "memorize_batch", "forget", "update", "resolve_contradiction"})
 
 
-def _validated_event_id(engine, source_event_id: str | None) -> str:
-    """Enforce the provenance contract: every memory references a real event.
+def _resolve_event_id(engine, source_event_id: str | None) -> str | None:
+    """Resolve a memory's provenance to a real event id, or None.
 
-    Returns the cleaned id, or raises ValueError pointing at ingest_text — the
-    capture step that mints the id. This is where a naked memorize is refused.
+    A supplied id must reference a captured turn, else this raises pointing at
+    ingest_text — the capture step that mints the id — so a typo or hallucinated
+    id is refused. Omitting it resolves to None: a memory with no single source,
+    such as a reflection or rollup derived from other memories.
     """
-    sid = (source_event_id or "").strip()
-    if not sid:
-        raise ValueError(
-            "source_event_id is required. Call ingest_text(text=<verbatim source>) "
-            "first, then pass the returned event_id here."
-        )
-    if engine.db.get_event(sid) is None:
+    sid = clean_source_event_id(source_event_id)
+    if sid is not None and engine.db.get_event(sid) is None:
         raise ValueError(
             f"source_event_id {sid!r} does not exist. Capture the source with "
-            "ingest_text(...) and pass the event_id it returns."
+            "ingest_text(...) and pass the event_id it returns, or omit it for a "
+            "memory derived from other memories."
         )
     return sid
 
@@ -464,7 +463,7 @@ def memorize(
     entities_fn: EntitiesFn,
     *,
     summary: str,
-    source_event_id: str,
+    source_event_id: str | None = None,
     memory_type: str = "knowledge",
     daily_ref: str | None = None,
     entities: list | str | None = None,
@@ -472,7 +471,7 @@ def memorize(
     contexts: list | str | None = None,
     child_ids: list | str | None = None,
 ) -> str:
-    source_event_id = _validated_event_id(engine, source_event_id)
+    source_event_id = _resolve_event_id(engine, source_event_id)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
     parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
@@ -515,7 +514,7 @@ def memorize_batch(
     validated: dict[int, str] = {}
     for i, mem in enumerate(items):
         if mem.get("summary"):
-            validated[i] = _validated_event_id(engine, mem.get("source_event_id") or source_event_id)
+            validated[i] = _resolve_event_id(engine, mem.get("source_event_id") or source_event_id)
 
     results = []
     for i, mem in enumerate(items):

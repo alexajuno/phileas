@@ -79,9 +79,9 @@ def print_memory_list(rows: list[dict], title: str = "Memories", show_status: bo
     """Render memories for browsing: created date, type, source, and summary.
 
     Each row carries ``id``, ``created``, ``type``, ``status``, ``summary``, and
-    ``source`` — ``"extracted"`` for a memory distilled from an ingested turn,
-    ``"manual"`` for one written directly. The status column appears only when
-    the listing mixes in archived memories.
+    ``source``: ``"sourced"`` for a memory that traces to a captured turn,
+    ``"unsourced"`` for one derived from other memories or a legacy row. The
+    status column appears only when the listing mixes in archived memories.
     """
     if not rows:
         console.print("[dim]No memories found.[/dim]")
@@ -97,7 +97,7 @@ def print_memory_list(rows: list[dict], title: str = "Memories", show_status: bo
     table.add_column("Summary")
 
     for row in rows:
-        src = "[green]turn[/green]" if row.get("source") == "extracted" else "[dim]manual[/dim]"
+        src = "[green]turn[/green]" if row.get("source") == "sourced" else "[dim]—[/dim]"
         cells = [row["id"][:8], row.get("created", ""), row.get("type", "")]
         if show_status:
             status = row.get("status", "")

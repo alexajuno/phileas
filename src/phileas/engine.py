@@ -17,7 +17,7 @@ from typing import cast, get_args
 
 from phileas import contradiction
 from phileas.config import PhileasConfig, load_config
-from phileas.db import Database
+from phileas.db import Database, clean_source_event_id
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
 from phileas.graph import GraphStore
 from phileas.logging import get_logger, op_extra, timed_op
@@ -586,6 +586,18 @@ class MemoryEngine:
             relationship_count=len(relationships or []),
             context_count=len(contexts or []),
         )
+
+        # Provenance: a supplied source must reference a real captured turn, so a
+        # typo or hallucinated id can't slip in. A memory with no single source —
+        # a reflection or rollup derived from other memories, or a legacy write —
+        # is NULL-sourced, which is allowed.
+        source_event_id = clean_source_event_id(source_event_id)
+        if source_event_id is not None and self.db.get_event(source_event_id) is None:
+            raise ValueError(
+                f"source_event_id {source_event_id!r} does not reference a captured turn. "
+                "Capture the source with ingest_text(...) and use the id it returns, "
+                "or omit it for a memory derived from other memories."
+            )
 
         # 1. Default daily_ref to today
         if daily_ref is None:

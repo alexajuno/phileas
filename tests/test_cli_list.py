@@ -3,8 +3,8 @@
 Each case seeds an isolated store (HOME pinned by the autouse fixture, so the
 profile resolves under a fresh XDG home) with a handful of memories that differ
 in type, status, recency, and origin, then drives the CLI through ``CliRunner``.
-The origin split keys off ``source_event_id``: a real id is an extracted memory,
-the ``UNKNOWN_EVENT_ID`` sentinel is a manual one.
+The origin split keys off ``source_event_id``: a real id is a sourced memory, a
+NULL one is unsourced (derived from other memories, or legacy).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from click.testing import CliRunner
 
 from phileas.cli import app
 from phileas.config import load_config
-from phileas.db import UNKNOWN_EVENT_ID, Database
+from phileas.db import Database
 from phileas.models import MemoryItem
 
 _ISOLATE = {"PHILEAS_PROFILE": None, "PHILEAS_HOME": None}
@@ -44,7 +44,7 @@ def _seed():
     db = Database(path=cfg.db_path)
     db.save_item(
         MemoryItem(
-            summary="alpha recent extracted",
+            summary="alpha recent sourced",
             memory_type="event",
             status="active",
             source_event_id="evt-real-1",
@@ -53,16 +53,16 @@ def _seed():
     )
     db.save_item(
         MemoryItem(
-            summary="bravo recent manual",
+            summary="bravo recent unsourced",
             memory_type="profile",
             status="active",
-            source_event_id=UNKNOWN_EVENT_ID,
+            source_event_id=None,
             created_at=_NOW - timedelta(minutes=1),
         )
     )
     db.save_item(
         MemoryItem(
-            summary="charlie old extracted",
+            summary="charlie old sourced",
             memory_type="knowledge",
             status="active",
             source_event_id="evt-real-2",
@@ -74,7 +74,7 @@ def _seed():
             summary="delta archived",
             memory_type="reflection",
             status="archived",
-            source_event_id=UNKNOWN_EVENT_ID,
+            source_event_id=None,
             created_at=_NOW,
         )
     )
@@ -108,17 +108,17 @@ def test_type_filter():
     assert "alpha" not in result.output
 
 
-def test_source_extracted_excludes_manual():
+def test_source_sourced_excludes_unsourced():
     _seed()
-    result = _run(["list", "--source", "extracted"])
+    result = _run(["list", "--source", "sourced"])
     assert "alpha" in result.output  # real source event
     assert "charlie" in result.output
-    assert "bravo" not in result.output  # the 'unknown' sentinel is manual
+    assert "bravo" not in result.output  # NULL source is unsourced
 
 
-def test_source_manual_excludes_extracted():
+def test_source_unsourced_excludes_sourced():
     _seed()
-    result = _run(["list", "--source", "manual"])
+    result = _run(["list", "--source", "unsourced"])
     assert "bravo" in result.output
     assert "alpha" not in result.output
 
@@ -149,8 +149,8 @@ def test_json_output_shape():
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     by_summary = {row["summary"]: row for row in payload}
-    assert by_summary["alpha recent extracted"]["source"] == "extracted"
-    assert by_summary["bravo recent manual"]["source"] == "manual"
+    assert by_summary["alpha recent sourced"]["source"] == "sourced"
+    assert by_summary["bravo recent unsourced"]["source"] == "unsourced"
     assert set(payload[0]) == {
         "id",
         "type",

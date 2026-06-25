@@ -71,12 +71,27 @@ def _fts_match_query(query: str) -> str | None:
 
 DEFAULT_DB_PATH = resolve_home() / "memory.db"
 
-# Sentinel provenance ids. A memory whose source turn was never captured, or a
-# turn whose conversation was never recorded, points here, so source_event_id
-# and thread_id are never null and a thread -> event -> memory drill-down always
-# resolves to a real row. "unknown" reads as exactly that: origin not recorded.
+# Sentinel thread id. A turn whose conversation was never recorded points here,
+# so thread_id is never null and a thread -> event drill-down resolves to a row.
+# "unknown" reads as exactly that: origin not recorded.
 UNKNOWN_EVENT_ID = "unknown"
 UNKNOWN_THREAD_ID = "unknown"
+
+
+def clean_source_event_id(value: str | None) -> str | None:
+    """Normalize a memory's source-event reference for storage.
+
+    A memory either traces to one captured turn (a real event id) or has no single
+    source, which is NULL: a reflection or rollup derived from other memories, or a
+    legacy row from before turns were tracked. Empty strings and the legacy
+    ``UNKNOWN_EVENT_ID`` sentinel collapse to NULL too, so the placeholder never
+    lands on a memory's provenance again.
+    """
+    sid = (value or "").strip()
+    if not sid or sid == UNKNOWN_EVENT_ID:
+        return None
+    return sid
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_items (
@@ -87,7 +102,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
-    source_event_id TEXT NOT NULL DEFAULT 'unknown' REFERENCES events(id),
+    source_event_id TEXT REFERENCES events(id),
     storage_strength REAL NOT NULL DEFAULT 0.5,
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
@@ -141,9 +156,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     tokenize = 'unicode61'
 );
 
--- Sentinel provenance rows. Memories and turns whose real origin was never
--- captured point at these, so the NOT NULL source_event_id / thread_id always
--- resolve to a row and a thread -> event -> memory drill-down never dangles.
+-- Sentinel thread and event for turns whose conversation was never recorded: an
+-- event with an unrecorded thread points at the 'unknown' thread, so a NOT NULL
+-- thread_id always resolves to a row and a thread -> event drill-down holds.
 INSERT OR IGNORE INTO threads (id, created_at, source_kind, label)
     VALUES ('unknown', '1970-01-01T00:00:00+00:00', 'unknown', 'unknown provenance');
 INSERT OR IGNORE INTO events (id, text, received_at, source_kind, thread_id)
@@ -227,7 +242,7 @@ class Database:
                 item.storage_strength,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
-                item.source_event_id or UNKNOWN_EVENT_ID,
+                clean_source_event_id(item.source_event_id),
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
