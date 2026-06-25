@@ -16,7 +16,6 @@ from phileas.cli.formatter import (
     print_error,
     print_memories,
     print_memory_detail,
-    print_memory_stored,
     print_status,
     print_success,
     print_warning,
@@ -138,57 +137,6 @@ def health(notify: bool, as_json: bool):
         return
 
     if any(not a.ok for a in alerts):
-        raise SystemExit(1)
-
-
-# ------------------------------------------------------------------
-# memorize
-# ------------------------------------------------------------------
-
-
-@click.command()
-@click.argument("text")
-@click.option(
-    "--type",
-    "memory_type",
-    default="knowledge",
-    help="Memory type (profile, event, knowledge, behavior, reflection).",
-)
-def memorize(text: str, memory_type: str):
-    """Store a memory.
-
-    \b
-    Memory types:
-      profile     Who the user is: name, identity, core traits
-      event       Things that happened: dates, milestones, life events
-      knowledge   Facts and expertise: skills, preferences, opinions
-      behavior    Patterns and habits: workflows, communication style
-      reflection  Higher-level insights (agent-written)
-    """
-    try:
-        resp = _daemon_call(
-            "memorize",
-            {
-                "summary": text,
-                "memory_type": memory_type,
-            },
-        )
-        if resp and resp.get("ok"):
-            result = resp["result"]
-            print_memory_stored(result)
-            if result.get("contradiction"):
-                c = result["contradiction"]
-                print_warning(f"Contradiction: {c.get('explanation', '')}")
-            return
-
-        engine = _get_engine()
-        result = engine.memorize(
-            summary=text,
-            memory_type=memory_type,
-        )
-        print_memory_stored(result)
-    except Exception as exc:
-        print_error(str(exc))
         raise SystemExit(1)
 
 
@@ -573,20 +521,33 @@ def show(memory_id: str):
 
 
 @click.command()
-@click.argument("source")
-def ingest(source: str):
-    """Deprecated: daemon-side LLM extraction was removed.
+@click.argument("text")
+@click.option("--thread", "thread_id", default=None, help="Conversation thread id, to group turns together.")
+@click.option(
+    "--attribution",
+    type=click.Choice(["self", "other", "source"]),
+    default="self",
+    help="Whose words these are: self (you), other (someone or an agent), source (external material).",
+)
+def ingest(text: str, thread_id: str | None, attribution: str):
+    """Hand a turn to Phileas to remember.
 
-    To ingest text into Phileas now, use Claude Code: open a session, paste
-    the text (or reference the file), and ask the host Claude to extract
-    memories and call the Phileas `memorize` MCP tool for each.
+    Phileas captures the turn and, when extraction is enabled, distills durable
+    memories from it on its own. Read them back with `phileas recall`.
     """
-    _ = source  # preserved for CLI signature compat
-    print_error(
-        "phileas ingest is deprecated. Daemon no longer calls an LLM. "
-        "Use Claude Code + the `memorize` MCP tool to extract memories."
-    )
-    raise SystemExit(2)
+    try:
+        resp = _daemon_call("ingest", {"text": text, "thread_id": thread_id, "attribution": attribution})
+        if resp and resp.get("ok"):
+            result = resp["result"]
+            print_success(
+                f"Ingested event {result.get('event_id', '')[:8]} (thread {result.get('thread_id', '')[:8]})."
+            )
+            return
+        print_error("Phileas daemon is not reachable. Start it with `phileas start`.")
+        raise SystemExit(1)
+    except Exception as exc:
+        print_error(str(exc))
+        raise SystemExit(1)
 
 
 # ------------------------------------------------------------------

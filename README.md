@@ -28,7 +28,7 @@ The MCP server is launched by its full path, so Claude Code finds it whether or 
 
 ### First run
 
-The first run downloads two models from [Hugging Face](https://huggingface.co/) that then run locally: an embedding model (`all-MiniLM-L6-v2`) and a reranker (`ms-marco-MiniLM-L-6-v2`), about 150 MB together. They are cached after the first download, so later runs work offline. No external LLM API key is needed: your MCP client's model does the reasoning, while embedding and reranking run on your machine.
+The first run downloads three models from [Hugging Face](https://huggingface.co/) that then run locally: an embedding model (`all-MiniLM-L6-v2`), a reranker (`ms-marco-MiniLM-L-6-v2`), and an NLI model (`nli-deberta-v3-small`) for contradiction detection, about 300 MB together. They are cached after the first download, so later runs work offline. No API key is needed for recall: the three models run locally on your machine. Capture streams turns to Phileas with `ingest`; with a configured Anthropic key Phileas distills them into memories itself (off by default, so a keyless install still captures and recalls the raw turns).
 
 ## Connect other MCP clients
 

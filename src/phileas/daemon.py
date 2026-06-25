@@ -15,6 +15,7 @@ import os
 import signal
 import socket
 from collections import deque
+from typing import TYPE_CHECKING
 
 from phileas import api, tool_runner
 from phileas.config import PhileasConfig, load_config
@@ -34,6 +35,9 @@ from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
 from phileas.vector import VectorStore
 
+if TYPE_CHECKING:
+    from phileas.extraction_worker import ExtractionWorker
+
 log = logging.getLogger("phileas.daemon")
 
 # Module-level reinforcement queue, initialized by start()
@@ -41,6 +45,9 @@ _reinforce_queue: deque[dict] | None = None
 
 # Push-on-write trigger, initialized by start() when sync.push_on_write is set.
 _sync_pusher: SyncPusher | None = None
+
+# Observer extraction worker, initialized by start() when llm.enabled.
+_extraction_worker: ExtractionWorker | None = None
 
 # Dispatch methods that mutate the canonical (synced) store and should arm a
 # push. Events ride along incrementally on the next push, and the derived graph
@@ -511,10 +518,30 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     elif config.sync.subscribe and not os.environ.get("PHILEAS_SYNC_TOKEN"):
         log.warning("sync.subscribe set but PHILEAS_SYNC_TOKEN missing — doorbell disabled", extra={"op": "sync"})
 
-    # Daemon-side LLM extraction was removed during the agent-driven
-    # migration. Events land in the `events` table; memories are extracted
-    # in-turn by the host Claude Code session via the Stop hook's
-    # <phileas-memorize-hint>.
+    # -- Observer extraction worker (background thread) -------------------
+    # Distills ingested turns into memories with Phileas's own key, on a
+    # debounced per-thread window. Started only when extraction is enabled, so a
+    # default install is unaffected; a keyless-but-enabled box leaves turns
+    # pending and visible rather than losing them.
+    global _extraction_worker
+    _extraction_worker = None
+    if config.llm.enabled:
+        from phileas.extraction_worker import ExtractionWorker
+        from phileas.llm import LLMClient
+
+        client = LLMClient(config.llm, usage_tracker=engine._usage_tracker)
+        _extraction_worker = ExtractionWorker(
+            engine,
+            client,
+            debounce_s=config.llm.extract_debounce_seconds,
+            max_buffer_s=config.llm.extract_max_buffer_seconds,
+        )
+        _extraction_worker.seed()
+        _extraction_worker.start()
+        log.info(
+            "extraction worker started",
+            extra={"op": "extraction", "data": {"model": config.llm.model, "available": client.available}},
+        )
 
     # Run uvicorn on a worker thread; the main thread parks on stop_event so it
     # can tear down safely after SIGTERM/SIGINT. uvicorn skips installing its
@@ -633,18 +660,27 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
 
         return import_bundle(engine, params["bundle"])
     elif method == "ingest":
-        # Store the raw turn as an event in its conversation thread. No LLM call here.
+        # Store the raw turn as an event in its conversation thread, then notify the
+        # extraction worker. Marked "pending" only when extraction is enabled, so a
+        # disabled install behaves as before; the worker distills the window later.
         text = params.get("text", "")
         if not text:
             return {"queued": False, "reason": "empty text"}
         from phileas.models import Event
 
+        attribution = params.get("attribution")
+        if attribution not in ("self", "other", "source"):
+            attribution = None
         event = Event(
             text=text,
             source_kind=params.get("source_kind", "claude_code"),
             thread_id=params.get("thread_id"),
+            attribution=attribution,
+            extraction_status="pending" if engine.config.llm.enabled else "extracted",
         )
         engine.save_event(event)
+        if _extraction_worker is not None:
+            _extraction_worker.notify(event.thread_id)
         return {"queued": True, "event_id": event.id, "thread_id": event.thread_id}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy

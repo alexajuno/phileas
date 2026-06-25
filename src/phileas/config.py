@@ -130,7 +130,10 @@ class LLMConfig:
     default; turn it on by setting ``enabled`` and making a key reachable. The
     key itself never lives in config: it is read at call time from the env var
     named by ``api_key_env``, the same way the sync and API bearer secrets stay
-    out of a committed ``config.toml``. ``available`` is the runtime gate the
+    out of a committed ``config.toml``. The default var is namespaced
+    (``PHILEAS_ANTHROPIC_API_KEY``), not the generic ``ANTHROPIC_API_KEY``, so it
+    never collides with the host Claude Code's own credential, which takes
+    precedence over a Pro/Max subscription. ``available`` is the runtime gate the
     daemon checks before each call, so a keyless install simply leaves ingested
     turns unextracted (and visible as pending) rather than failing a write.
 
@@ -143,7 +146,7 @@ class LLMConfig:
     enabled: bool = False
     provider: str = "anthropic"
     model: str = "claude-haiku-4-5-20251001"
-    api_key_env: str = "ANTHROPIC_API_KEY"
+    api_key_env: str = "PHILEAS_ANTHROPIC_API_KEY"
     max_tokens: int = 2048
     extract_debounce_seconds: float = 8.0
     extract_max_buffer_seconds: float = 120.0

@@ -1,6 +1,6 @@
 ---
 name: phileas
-description: Phileas long-term companion memory. Recall past context BEFORE answering when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". Memorize new facts when the user shares personal info, makes decisions, expresses preferences, discusses life events, or makes an explicit memory request.
+description: Phileas long-term companion memory. Recall past context BEFORE answering when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". Stream conversation turns to Phileas with `ingest`; it distills durable memories from them itself.
 ---
 
 # Phileas — Companion Memory
@@ -57,145 +57,29 @@ Name a recalled memory explicitly only when it earns it:
 
 Otherwise hold it. Never lead with "Based on my memory…", and never list what you know about someone as a preamble. Work the knowledge in silently and surface it only when it's load-bearing.
 
-## Memorize — store new facts
+## Capture — stream turns to Phileas
 
-Inline `memorize` (and `memorize_batch` for multiple facts from one turn).
+You do not decide what to remember. Hand conversation turns to Phileas with `ingest`, and it watches from the outside and distills durable memories from them on its own, with its own model. There is no `memorize` step to run, and no judgment call about what is worth keeping; that is Phileas's job now.
 
-### Writes are three steps — open a thread, capture the turn, then memorize
+### How to ingest
 
-A memory points back at the raw turn it was distilled from, and that turn belongs to a conversation thread. So:
+- `ingest(content=<the turn, verbatim>, attribution=<self|other|source>)` captures the turn and extracts from it in the background.
+- `attribution` is whose words the turn is, from the user's standpoint:
+  - `self` — the user's own words (the default).
+  - `other` — someone, or an agent, the user is talking with.
+  - `source` — external material the user brought in (a pasted article, a quoted passage).
+- To keep a conversation's turns together, call `start_thread(client_key="claude_code:<session_id>")` once, keep the returned `thread_id`, and pass it to every `ingest` for that conversation. The `client_key` makes it resume-safe across a compaction or `--resume`. Omit `thread_id` and the turn stands as its own one-turn thread.
 
-1. `start_thread(client_key="claude_code:<session_id>")` — **once at the start of the conversation.** It returns a `thread_id`; keep it and reuse it for every capture below. Passing the session id as `client_key` makes it resume-safe: after a context compaction or a `--resume`, calling `start_thread` again with the same key continues the same thread instead of splitting the conversation. (No session id to hand? Call it once and just reuse the returned `thread_id`.)
-2. `ingest_text(text=<the verbatim turn>, thread_id=<that thread_id>)` — stores and embeds the raw turn as an *event* in the thread, and returns its `event_id`.
-3. `memorize(summary=..., source_event_id=<that event_id>)` — records the memory, linked to the turn it came from.
+### Which turns to pipe
 
-`source_event_id` is required; a `memorize` that can't name a real event is refused. That link is what lets `thread(thread_id)` replay the conversation behind a memory, and what keeps a memory anchored to the evidence it came from.
+Pipe the turns that carry something durable about the user — personal facts, decisions and their reasons, preferences, events with a time anchor, patterns, the project archaeology that code and git won't preserve. Let pure task and code chatter pass. You are choosing which turns count as a conversation worth remembering against, not which facts become memories; Phileas decides the latter.
 
-A thread is only as complete as the turns you capture, and that's your call. Phileas hands you the calls; you decide what a conversation is worth — ingest the turns that carry something to remember under the one `thread_id` so `thread()` reads back as the conversation rather than scattered fragments, and let the rest pass. Some conversations earn a full thread, some a single pinned memory, some nothing at all. When a single turn yields several facts, call `ingest_text` once and reuse its `event_id` across each `memorize` (or as the batch-level `source_event_id` for `memorize_batch`) — don't mint a fresh event per fact from the same turn.
+Forward-prescriptive conventions ("always use snake_case", "tests live in `tests/`") are not memory — they belong in `CLAUDE.md`.
 
-`ingest_text` and `start_thread` take a `source_kind` that defaults to `"agent"` — live capture by you, the in-session model. Leave it at the default.
+### When extraction is off
 
-### What to save
+If no extraction key is configured, ingested turns are still captured and recallable verbatim; they simply wait, un-distilled, until a key is present. Nothing is lost, and you don't ingest any differently.
 
-Phileas captures what the code alone and git alone will not preserve. **Archaeology test:** will this still be useful when the code shows only the result and git shows only the diff?
+### Fixing a name
 
-- **Personal facts** the user states about themselves, people in their life, or their situation.
-- **Preferences** about tools, workflow, tone, collaboration style.
-- **Decisions** — especially ones with a stated reason ("we're going with X because Y").
-- **Project decision archaeology** — why X over Y, what was rejected, who pushed back, deadline/constraint that forced the call, alternative tried and reverted. The narrative behind the diff.
-- **Events** with a time anchor ("shipped v0.1.0 on Apr 4", "trip to Tokyo next month").
-- **Patterns** observed over time — recurring frustrations, emotional throughlines, habits.
-- **Project state** not derivable from code or git (ownership, blockers, why a design was chosen).
-
-### What NOT to save
-
-- **Forward-prescriptive conventions** ("always use snake_case", "tests live in `tests/`") — those belong in `CLAUDE.md`, which is the right home for rules. Phileas holds the *backward-narrative* archaeology, not the rulebook.
-- **How the code works** — re-readable from the repo.
-- **Git history, recent commits, who-changed-what** — `git log`/`git blame` are authoritative.
-- **Transient task state** (current in-progress step, conversation context, temp debugging notes).
-- **Anything already in `CLAUDE.md` or the repo's own docs.**
-- **Fix recipes from debugging** — the commit explains the fix; don't mirror it in memory.
-
-### Record claims as attributed data, not asserted facts
-
-A summary records *what is so*, not a verdict on *what is true*. Much of what people say is judgment, prediction, or opinion, not checkable fact. File those as attributed data: name who holds the view, when, and on what basis, and leave the truth-value open. Evidence may overturn it later.
-
-Run one test before writing each summary:
-
-- **Checkable?** ("PR #202 merged", "Giao moved to Hanoi in May") → store it plainly. It's an observation.
-- **A judgment, prediction, or opinion?** ("ImagenHub can't scale", "no one understands routing") → attribute it. A claim filed as fact has no holder; a claim filed as data names one.
-
-The move is mechanical. Give the claim a subject, a date, and its basis:
-
-- ✗ `ImagenHub can't scale standalone.`
-- ✓ `Giao judged (2026-04-08) ImagenHub can't scale standalone; basis: routing market crowded, no special moat. (truth open)`
-
-Treat inference the same way. The observation is data; the conclusion drawn from it is a held view, attributed to whoever drew it:
-
-- ✗ `Development on the AI router is stale.`
-- ✓ `Giao read the AI router as stalling, from: its last PR sat unreviewed 12 days.`
-
-Record your own reframes as yours, never as something the user asserted. And don't let conviction inflate durability: a firmly-held opinion is still one `knowledge` data point, not a `profile` or `behavior` truth; fold the conviction into the record ("Giao is certain that…") rather than promoting the claim.
-
-### Memory types
-
-Pass `memory_type` as exactly one of these five — anything else stores but won't match recall's type filter:
-
-- `profile` — who the user is: name, identity, core traits.
-- `event` — things that happened: dates, milestones, life events.
-- `knowledge` — facts, skills, stated preferences, and opinions the user holds (the default).
-- `behavior` — recurring patterns and habits: workflows, communication and collaboration style.
-- `reflection` — higher-level inferences across memories (usually generated by `reflect`).
-
-Pick the one that best matches how the memory would be recalled later. Emotional throughlines and recurring patterns fold into `behavior` or `reflection` — there is no separate `emotional`, `pattern`, `preference`, or `project` type.
-
-### Dedupe before writing
-
-Before calling `memorize`, do a quick `recall` on the core entity or topic. If a very similar memory already exists:
-
-- **Same fact, same wording** → skip.
-- **Same fact, refined or corrected** → call `update()` on the existing memory_id instead of creating a new one.
-- **Related but distinct angle** → write the new one; use `relate()` to link them.
-
-### Summary
-
-- `summary` should be one sentence, self-contained — readable without the original turn for context.
-- Pick the right `memory_type` — it seeds the memory's durability (identity-level `profile` starts deeper than a one-off `event`), and durability then grows on its own each time the memory is recalled or reinforced.
-
-### Language
-
-**Always write `summary` (and the verbatim text you pass to `ingest_text`) in English, even when the source turn is in Vietnamese or mixed language.** Translate the user's words; preserve proper nouns (people, places, projects, @mentions, brand names, and Vietnamese terms with no clean English equivalent — keep those in italics or quotes).
-
-*Why:* Phileas embeds with `all-MiniLM-L6-v2`, an English-centric model. Vietnamese-vs-Vietnamese similarity peaks around 0.40–0.49, below the 0.5 recall floor — so non-English memories store cleanly but never surface in recall.
-
-*Examples:*
-- Source: "Sếp bảo phải nộp báo cáo trước thứ 6." → Summary: "Boss said the report must be submitted before Friday."
-- Source: "Anh ấy nhắc về *tiền đen* trong ngành." → Summary: "He warned about *tiền đen* (off-the-books money) in the industry." (preserve the term, gloss it once)
-- Don't store: "user mới biết hả" — translate: "User just learned this."
-
-### Batching
-
-When a single turn yields several distinct memories, prefer `memorize_batch` over N sequential `memorize` calls — it's faster and cheaper.
-
-### Entity tagging
-
-When calling `memorize` with `entities=[...]`, only tag an entity whose presence a future `about(name=<entity>)` query would find useful. A tag says "this memory is *about* this entity," not "this entity appears in this memory."
-
-**The user-entity trap.** Nearly every memory is implicitly authored *by* the user. Tagging `Person:<user>` on every one makes `about('<user>')` return the whole activity log. Only tag the user when the memory is genuinely identity-shaped:
-
-- **Tag `Person:<user>`** on `profile`, `behavior`, and `reflection` memories — things that describe who they are, how they act, or inferences about them.
-- **Don't tag `Person:<user>`** on `event` and `knowledge` memories — the user is the implicit narrator; the tag adds noise, not signal.
-
-**Other people and entities** (colleagues, partners, projects, tools) can be tagged freely — they're not implicit narrators, so `about(them)` is a useful retrieval primitive.
-
-### Entity types — a small fixed vocabulary
-
-Pick each entity's `type` from this coarse set: `Person`, `Organization`, `Place`, `Project`, `Tool`, `Object`, `Animal`, `Activity`, `Event`, `Concept`. (`Context` exists too, but it's minted for you by context-scoping, not something you assign here.)
-
-The set is deliberately small. A `type` is a bucket the same referent should land in *every* time, not a description — the richness goes in the memory text and the optional `description`. So favour consistency over precision: if you called the hospital a `Place` once, call it `Place` again, not `Organization` the next time. Re-using the wrong-but-consistent bucket costs nothing; switching buckets splits the referent in two.
-
-**Leave the type off when the kind isn't yet clear.** A name mentioned before you can tell what it *is* — a "Jollof" that might be a person or might be the cat, an `@handle` you can't yet place — is better written with no type than a guessed one. An absent type is treated as compatible with anything and gets filled in when a later, clearer mention arrives; a wrong guess (`Person` for what turns out to be a cat) mints a second node that then has to be merged back. When in doubt, omit.
-
-### Disambiguating same-name entities
-
-Identity in the graph is an opaque uuid; `name` and `type` are attributes. The linker decides whether a new mention reuses an existing entity or mints a new one. Provide an optional `description` (one short line) on entity records when the name is potentially ambiguous — `Apple` the fruit vs. `Apple` the company, two people both named Alex, etc. Description is written once at entity creation and never overwritten, so it stays a stable disambiguator.
-
-```
-{"name": "Apple", "type": "Company", "description": "consumer electronics maker (Tim Cook era)"}
-```
-
-Skip `description` when the name is unambiguous in the user's world (their colleagues, their projects). For multi-type referents the same physical thing may carry — `Acme` is a place AND the company that owns it AND a project name — let the linker collapse them onto one uuid by tagging consistently and the migration script handles legacy splits.
-
-### Handle vs. display-name: user-declared aliases
-
-Phileas does **not** auto-pair a username-handle with a display name. Name bridges happen only three ways: diacritic/case folding (automatic and safe — `José` ↔ `Jose`), an explicit user-declared `alias`, or `merge_entities` to fold already-split nodes. The linker never guesses handle↔name pairings, because handle stems collide across *distinct* people — e.g. `samwk` (**W**ong, Sam K.) and `samrk` (**R**oss, Sam K.) share the stem `sam`, so an auto-merge would silently fuse two real people. A miss is recoverable; a wrong merge is not.
-
-So when the user refers to someone by a bare or partial name that may be ambiguous (or when `about(name)` looks like it's returning only a fragment of a person):
-
-1. `find_entities(stem)` — lists every candidate (norm-aware, so `sam` surfaces `samwk`, `samrk`, and `Sam`), with memory counts and descriptions.
-2. If more than one plausible match, **ask the user which one** — do not pick for them.
-3. Persist their answer with `alias(name=<the unambiguous handle>, alias=<what they call them>)` — e.g. the user says "call Wong's one *sam wong*" → `alias(name="samwk", alias="sam wong")`. Afterwards `about("sam wong")` and future mentions resolve to that entity.
-4. If a candidate is an orphaned fragment that genuinely belongs to another (e.g. a 1-memory `Sam` node that is the same person as `samwk`), fold it with `merge_entities` rather than aliasing.
-
-The alias is the user's convention, set explicitly — never inferred.
-
+Entity curation stays available for when the user explicitly asks to fix how someone is known: `find_entities(stem)` lists candidates, `alias(name=..., alias=...)` records a user-declared alias, and `merge_entities` folds two nodes that are the same person. Don't guess these; act on them only when the user states the convention.
