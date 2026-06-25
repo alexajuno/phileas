@@ -75,6 +75,39 @@ def print_memories(items: list[dict], title: str = "Memories") -> None:
     console.print(table)
 
 
+def print_memory_list(rows: list[dict], title: str = "Memories", show_status: bool = False) -> None:
+    """Render memories for browsing: created date, type, source, and summary.
+
+    Each row carries ``id``, ``created``, ``type``, ``status``, ``summary``, and
+    ``source`` — ``"extracted"`` for a memory distilled from an ingested turn,
+    ``"manual"`` for one written directly. The status column appears only when
+    the listing mixes in archived memories.
+    """
+    if not rows:
+        console.print("[dim]No memories found.[/dim]")
+        return
+
+    table = Table(title=title)
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Created", style="dim", no_wrap=True)
+    table.add_column("Type", style="cyan", no_wrap=True)
+    if show_status:
+        table.add_column("Status", no_wrap=True)
+    table.add_column("Src", no_wrap=True)
+    table.add_column("Summary")
+
+    for row in rows:
+        src = "[green]turn[/green]" if row.get("source") == "extracted" else "[dim]manual[/dim]"
+        cells = [row["id"][:8], row.get("created", ""), row.get("type", "")]
+        if show_status:
+            status = row.get("status", "")
+            cells.append("[yellow]archived[/yellow]" if status == "archived" else status)
+        cells.extend([src, row.get("summary", "")])
+        table.add_row(*cells)
+
+    console.print(table)
+
+
 def print_memory_detail(item: dict) -> None:
     """Print full detail for a single memory."""
     table = Table(title="Memory Detail", show_header=False)

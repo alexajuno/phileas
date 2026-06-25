@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 
 import click
 
@@ -16,14 +17,16 @@ from phileas.cli.formatter import (
     print_error,
     print_memories,
     print_memory_detail,
+    print_memory_list,
     print_status,
     print_success,
     print_warning,
 )
 from phileas.config import load_config
-from phileas.db import Database
+from phileas.db import UNKNOWN_EVENT_ID, Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
+from phileas.models import MemoryItem
 from phileas.vector import VectorStore
 
 
@@ -47,6 +50,44 @@ def _get_engine() -> MemoryEngine:
     vector = VectorStore(path=cfg.chroma_path)
     graph = GraphStore(path=cfg.graph_path)
     return MemoryEngine(db=db, vector=vector, graph=graph, config=cfg)
+
+
+def _get_db() -> Database:
+    """Open just the SQLite store, skipping model loading — for fast read-only commands."""
+    return Database(path=load_config().db_path)
+
+
+def _since_cutoff(expr: str) -> datetime:
+    """Turn a window ('24h', '7d', '4w', 'all') or a date ('2026-06-25') into a UTC cutoff."""
+    from phileas.stats.time import parse_since
+
+    try:
+        cutoff = parse_since(expr, datetime.now(timezone.utc))
+    except ValueError:
+        try:
+            cutoff = datetime.fromisoformat(expr)
+        except ValueError as exc:
+            raise click.BadParameter(
+                f"--since wants a window like 24h/7d/4w or a date like 2026-06-25, got {expr!r}"
+            ) from exc
+    if cutoff is None:  # 'all' — no lower bound
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """Read a stored timestamp as UTC, treating a legacy naive value as already-UTC."""
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def _is_extracted(item: MemoryItem) -> bool:
+    """True when a memory was distilled from an ingested turn.
+
+    A real ``source_event_id`` points at the turn it came from; the
+    ``UNKNOWN_EVENT_ID`` sentinel (the column default) marks a memory written
+    directly, with no originating turn.
+    """
+    return bool(item.source_event_id) and item.source_event_id != UNKNOWN_EVENT_ID
 
 
 def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
@@ -444,29 +485,102 @@ def update_cmd(memory_id: str, summary: str):
 
 
 @click.command("list")
-@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
-@click.option("--limit", default=20, type=int, help="Maximum items to show.")
-def list_cmd(memory_type: str | None, limit: int):
-    """Browse memories."""
-    try:
-        engine = _get_engine()
-        if memory_type:
-            items = engine.db.get_items_by_type(memory_type)
-        else:
-            items = engine.db.get_active_items()
+@click.option("--type", "memory_type", default=None, help="Filter by memory type (e.g. event, reflection).")
+@click.option(
+    "--status",
+    type=click.Choice(["active", "archived", "all"]),
+    default="active",
+    show_default=True,
+    help="Which memories to include.",
+)
+@click.option(
+    "--source",
+    "source_filter",
+    type=click.Choice(["all", "extracted", "manual"]),
+    default="all",
+    show_default=True,
+    help="extracted = distilled from an ingested turn; manual = written directly.",
+)
+@click.option(
+    "--since",
+    default=None,
+    help="Only memories created since a window (24h, 7d, 4w) or a date (2026-06-25).",
+)
+@click.option("--limit", "-n", default=20, type=int, help="Maximum items to show (0 = no limit).")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit as JSON instead of a table.")
+def list_cmd(
+    memory_type: str | None,
+    status: str,
+    source_filter: str,
+    since: str | None,
+    limit: int,
+    as_json: bool,
+):
+    """Browse memories, newest first.
 
-        items = items[:limit]
-        dicts = [
+    \b
+    Examples:
+      phileas list                      # 20 most recent active memories
+      phileas list --since 24h          # everything from the last day
+      phileas list --source extracted   # only memories distilled from ingested turns
+      phileas list --type reflection -n 50
+      phileas list --status all --json  # every memory, machine-readable
+    """
+    try:
+        db = _get_db()
+        items = db.get_items_by_status(None if status == "all" else status)
+
+        if memory_type:
+            items = [item for item in items if item.memory_type == memory_type]
+        if source_filter == "extracted":
+            items = [item for item in items if _is_extracted(item)]
+        elif source_filter == "manual":
+            items = [item for item in items if not _is_extracted(item)]
+        if since:
+            cutoff = _since_cutoff(since)
+            items = [item for item in items if item.created_at and _as_utc(item.created_at) >= cutoff]
+
+        total = len(items)
+        if limit and limit > 0:
+            items = items[:limit]
+
+        if as_json:
+            payload = [
+                {
+                    "id": item.id,
+                    "type": item.memory_type,
+                    "status": item.status,
+                    "source": "extracted" if _is_extracted(item) else "manual",
+                    "source_event_id": item.source_event_id,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "summary": item.summary,
+                }
+                for item in items
+            ]
+            console.print_json(json.dumps(payload))
+            return
+
+        rows = [
             {
                 "id": item.id,
+                "created": item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "",
                 "type": item.memory_type,
+                "status": item.status,
+                "source": "extracted" if _is_extracted(item) else "manual",
                 "summary": item.summary,
-                "score": 0.0,
             }
             for item in items
         ]
-        title = f"Memories (type={memory_type})" if memory_type else "All active memories"
-        print_memories(dicts, title=title)
+        filters = [f"status={status}"]
+        if memory_type:
+            filters.append(f"type={memory_type}")
+        if source_filter != "all":
+            filters.append(f"source={source_filter}")
+        if since:
+            filters.append(f"since={since}")
+        shown = f"{len(rows)} of {total}" if len(rows) < total else f"{len(rows)}"
+        title = f"Memories ({', '.join(filters)}) — {shown}"
+        print_memory_list(rows, title=title, show_status=(status != "active"))
     except Exception as exc:
         print_error(str(exc))
         raise SystemExit(1)

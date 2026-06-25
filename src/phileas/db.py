@@ -276,6 +276,18 @@ class Database:
         return [self._row_to_item(row) for row in rows]
 
     @_locked
+    def get_items_by_status(self, status: str | None = "active") -> list[MemoryItem]:
+        """Memories with the given status, newest first. ``status=None`` returns every item."""
+        if status is None:
+            rows = self.conn.execute("SELECT * FROM memory_items ORDER BY created_at DESC").fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM memory_items WHERE status = ? ORDER BY created_at DESC",
+                (status,),
+            ).fetchall()
+        return [self._row_to_item(row) for row in rows]
+
+    @_locked
     def search_by_keyword_scored(self, query: str, top_k: int | None = None) -> list[tuple[MemoryItem, float]]:
         """Keyword search over the FTS5 index, ranked by BM25.
 
