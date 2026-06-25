@@ -751,6 +751,17 @@ def serve():
         if os.environ.get("PHILEAS_MCP_TRANSPORT", "stdio").lower() == "http":
             mcp.run(transport="streamable-http")
         else:
+            # Local Claude Code launches us at session start, so this is the
+            # moment to bring its recall skill up to the shipped version. Refresh
+            # an untouched stale copy only -- user edits are preserved, and a
+            # missing skill is left to `phileas init` (create=False). Never let
+            # this disturb the stdio channel: file IO only, failures swallowed.
+            try:
+                from phileas.skill_sync import install_skill
+
+                install_skill(create=False)
+            except Exception:
+                pass
             mcp.run()
     except Exception as exc:
         print_error(str(exc))

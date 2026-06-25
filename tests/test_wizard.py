@@ -12,13 +12,12 @@ import pytest
 from phileas.cli.wizard import (
     _ensure_model,
     _establish_daemon,
-    _install_skill,
     _model_cached,
-    _skill_marker,
     _wire_claude_code,
     run_wizard,
 )
 from phileas.config import DEFAULT_PROFILE
+from phileas.skill_sync import _skill_marker, install_skill
 
 
 @pytest.fixture
@@ -36,7 +35,7 @@ def fake_home(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------
-# _install_skill
+# install_skill
 # ------------------------------------------------------------------
 
 
@@ -44,7 +43,7 @@ class TestInstallSkill:
     """Skill is copied from the package asset to ~/.claude/skills/phileas/SKILL.md."""
 
     def test_creates_skill_when_missing(self, fake_home):
-        changed, msg = _install_skill()
+        changed, msg = install_skill()
         assert changed is True
         dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
         assert dest.is_file()
@@ -52,9 +51,31 @@ class TestInstallSkill:
         text = dest.read_text(encoding="utf-8")
         assert text.startswith("---\nname: phileas\n")
 
+    def test_create_false_does_not_install_when_missing(self, fake_home):
+        # The serve-startup path refreshes an existing skill but never installs
+        # one from nothing -- first install stays the wizard's job.
+        changed, msg = install_skill(create=False)
+        assert changed is False
+        assert "nothing to refresh" in msg.lower()
+        dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
+        assert not dest.exists()
+
+    def test_create_false_still_refreshes_stale_copy(self, fake_home, tmp_path, monkeypatch):
+        src = tmp_path / "SKILL.md"
+        src.write_text("---\nname: phileas\nv1\n", encoding="utf-8")
+        monkeypatch.setattr("phileas.skill_sync.SKILL_SOURCE", src)
+        install_skill()  # first install (create defaults True) records the v1 hash
+        src.write_text("---\nname: phileas\nv2\n", encoding="utf-8")  # ship an update
+
+        changed, msg = install_skill(create=False)
+        assert changed is True
+        assert "updated" in msg.lower()
+        dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
+        assert dest.read_text(encoding="utf-8") == "---\nname: phileas\nv2\n"
+
     def test_idempotent_when_content_matches(self, fake_home):
-        _install_skill()
-        changed, msg = _install_skill()
+        install_skill()
+        changed, msg = install_skill()
         assert changed is False
         assert "already" in msg.lower()
 
@@ -63,7 +84,7 @@ class TestInstallSkill:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text("# my custom skill\n", encoding="utf-8")
 
-        changed, msg = _install_skill()
+        changed, msg = install_skill()
         assert changed is False
         assert "custom content" in msg.lower()
         assert dest.read_text(encoding="utf-8") == "# my custom skill\n"
@@ -73,7 +94,7 @@ class TestInstallSkill:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text("# my custom skill\n", encoding="utf-8")
 
-        changed, _ = _install_skill(force=True)
+        changed, _ = install_skill(force=True)
         assert changed is True
         assert dest.read_text(encoding="utf-8").startswith("---\nname: phileas\n")
 
@@ -81,12 +102,12 @@ class TestInstallSkill:
         # A controllable "shipped" asset standing in for the package copy.
         src = tmp_path / "SKILL.md"
         src.write_text("---\nname: phileas\nv1\n", encoding="utf-8")
-        monkeypatch.setattr("phileas.cli.wizard.SKILL_SOURCE", src)
+        monkeypatch.setattr("phileas.skill_sync.SKILL_SOURCE", src)
 
-        assert _install_skill()[0] is True  # initial install records the v1 hash
+        assert install_skill()[0] is True  # initial install records the v1 hash
         src.write_text("---\nname: phileas\nv2\n", encoding="utf-8")  # ship an update
 
-        changed, msg = _install_skill()
+        changed, msg = install_skill()
         assert changed is True
         assert "updated" in msg.lower()
         dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
@@ -95,14 +116,14 @@ class TestInstallSkill:
     def test_preserves_user_edits_across_upgrade(self, fake_home, tmp_path, monkeypatch):
         src = tmp_path / "SKILL.md"
         src.write_text("---\nname: phileas\nv1\n", encoding="utf-8")
-        monkeypatch.setattr("phileas.cli.wizard.SKILL_SOURCE", src)
+        monkeypatch.setattr("phileas.skill_sync.SKILL_SOURCE", src)
 
-        _install_skill()  # records the v1 hash
+        install_skill()  # records the v1 hash
         dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
         dest.write_text("# I edited this\n", encoding="utf-8")  # user diverges
         src.write_text("---\nname: phileas\nv2\n", encoding="utf-8")  # ship an update
 
-        changed, msg = _install_skill()
+        changed, msg = install_skill()
         assert changed is False
         assert "custom content" in msg.lower()
         assert dest.read_text(encoding="utf-8") == "# I edited this\n"  # preserved
@@ -110,19 +131,19 @@ class TestInstallSkill:
     def test_backfills_marker_for_premarker_install(self, fake_home, tmp_path, monkeypatch):
         src = tmp_path / "SKILL.md"
         src.write_text("v1", encoding="utf-8")
-        monkeypatch.setattr("phileas.cli.wizard.SKILL_SOURCE", src)
+        monkeypatch.setattr("phileas.skill_sync.SKILL_SOURCE", src)
         # A copy installed before markers existed: matches shipped, no sidecar.
         dest = fake_home / ".claude" / "skills" / "phileas" / "SKILL.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text("v1", encoding="utf-8")
         assert not _skill_marker().exists()
 
-        changed, _ = _install_skill()
+        changed, _ = install_skill()
         assert changed is False  # already current
         assert _skill_marker().exists()  # marker backfilled
 
         src.write_text("v2", encoding="utf-8")  # now an upgrade can refresh it
-        assert _install_skill()[0] is True
+        assert install_skill()[0] is True
         assert dest.read_text(encoding="utf-8") == "v2"
 
 
@@ -319,7 +340,7 @@ class TestRunWizardReadiness:
     def _stub(self, monkeypatch, *, embedding, reranker="present", mcp="unchanged", daemon="running"):
         monkeypatch.setattr("phileas.cli.wizard.click.prompt", lambda *a, **k: "default")
         monkeypatch.setattr("phileas.cli.wizard._wire_claude_code", lambda profile: mcp)
-        monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (False, "already installed"))
+        monkeypatch.setattr("phileas.cli.wizard.install_skill", lambda *a, **k: (False, "already installed"))
         monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
         monkeypatch.setattr("phileas.cli.wizard._ensure_reranker_model", lambda: reranker)
         monkeypatch.setattr("phileas.cli.wizard._establish_daemon", lambda home, profile: daemon)
@@ -385,7 +406,7 @@ class TestRunWizardUnattended:
     def _stub_helpers(self, monkeypatch, *, embedding="present"):
         monkeypatch.delenv("PHILEAS_HOME", raising=False)
         monkeypatch.setattr("phileas.cli.wizard._wire_claude_code", lambda profile: "added")
-        monkeypatch.setattr("phileas.cli.wizard._install_skill", lambda *a, **k: (True, "installed"))
+        monkeypatch.setattr("phileas.cli.wizard.install_skill", lambda *a, **k: (True, "installed"))
         monkeypatch.setattr("phileas.cli.wizard._ensure_embedding_model", lambda: embedding)
         monkeypatch.setattr("phileas.cli.wizard._ensure_reranker_model", lambda: "present")
         monkeypatch.setattr("phileas.cli.wizard._establish_daemon", lambda home, profile: "running")

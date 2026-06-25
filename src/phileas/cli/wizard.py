@@ -9,7 +9,6 @@ Walks the user through first-time configuration:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -20,6 +19,7 @@ import click
 from rich.console import Console
 
 from phileas.config import DEFAULT_PROFILE, resolve_home
+from phileas.skill_sync import install_skill
 
 console = Console()
 
@@ -190,102 +190,6 @@ def _wire_claude_code(profile: str) -> str:
     if existing is not None:
         return "unchanged" if _entry_matches(existing, profile) else "conflict"
     return "added" if _add_claude_entry(profile) else "failed"
-
-
-# -- Skill installation ------------------------------------------------
-
-# Source asset ships with the package and never depends on HOME.
-SKILL_SOURCE = Path(__file__).resolve().parent.parent / "assets" / "skills" / "phileas" / "SKILL.md"
-
-
-def _skill_dest() -> Path:
-    """Live destination for the user-invoked skill (resolved against current HOME)."""
-    return Path.home() / ".claude" / "skills" / "phileas" / "SKILL.md"
-
-
-def _skill_marker() -> Path:
-    """Sidecar recording the hash of the skill content init last wrote.
-
-    This is what lets a later run tell a stale shipped copy (safe to refresh)
-    apart from one the user edited by hand (must be preserved): the live copy is
-    ours to update only while it still hashes to what we recorded writing.
-    """
-    return _skill_dest().parent / ".phileas-skill.sha256"
-
-
-def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _read_skill_marker() -> str | None:
-    try:
-        return _skill_marker().read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-
-
-def _install_skill(force: bool = False) -> tuple[bool, str]:
-    """Install or refresh the Phileas skill at ~/.claude/skills/phileas/SKILL.md.
-
-    The live copy is what Claude Code reads; the shipped asset is the source. A
-    sidecar (``_skill_marker``) records the hash of what init last wrote, so an
-    upgrade can refresh an untouched copy while preserving genuine user edits:
-
-      - Source missing -> error.
-      - No live copy -> write it (and record the hash).
-      - Live copy already matches the shipped asset -> nothing to do (record the
-        hash if a pre-marker install never did, so the next upgrade can refresh).
-      - Live copy differs but still hashes to what we last wrote -> a stale
-        shipped version the user hasn't touched; refresh it to the asset.
-      - Live copy differs and was edited since we wrote it -> preserve it unless
-        force=True.
-    """
-    if not SKILL_SOURCE.is_file():
-        return False, f"skill source missing at {SKILL_SOURCE}"
-
-    try:
-        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not read skill source: {exc}"
-
-    dest = _skill_dest()
-
-    def persist(message: str) -> tuple[bool, str]:
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(source_text, encoding="utf-8")
-            _skill_marker().write_text(_hash_text(source_text) + "\n", encoding="utf-8")
-        except OSError as exc:
-            return False, f"could not write skill: {exc}"
-        return True, message
-
-    if not dest.exists():
-        return persist(f"installed skill at {dest}")
-
-    try:
-        existing = dest.read_text(encoding="utf-8")
-    except OSError as exc:
-        return False, f"could not read existing skill: {exc}"
-
-    source_hash = _hash_text(source_text)
-    if existing == source_text:
-        # Up to date. Backfill the marker for a pre-marker install so the next
-        # shipped change can be told apart from a user edit.
-        if _read_skill_marker() != source_hash:
-            try:
-                _skill_marker().write_text(source_hash + "\n", encoding="utf-8")
-            except OSError:
-                pass
-        return False, f"skill already installed at {dest}"
-
-    if _read_skill_marker() == _hash_text(existing):
-        # The live copy is an older shipped version we wrote and the user has not
-        # touched, so refreshing it to the current asset is safe.
-        return persist(f"updated skill to the shipped version at {dest}")
-
-    if force:
-        return persist(f"overwrote skill at {dest}")
-    return False, f"skill at {dest} has custom content; left as-is (use force=True to overwrite)"
 
 
 # -- Model setup ------------------------------------------------------
@@ -545,7 +449,7 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
         console.print("        Register it manually with:")
         console.print(f"        [cyan]claude mcp add --scope user {env_flag}{key} -- phileas serve[/cyan]")
 
-    skill_changed, skill_msg = _install_skill()
+    skill_changed, skill_msg = install_skill()
     skill_marker = "[green]OK[/green]" if skill_changed else "[dim]skip[/dim]"
     console.print(f"  Skill {skill_marker} -- {skill_msg}")
     console.print("  [dim]Restart Claude Code to pick up MCP + skill changes.[/dim]")
