@@ -1,6 +1,6 @@
 ---
 name: phileas
-description: Phileas long-term companion memory. Recall past context BEFORE answering when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". Stream conversation turns to Phileas with `ingest`; it distills durable memories from them itself.
+description: Phileas long-term companion memory. Recall past context before answering when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". Stream conversation turns to Phileas with `ingest`; it distills durable memories from them itself.
 ---
 
 # Phileas — Companion Memory
