@@ -147,6 +147,29 @@ def install_daemon_service(home: Path, profile: str = DEFAULT_PROFILE) -> list[s
     return [name]
 
 
+def restart_daemon(profile: str = DEFAULT_PROFILE) -> bool:
+    """Restart the profile's daemon service so it re-reads config on next start.
+
+    Returns True only when a systemd-managed daemon was actually restarted. When
+    no systemd user manager is reachable, or the unit exists but is not active
+    (the daemon was launched some other way), it returns False without touching
+    anything, so the caller can fall back to telling the user to restart it. This
+    keeps the helper from killing an unsupervised daemon out from under its owner.
+    """
+    if not systemd_available():
+        return False
+    name = _daemon_unit(profile)
+    active = subprocess.run(
+        ["systemctl", "--user", "is-active", f"{name}.service"],
+        capture_output=True,
+        text=True,
+    )
+    if active.stdout.strip() != "active":
+        return False
+    result = subprocess.run(["systemctl", "--user", "restart", f"{name}.service"], capture_output=True)
+    return result.returncode == 0
+
+
 def remove_daemon_service(profile: str = DEFAULT_PROFILE) -> list[str]:
     """Disable and remove the profile's daemon service. Returns removed unit names."""
     unit_dir = _unit_dir()

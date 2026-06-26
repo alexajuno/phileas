@@ -975,6 +975,41 @@ def stop_cmd():
         console.print("Daemon is not running.")
 
 
+@click.command("restart")
+def restart_cmd():
+    """Restart the daemon so it reloads config (and reloads models).
+
+    On a systemd box this restarts the ``phileas-daemon@<profile>`` unit;
+    elsewhere it stops the running daemon and respawns it in the background. The
+    MCP server is a stdio child of the host client and reads config at startup,
+    so reconnect it separately for a capture-surface change to follow.
+    """
+    from phileas import systemd
+    from phileas.daemon import is_running
+    from phileas.daemon import start as daemon_start
+    from phileas.daemon import stop as daemon_stop
+
+    cfg = load_config()
+
+    if systemd.systemd_available():
+        if systemd.restart_daemon(cfg.profile):
+            print_success(f"Restarted phileas-daemon@{cfg.profile}.")
+        else:
+            print_warning(f"No active phileas-daemon@{cfg.profile} to restart. Start it with `phileas start`.")
+        _mcp_reconnect_hint()
+        return
+
+    # No systemd user manager: stop the running process (if any) and respawn it.
+    was_running = bool(is_running()) and daemon_stop(cfg)
+    try:
+        port = daemon_start(config=cfg, foreground=False)
+    except Exception as exc:
+        print_error(f"Failed to start daemon: {exc}")
+        raise SystemExit(1)
+    print_success(f"{'Restarted' if was_running else 'Started'} the daemon on port {port}.")
+    _mcp_reconnect_hint()
+
+
 # ------------------------------------------------------------------
 # usage
 # ------------------------------------------------------------------
@@ -1040,11 +1075,43 @@ def _project_llm_override():
 def config_cmd():
     """View and change the internal extraction LLM settings.
 
-    These write the ``[llm]`` block of the user ``config.toml``. The settings
-    name the model Phileas would run for its own memory extraction; that path is
-    driven by the host Claude Code session today, so changes here take effect
-    once it is wired to the daemon.
+    These write the ``[llm]`` block of the user ``config.toml``. The daemon reads
+    them at startup to decide whether to run its own extraction worker, and the
+    MCP server reads them at startup to choose the capture surface: the observer
+    ``ingest`` flow when extraction is reachable, the direct ``memorize`` flow
+    when it is not. ``enable``, ``disable``, and ``set-model`` restart the daemon
+    for you and print how to reconnect the MCP server so its capture surface
+    follows.
     """
+
+
+def _mcp_reconnect_hint() -> None:
+    """Point the user at reconnecting the MCP server after an LLM config change.
+
+    The ``serve`` process is a stdio child of the host client (Claude Code), so
+    this command cannot respawn it; the operator triggers the reconnect.
+    """
+    console.print(
+        "[dim]The MCP server reads this at startup, so reconnect it for the capture "
+        "surface to follow (in Claude Code: /mcp, then reconnect; or restart the client).[/dim]"
+    )
+
+
+def _apply_llm_config_change(cfg) -> None:
+    """Make a just-written ``[llm]`` change take effect on the running processes.
+
+    Restart the daemon so it re-reads the config (a no-op message when there is
+    no systemd-managed daemon to restart), then hand off to the MCP reconnect
+    hint, since the two readers each load this config once at startup.
+    """
+    from phileas import systemd
+    from phileas.daemon import is_running
+
+    if systemd.restart_daemon(cfg.profile):
+        console.print(f"[dim]Restarted phileas-daemon@{cfg.profile} so the daemon re-reads it.[/dim]")
+    elif is_running():
+        console.print("[dim]A daemon is running outside systemd; restart it with `phileas restart` to apply.[/dim]")
+    _mcp_reconnect_hint()
 
 
 @config_cmd.command("show")
@@ -1079,6 +1146,7 @@ def config_set_model(model: str):
         print_warning(f"{model!r} has no known pricing, so usage cost records as 0. Known: {', '.join(known_models())}")
     if _project_llm_override() is not None:
         print_warning("A project .phileas.toml llm section shadows this write.")
+    _apply_llm_config_change(cfg)
 
 
 @config_cmd.command("enable")
@@ -1093,6 +1161,7 @@ def config_enable():
         print_warning(
             f"{cfg.llm.api_key_env} is not set in this shell, so the client stays a no-op until a key is reachable."
         )
+    _apply_llm_config_change(cfg)
 
 
 @config_cmd.command("disable")
@@ -1103,3 +1172,4 @@ def config_disable():
     cfg = load_config()
     update_user_config(cfg.home, "llm", {"enabled": False})
     print_success("Disabled the internal extraction LLM (llm.enabled = false).")
+    _apply_llm_config_change(cfg)
