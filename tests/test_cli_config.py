@@ -32,6 +32,15 @@ def _isolate_home(tmp_path, monkeypatch):
     # (PHILEAS_HOME wins over HOME in resolve_home) can't redirect the reads.
     monkeypatch.delenv("PHILEAS_HOME", raising=False)
     monkeypatch.delenv("PHILEAS_PROFILE", raising=False)
+    # enable/disable/set-model restart the daemon to apply the change. The systemd
+    # unit name keys off the profile, not HOME, so an unpatched restart would reach
+    # the developer's live ``phileas-daemon@default``. Stub it out: these cases
+    # assert on the config write, not on the restart.
+    import phileas.daemon as daemon_mod
+    import phileas.systemd as systemd_mod
+
+    monkeypatch.setattr(systemd_mod, "restart_daemon", lambda *a, **k: False)
+    monkeypatch.setattr(daemon_mod, "is_running", lambda *a, **k: None)
     return tmp_path
 
 
@@ -108,3 +117,27 @@ def test_show_reports_current_model(tmp_path):
     assert result.exit_code == 0
     assert "claude-sonnet-4-6" in result.output
     assert "api_key_env" in result.output
+
+
+# -- applying the change to the running processes -------------------------
+
+
+def test_disable_prints_mcp_reconnect_hint():
+    """A write nudges the operator to reconnect the MCP server, whose stdio child
+    this command cannot respawn."""
+    result = _run(["config", "disable"])
+    assert result.exit_code == 0
+    assert "reconnect" in result.output.lower()
+
+
+def test_enable_restarts_the_daemon_for_the_active_profile(monkeypatch):
+    """enable applies the write by restarting the profile's daemon."""
+    import phileas.systemd as systemd_mod
+
+    calls = []
+    monkeypatch.setattr(systemd_mod, "restart_daemon", lambda profile=None, *a, **k: calls.append(profile) or True)
+
+    result = _run(["config", "enable"])
+    assert result.exit_code == 0
+    assert calls == ["default"]
+    assert "Restarted" in result.output

@@ -27,6 +27,7 @@ from phileas.cli.commands import (
     recall,
     recall_recent,
     resolve_cmd,
+    restart_cmd,
     retry_events,
     scope_cmd,
     scopes,
@@ -107,6 +108,7 @@ app.add_command(serve)
 app.add_command(init_cmd)
 app.add_command(start)
 app.add_command(stop_cmd, "stop")
+app.add_command(restart_cmd)
 app.add_command(usage)
 app.add_command(config_cmd)
 app.add_command(profile_group)
