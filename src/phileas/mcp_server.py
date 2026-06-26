@@ -50,12 +50,15 @@ _CAPTURE_OBSERVER = (
     "governs so a later about(file, memory_type='decision') surfaces it."
 )
 _CAPTURE_DIRECT = (
-    "Capture: you record memories yourself with memorize, and nothing is captured unless you call "
-    "it. When something durable comes up, or the user asks you to remember or record it, above all "
-    "a decision (a choice and why), call memorize(summary, source_text, memory_type='decision', "
-    "entities=[...]). You phrase it; no extraction model runs. Put the choice in summary, the "
-    "reasoning and the alternatives passed over in source_text, and tag entities with the repo, "
-    "file, and concept it governs so a later about(file, memory_type='decision') surfaces it."
+    "Capture: this Phileas runs without a separate extraction model, by choice, so turning the "
+    "conversation into durable memory is your job, done inline as you go. Capture on your own "
+    "initiative the moment something durable surfaces (a decision and why, a fact or preference "
+    "about the user, a time-anchored event, the project archaeology code and git will not "
+    "preserve), and also whenever the user asks you to remember or record something. Above all a "
+    "decision. Let pure task chatter pass. Use memorize(summary, source_text, "
+    "memory_type='decision', entities=[...]): the choice in summary, the reasoning and the "
+    "alternatives passed over in source_text, and tag entities with the repo, file, and concept so "
+    "a later about(file, memory_type='decision') surfaces it."
 )
 _capture_instructions = _CAPTURE_OBSERVER if _config.llm.available else _CAPTURE_DIRECT
 
