@@ -59,7 +59,7 @@ Otherwise hold it. Never lead with "Based on my memory…", and never list what 
 
 ## Capture — stream turns to Phileas
 
-You do not decide what to remember. Hand conversation turns to Phileas with `ingest`, and it watches from the outside and distills durable memories from them on its own, with its own model. There is no `memorize` step to run, and no judgment call about what is worth keeping; that is Phileas's job now.
+By default you do not decide what to remember. Hand conversation turns to Phileas with `ingest`, and it watches from the outside and distills durable memories from them on its own, with its own model. The one exception is when the user explicitly asks you to record something, above all a decision: then you write it yourself with `memorize` (see "Recording a decision" below).
 
 ### How to ingest
 
@@ -75,6 +75,17 @@ You do not decide what to remember. Hand conversation turns to Phileas with `ing
 Pipe the turns that carry something durable about the user — personal facts, decisions and their reasons, preferences, events with a time anchor, patterns, the project archaeology that code and git won't preserve. Let pure task and code chatter pass. You are choosing which turns count as a conversation worth remembering against, not which facts become memories; Phileas decides the latter.
 
 Forward-prescriptive conventions ("always use snake_case", "tests live in `tests/`") are not memory — they belong in `CLAUDE.md`.
+
+### Recording a decision
+
+When the user explicitly asks you to remember or record something — most often a decision (a choice and the reasoning behind it) — write it yourself with `memorize` instead of waiting for the background distillation:
+
+- `memorize(summary=<the choice, one line>, source_text=<the why: rationale, the alternatives passed over, what it changes>, memory_type="decision", entities=[...])`.
+- You compose it from the conversation you are already in; no extraction model runs, so what the user handed you is kept as written, not re-distilled. The `summary` is the pointer recall surfaces; the `source_text` is the body `hydrate` → `thread` drills into.
+- Tag `entities` with what the decision governs — the repo, the file(s) or dir, and the concept — so a later `about(<file>, memory_type="decision")` surfaces it when that area comes up again. A decision with no entities can only be found by full-text search.
+- If the write conflicts with an existing memory, the result ends with a resolve menu; that is how a reversed decision supersedes the one it replaces.
+
+This sits next to the `CLAUDE.md` line above, not against it: a standing rule ("always use snake_case") goes in `CLAUDE.md`; the decision behind it ("we chose snake_case over camelCase because the linter assumes it") is a memory, with its reasoning and, later, its reversal.
 
 ### When extraction is off
 

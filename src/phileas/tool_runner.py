@@ -464,6 +464,7 @@ def memorize(
     *,
     summary: str,
     source_event_id: str | None = None,
+    source_text: str | None = None,
     memory_type: str = "knowledge",
     daily_ref: str | None = None,
     entities: list | str | None = None,
@@ -471,6 +472,14 @@ def memorize(
     contexts: list | str | None = None,
     child_ids: list | str | None = None,
 ) -> str:
+    # The pointer/body split for a human-initiated write: when the caller hands
+    # over verbatim source (a decision's reasoning, the alternatives passed over),
+    # capture it as its own event and hang the memory off it. The event is born
+    # "extracted", so the observer worker never re-distills it into a duplicate.
+    # `summary` is the pointer recall surfaces; this event is the body hydrate →
+    # thread drills into.
+    if source_text and source_event_id is None:
+        source_event_id = ingest_text(engine, entities_fn, text=source_text)["event_id"]
     source_event_id = _resolve_event_id(engine, source_event_id)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships

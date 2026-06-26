@@ -106,6 +106,38 @@ def test_memorize_happy_path_threads_back(srv):
     assert any("minimal diffs" in m["summary"] for m in memories)
 
 
+# -- memorize source_text: the pointer/body split ----------------------------
+
+
+def test_memorize_source_text_mints_body_event(srv):
+    # A human-initiated write hands over the verbatim body; memorize captures it
+    # as the memory's source event so the summary stays a pointer and the body is
+    # reachable via the thread. The minted event is born "extracted" — the
+    # observer worker has nothing to re-distill, so no duplicate appears.
+    out = srv.memorize(
+        summary="Decision: provenance is NULL, not a sentinel",
+        source_text="Why: a sentinel conflates with a real value. Rejected: the 'unknown' string.",
+        memory_type="decision",
+    )
+    assert out.startswith("Stored") and "[decision]" in out
+
+    mem_id = out.split("[", 1)[1].split("]", 1)[0]
+    event_id = srv.db.get_item(mem_id).source_event_id
+    assert event_id is not None
+    event = srv.db.get_event(event_id)
+    assert event.text.startswith("Why:")
+    assert event.extraction_status == "extracted"
+
+
+def test_memorize_decision_type_isolated_by_recall(srv):
+    srv.memorize(summary="Decision: use kuzu for the graph store", memory_type="decision")
+    srv.memorize(summary="The user enjoys hiking on weekends", memory_type="knowledge")
+
+    decisions = tool_runner.recall(srv.engine, tool_runner.no_entities, query="kuzu graph", memory_type="decision")
+    assert "kuzu" in decisions
+    assert "hiking" not in decisions
+
+
 # -- memorize_batch ----------------------------------------------------------
 
 

@@ -11,6 +11,7 @@ MemoryType = Literal[
     "knowledge",  # things the user knows or cares about
     "behavior",  # patterns and preferences
     "reflection",  # higher-level inferences
+    "decision",  # a choice and why: rationale, the alternatives passed over, what it supersedes
 ]
 
 MemoryStatus = Literal["active", "archived"]
