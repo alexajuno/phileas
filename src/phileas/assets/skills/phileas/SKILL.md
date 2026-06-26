@@ -1,6 +1,6 @@
 ---
 name: phileas
-description: Phileas long-term companion memory. Recall past context before answering when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". Stream conversation turns to Phileas with `ingest`; it distills durable memories from them itself.
+description: Phileas long-term companion memory. Use it two ways. To recall, when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". To capture, when the user asks to remember, record, note, save, or "don't forget" something, above all a decision (a choice and why), call `memorize` directly rather than writing a file.
 ---
 
 # Phileas — Companion Memory
@@ -57,28 +57,7 @@ Name a recalled memory explicitly only when it earns it:
 
 Otherwise hold it. Never lead with "Based on my memory…", and never list what you know about someone as a preamble. Work the knowledge in silently and surface it only when it's load-bearing.
 
-## Capture — stream turns to Phileas
-
-You do not decide what to remember. Hand conversation turns to Phileas with `ingest`, and it watches from the outside and distills durable memories from them on its own, with its own model. There is no `memorize` step to run, and no judgment call about what is worth keeping; that is Phileas's job now.
-
-### How to ingest
-
-- `ingest(content=<the turn, verbatim>, attribution=<self|other|source>)` captures the turn and extracts from it in the background.
-- `attribution` is whose words the turn is, from the user's standpoint:
-  - `self` — the user's own words (the default).
-  - `other` — someone, or an agent, the user is talking with.
-  - `source` — external material the user brought in (a pasted article, a quoted passage).
-- To keep a conversation's turns together, call `start_thread(client_key="claude_code:<session_id>")` once, keep the returned `thread_id`, and pass it to every `ingest` for that conversation. The `client_key` makes it resume-safe across a compaction or `--resume`. Omit `thread_id` and the turn stands as its own one-turn thread.
-
-### Which turns to pipe
-
-Pipe the turns that carry something durable about the user — personal facts, decisions and their reasons, preferences, events with a time anchor, patterns, the project archaeology that code and git won't preserve. Let pure task and code chatter pass. You are choosing which turns count as a conversation worth remembering against, not which facts become memories; Phileas decides the latter.
-
-Forward-prescriptive conventions ("always use snake_case", "tests live in `tests/`") are not memory — they belong in `CLAUDE.md`.
-
-### When extraction is off
-
-If no extraction key is configured, ingested turns are still captured and recallable verbatim; they simply wait, un-distilled, until a key is present. Nothing is lost, and you don't ingest any differently.
+<!-- CAPTURE -->
 
 ### Fixing a name
 

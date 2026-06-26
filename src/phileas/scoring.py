@@ -20,6 +20,7 @@ import math
 # not declared at write time, so a memory that matters rises whatever its seed.
 STORAGE_SEED_BY_TYPE = {
     "profile": 0.7,
+    "decision": 0.7,  # a recorded choice stands until explicitly superseded, so seed it deep
     "behavior": 0.6,
     "knowledge": 0.5,
     "reflection": 0.5,

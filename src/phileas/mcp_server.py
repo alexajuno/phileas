@@ -31,6 +31,37 @@ from phileas.mcp_auth import build_auth_components, register_login_routes
 # nothing. See phileas.mcp_auth and ~/notes/vps/.
 _auth_kwargs, _oauth_provider = build_auth_components()
 
+# Loaded up front so both the capture instructions and the exposed tool surface
+# match the active flow. With a reachable extraction key, ingest distills turns
+# on its own (observer flow); without one, an ingested turn never becomes a
+# memory, so the model records with memorize instead (direct flow).
+_config = load_config()
+
+_CAPTURE_OBSERVER = (
+    "Capture has two paths. By default, hand conversation turns to Phileas with "
+    "ingest(content, attribution): it distills durable memories on its own, so you do not judge "
+    "what is worth keeping. Tag attribution as 'self' (the user), 'other' (someone or an agent "
+    "they are talking with), or 'source' (external material they brought in), and pass "
+    "start_thread()'s thread_id so a conversation's turns read back together. The exception: when "
+    "the user explicitly asks to remember or record something, above all a decision (a choice and "
+    "why), call memorize(summary, source_text, memory_type='decision', entities=[...]) yourself "
+    "instead, and no extraction model runs. Put the choice in summary, the reasoning and the "
+    "alternatives passed over in source_text, and tag entities with the repo, file, and concept it "
+    "governs so a later about(file, memory_type='decision') surfaces it."
+)
+_CAPTURE_DIRECT = (
+    "Capture: this Phileas runs without a separate extraction model, by choice, so turning the "
+    "conversation into durable memory is your job, done inline as you go. Capture on your own "
+    "initiative the moment something durable surfaces (a decision and why, a fact or preference "
+    "about the user, a time-anchored event, the project archaeology code and git will not "
+    "preserve), and also whenever the user asks you to remember or record something. Above all a "
+    "decision. Let pure task chatter pass. Use memorize(summary, source_text, "
+    "memory_type='decision', entities=[...]): the choice in summary, the reasoning and the "
+    "alternatives passed over in source_text, and tag entities with the repo, file, and concept so "
+    "a later about(file, memory_type='decision') surfaces it."
+)
+_capture_instructions = _CAPTURE_OBSERVER if _config.llm.available else _CAPTURE_DIRECT
+
 mcp = FastMCP(
     "phileas",
     **_auth_kwargs,
@@ -76,21 +107,13 @@ mcp = FastMCP(
         "(the raw it was distilled from) and thread_id, linked entities. The inverse of the pointer trim.\n"
         "- thread(thread_id): the conversation a memory came from — its raw turns in order, each with "
         "the memories it produced. Get the thread_id from hydrate. The deepest, most expensive view.\n"
-        "\n"
-        "Capture: hand conversation turns to Phileas with ingest(content, attribution); it watches "
-        "from the outside and distills durable memories on its own, so you never decide what to keep "
-        "or run a memorize step. Tag attribution as 'self' (the user), 'other' (someone or an agent "
-        "they are talking with), or 'source' (external material they brought in), and pass "
-        "start_thread()'s thread_id so a conversation's turns read back together. Capture is Phileas's "
-        "job; recall is yours."
+        "\n" + _capture_instructions
     ),
 )
 
 # In HTTP mode, attach the single-user login page that gates /authorize.
 if _oauth_provider is not None:
     register_login_routes(mcp, _oauth_provider)
-
-_config = load_config()
 
 # In HTTP mode, expose the read-only SSE doorbell so a peer (laptop) learns of
 # this box's writes and pulls. Gated internally by PHILEAS_SYNC_TOKEN (404 when
@@ -130,7 +153,6 @@ def _call(name: str, params: dict):
     return _call_method("tool", {"name": name, "params": params})
 
 
-@mcp.tool()
 def ingest(content: str, thread_id: str | None = None, attribution: str = "self") -> dict:
     """Hand a conversation turn to Phileas. It decides what, if anything, to remember.
 
@@ -154,6 +176,77 @@ def ingest(content: str, thread_id: str | None = None, attribution: str = "self"
         {"queued": bool, "event_id": str, "thread_id": str}
     """
     return _call_method("ingest", {"text": content, "thread_id": thread_id, "attribution": attribution})
+
+
+# ingest only earns its place when Phileas can distill what it captures. Without a
+# reachable extraction key an ingested turn never becomes a memory, so the direct
+# flow drops the tool entirely and the model captures with memorize instead.
+if _config.llm.available:
+    ingest = mcp.tool()(ingest)
+
+
+@mcp.tool()
+def memorize(
+    summary: str,
+    source_text: str | None = None,
+    memory_type: str = "decision",
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
+    contexts: list | str | None = None,
+    child_ids: list | str | None = None,
+) -> str:
+    """Write one memory directly, on the user's command — the human-initiated capture surface.
+
+    Where `ingest` streams a turn and lets Phileas's own model distill it later,
+    `memorize` records a memory the user has already judged worth keeping. No
+    extraction model runs: you phrase the `summary` and it is stored as-is. Reach
+    for this when the user explicitly says to remember or record something, above
+    all a *decision* — a choice and the reasoning behind it.
+
+    Pointer/body split: `summary` is the one-line pointer recall surfaces;
+    `source_text` is the full body (the reasoning, the alternatives passed over,
+    what it changes) that `hydrate` → `thread` drills into. Put the decision in
+    `summary`, the "why" in `source_text`.
+
+    Tag `entities` with what the memory governs so it is findable later. For a
+    code decision that means the repo, the file(s) or dir it applies to, and the
+    concept — these are the keys a later `about(<file>, memory_type="decision")`
+    recalls on, so a decision with no entities can only be found by full-text
+    search.
+
+    If the write looks like it conflicts with an existing memory, the result ends
+    with a resolve menu (supersede / scope / coexist): that is how a reversed
+    decision supersedes the one it replaces.
+
+    Args:
+        summary: The memory itself, phrased as a durable one-liner (the pointer).
+        source_text: Optional verbatim body — rationale, rejected alternatives,
+            surrounding context. Stored as the memory's source turn; omit for a
+            bare fact with no body.
+        memory_type: "decision" (default) for a choice-and-why. Also accepts
+            "knowledge", "behavior", "reflection", "event", "profile" for other
+            manual writes (e.g. a reflection written over a day's memories).
+        entities: What the memory is about — a list (or JSON string) of
+            {"name": str, "type": str}. For a decision, include the repo, the
+            file/dir loci, and the concept names.
+        relationships: Optional list/JSON of edges between entities
+            ({"from_name", "from_type", "edge", "to_name", "to_type"}).
+        contexts: Optional list/JSON of context names to scope the memory to.
+        child_ids: Optional memory ids to roll up under this one (for a
+            reflection that consolidates a cluster).
+    """
+    return _call(
+        "memorize",
+        {
+            "summary": summary,
+            "source_text": source_text,
+            "memory_type": memory_type,
+            "entities": entities,
+            "relationships": relationships,
+            "contexts": contexts,
+            "child_ids": child_ids,
+        },
+    )
 
 
 @mcp.tool()
@@ -181,7 +274,8 @@ def recall(
 
     Args:
         query: Focused term query (1–4 words, one concept).
-        memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection").
+        memory_type: Filter by type ("profile", "event", "knowledge", "behavior", "reflection",
+            "decision"). Pass "decision" to recall only recorded choices-and-why.
         top_k: Max memories to return (default 30). Increase for broader recall.
         context: Optional active context (e.g. "bug-fix work", "phileas"). When set,
             memories scoped to that context (or a parent of it) are boosted, and
