@@ -31,6 +31,34 @@ from phileas.mcp_auth import build_auth_components, register_login_routes
 # nothing. See phileas.mcp_auth and ~/notes/vps/.
 _auth_kwargs, _oauth_provider = build_auth_components()
 
+# Loaded up front so both the capture instructions and the exposed tool surface
+# match the active flow. With a reachable extraction key, ingest distills turns
+# on its own (observer flow); without one, an ingested turn never becomes a
+# memory, so the model records with memorize instead (direct flow).
+_config = load_config()
+
+_CAPTURE_OBSERVER = (
+    "Capture has two paths. By default, hand conversation turns to Phileas with "
+    "ingest(content, attribution): it distills durable memories on its own, so you do not judge "
+    "what is worth keeping. Tag attribution as 'self' (the user), 'other' (someone or an agent "
+    "they are talking with), or 'source' (external material they brought in), and pass "
+    "start_thread()'s thread_id so a conversation's turns read back together. The exception: when "
+    "the user explicitly asks to remember or record something, above all a decision (a choice and "
+    "why), call memorize(summary, source_text, memory_type='decision', entities=[...]) yourself "
+    "instead, and no extraction model runs. Put the choice in summary, the reasoning and the "
+    "alternatives passed over in source_text, and tag entities with the repo, file, and concept it "
+    "governs so a later about(file, memory_type='decision') surfaces it."
+)
+_CAPTURE_DIRECT = (
+    "Capture: you record memories yourself with memorize, and nothing is captured unless you call "
+    "it. When something durable comes up, or the user asks you to remember or record it, above all "
+    "a decision (a choice and why), call memorize(summary, source_text, memory_type='decision', "
+    "entities=[...]). You phrase it; no extraction model runs. Put the choice in summary, the "
+    "reasoning and the alternatives passed over in source_text, and tag entities with the repo, "
+    "file, and concept it governs so a later about(file, memory_type='decision') surfaces it."
+)
+_capture_instructions = _CAPTURE_OBSERVER if _config.llm.available else _CAPTURE_DIRECT
+
 mcp = FastMCP(
     "phileas",
     **_auth_kwargs,
@@ -76,26 +104,13 @@ mcp = FastMCP(
         "(the raw it was distilled from) and thread_id, linked entities. The inverse of the pointer trim.\n"
         "- thread(thread_id): the conversation a memory came from — its raw turns in order, each with "
         "the memories it produced. Get the thread_id from hydrate. The deepest, most expensive view.\n"
-        "\n"
-        "Capture has two paths. By default, hand conversation turns to Phileas with "
-        "ingest(content, attribution): it watches from the outside and distills durable memories on "
-        "its own, so you do not judge what is worth keeping. Tag attribution as 'self' (the user), "
-        "'other' (someone or an agent they are talking with), or 'source' (external material they "
-        "brought in), and pass start_thread()'s thread_id so a conversation's turns read back "
-        "together. The exception is when the user explicitly asks to remember or record something, "
-        "above all a decision (a choice and why): then call "
-        "memorize(summary, source_text, memory_type='decision', entities=[...]) yourself — you phrase "
-        "it and no extraction model runs. Put the choice in summary, the reasoning and the "
-        "alternatives passed over in source_text, and tag entities with the repo/file/concept it "
-        "governs so it can be recalled when that area comes up again."
+        "\n" + _capture_instructions
     ),
 )
 
 # In HTTP mode, attach the single-user login page that gates /authorize.
 if _oauth_provider is not None:
     register_login_routes(mcp, _oauth_provider)
-
-_config = load_config()
 
 # In HTTP mode, expose the read-only SSE doorbell so a peer (laptop) learns of
 # this box's writes and pulls. Gated internally by PHILEAS_SYNC_TOKEN (404 when
@@ -135,7 +150,6 @@ def _call(name: str, params: dict):
     return _call_method("tool", {"name": name, "params": params})
 
 
-@mcp.tool()
 def ingest(content: str, thread_id: str | None = None, attribution: str = "self") -> dict:
     """Hand a conversation turn to Phileas. It decides what, if anything, to remember.
 
@@ -159,6 +173,13 @@ def ingest(content: str, thread_id: str | None = None, attribution: str = "self"
         {"queued": bool, "event_id": str, "thread_id": str}
     """
     return _call_method("ingest", {"text": content, "thread_id": thread_id, "attribution": attribution})
+
+
+# ingest only earns its place when Phileas can distill what it captures. Without a
+# reachable extraction key an ingested turn never becomes a memory, so the direct
+# flow drops the tool entirely and the model captures with memorize instead.
+if _config.llm.available:
+    ingest = mcp.tool()(ingest)
 
 
 @mcp.tool()

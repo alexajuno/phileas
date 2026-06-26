@@ -18,6 +18,31 @@ from pathlib import Path
 # Source asset ships with the package and never depends on HOME.
 SKILL_SOURCE = Path(__file__).resolve().parent / "assets" / "skills" / "phileas" / "SKILL.md"
 
+# The capture section is the one part of the skill that depends on the active
+# flow, swapped in at install time for the marker below. With an extraction key
+# reachable, Phileas distills ingested turns itself, so the observer flow (ingest,
+# plus memorize for an explicit decision) is shipped. Without one, ingest would
+# only pile up un-distilled turns, so the direct flow (memorize only, no ingest
+# in the instructions) is shipped instead.
+CAPTURE_MARKER = "<!-- CAPTURE -->"
+CAPTURE_OBSERVER = SKILL_SOURCE.parent / "capture-observer.md"
+CAPTURE_DIRECT = SKILL_SOURCE.parent / "capture-direct.md"
+
+
+def render_skill(extraction_enabled: bool) -> str:
+    """Render the shipped skill text for the active capture flow.
+
+    Substitutes ``CAPTURE_MARKER`` in the base ``SKILL.md`` with the observer
+    capture section when extraction is reachable, or the direct one when it is
+    not. A base with no marker is returned unchanged, so a hand-supplied source
+    (the wizard tests) still installs verbatim.
+    """
+    base = SKILL_SOURCE.read_text(encoding="utf-8")
+    if CAPTURE_MARKER not in base:
+        return base
+    variant = CAPTURE_OBSERVER if extraction_enabled else CAPTURE_DIRECT
+    return base.replace(CAPTURE_MARKER, variant.read_text(encoding="utf-8").strip())
+
 
 def skill_dest() -> Path:
     """Live destination Claude Code reads, resolved against the current HOME."""
@@ -44,7 +69,7 @@ def _read_skill_marker() -> str | None:
         return None
 
 
-def install_skill(force: bool = False, create: bool = True) -> tuple[bool, str]:
+def install_skill(force: bool = False, create: bool = True, extraction_enabled: bool | None = None) -> tuple[bool, str]:
     """Install or refresh the Phileas skill at ``~/.claude/skills/phileas/SKILL.md``.
 
     The live copy is what Claude Code reads; the shipped asset is the source. A
@@ -68,8 +93,19 @@ def install_skill(force: bool = False, create: bool = True) -> tuple[bool, str]:
     if not SKILL_SOURCE.is_file():
         return False, f"skill source missing at {SKILL_SOURCE}"
 
+    # The shipped skill depends on whether ingest will actually distill, so pick
+    # the flow from the active config's extraction availability unless a caller
+    # states it outright.
+    if extraction_enabled is None:
+        try:
+            from phileas.config import load_config
+
+            extraction_enabled = load_config().llm.available
+        except Exception:
+            extraction_enabled = False
+
     try:
-        source_text = SKILL_SOURCE.read_text(encoding="utf-8")
+        source_text = render_skill(extraction_enabled)
     except OSError as exc:
         return False, f"could not read skill source: {exc}"
 
