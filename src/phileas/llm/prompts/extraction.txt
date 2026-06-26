@@ -10,7 +10,7 @@ Transcript:
 {transcript}
 ---
 
-Record only durable, memory-worthy facts, the kind worth recalling weeks later. Skip small talk, transient state, and anything already obvious. Write every summary in the third person about the user ("The user ...", never "I ..."). If nothing is worth keeping, record nothing.
+Record only durable, memory-worthy facts, the kind worth recalling weeks later. Skip small talk, transient state, and anything already obvious. Write every summary in the third person about the user ("The user ...", never "I ..."). Write everything you record, summaries and entity names alike, in English, even when the conversation is in another language; the stored memories are searched in English, so non-English text will not be found again. If nothing is worth keeping, record nothing.
 
 Lean on these memory types, picking the closest fit:
 - profile: who the user is. Life events, important people and relationships, self-beliefs, and values.
