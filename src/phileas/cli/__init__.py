@@ -45,6 +45,7 @@ from phileas.cli.commands import (
     update_cmd,
     usage,
 )
+from phileas.cli.hooks import hook_group
 from phileas.cli.profile import profile_group
 from phileas.config import cli_default_profile, resolve_profile
 from phileas.stats.cli import stats
@@ -112,6 +113,7 @@ app.add_command(restart_cmd)
 app.add_command(usage)
 app.add_command(config_cmd)
 app.add_command(profile_group)
+app.add_command(hook_group)
 app.add_command(retry_events)
 app.add_command(sync_export_cmd)
 app.add_command(sync_plan_cmd)

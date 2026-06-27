@@ -82,10 +82,10 @@ def _pending(db, thread_id, text, attribution=None, secs=0):
 def test_build_transcript_tags_attribution_and_defaults_to_self():
     events = [
         Event(text="hi", attribution="self"),
-        Event(text="hello back", attribution="other"),
+        Event(text="hello back", attribution="assistant"),
         Event(text="untagged"),
     ]
-    assert build_transcript(events) == "self: hi\nother: hello back\nself: untagged"
+    assert build_transcript(events) == "self: hi\nassistant: hello back\nself: untagged"
 
 
 def test_flush_after_debounce_writes_memories_and_marks_extracted(tmp_dir):
@@ -93,7 +93,7 @@ def test_flush_after_debounce_writes_memories_and_marks_extracted(tmp_dir):
     client = _FakeClient([{"summary": "The user plays tennis", "memory_type": "behavior"}])
     db, engine, worker = _worker(tmp_dir, client, clock=clock)
     _pending(db, "t1", "I play tennis", attribution="self", secs=0)
-    _pending(db, "t1", "nice", attribution="other", secs=1)
+    _pending(db, "t1", "nice", attribution="assistant", secs=1)
     last = db.get_pending_events_for_thread("t1")[-1].id
 
     worker.notify("t1")  # at t=0
@@ -118,14 +118,14 @@ def test_transcript_carries_attribution_into_extraction(tmp_dir):
     client = _FakeClient([{"summary": "s", "memory_type": "event"}])
     db, engine, worker = _worker(tmp_dir, client, clock=clock)
     _pending(db, "t1", "I moved to Bangkok", attribution="self", secs=0)
-    _pending(db, "t1", "congrats", attribution="other", secs=1)
+    _pending(db, "t1", "congrats", attribution="assistant", secs=1)
     worker.notify("t1")
     clock.t = 8.0
     worker.tick(8.0)
 
     prompt = client.calls[0]["messages"][0]["content"]
     assert "self: I moved to Bangkok" in prompt
-    assert "other: congrats" in prompt
+    assert "assistant: congrats" in prompt
 
 
 def test_max_buffer_forces_flush_despite_recent_activity(tmp_dir):

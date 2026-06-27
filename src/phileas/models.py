@@ -18,7 +18,7 @@ MemoryStatus = Literal["active", "archived"]
 
 Attribution = Literal[
     "self",  # the user's own words; first person resolves to them
-    "other",  # another voice in the exchange (a person or an agent)
+    "assistant",  # the AI's words, the other voice in the exchange
     "source",  # external material the user brought in
 ]
 

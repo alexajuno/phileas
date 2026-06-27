@@ -19,6 +19,7 @@ import click
 from rich.console import Console
 
 from phileas.config import DEFAULT_PROFILE, resolve_home
+from phileas.hook_sync import install_hooks
 from phileas.skill_sync import install_skill
 
 console = Console()
@@ -452,7 +453,13 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
     skill_changed, skill_msg = install_skill()
     skill_marker = "[green]OK[/green]" if skill_changed else "[dim]skip[/dim]"
     console.print(f"  Skill {skill_marker} -- {skill_msg}")
-    console.print("  [dim]Restart Claude Code to pick up MCP + skill changes.[/dim]")
+
+    hooks_ok = install_hooks(profile)
+    if hooks_ok:
+        console.print("  Hooks [green]OK[/green] -- raw capture wired into ~/.claude/settings.json")
+    else:
+        console.print("  Hooks [yellow]warn[/yellow] -- could not write ~/.claude/settings.json")
+    console.print("  [dim]Restart Claude Code to pick up MCP, skill, and hook changes.[/dim]")
 
     # 3. Models -- embedding is required, reranker is optional
     console.print()

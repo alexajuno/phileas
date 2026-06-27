@@ -638,9 +638,9 @@ def show(memory_id: str):
 @click.option("--thread", "thread_id", default=None, help="Conversation thread id, to group turns together.")
 @click.option(
     "--attribution",
-    type=click.Choice(["self", "other", "source"]),
+    type=click.Choice(["self", "assistant", "source"]),
     default="self",
-    help="Whose words these are: self (you), other (someone or an agent), source (external material).",
+    help="Whose words these are: self (you), assistant (the AI), source (external material).",
 )
 def ingest(text: str, thread_id: str | None, attribution: str):
     """Hand a turn to Phileas to remember.

@@ -40,7 +40,7 @@ _config = load_config()
 _CAPTURE_OBSERVER = (
     "Capture has two paths. By default, hand conversation turns to Phileas with "
     "ingest(content, attribution): it distills durable memories on its own, so you do not judge "
-    "what is worth keeping. Tag attribution as 'self' (the user), 'other' (someone or an agent "
+    "what is worth keeping. Tag attribution as 'self' (the user), 'assistant' (the AI "
     "they are talking with), or 'source' (external material they brought in), and pass "
     "start_thread()'s thread_id so a conversation's turns read back together. The exception: when "
     "the user explicitly asks to remember or record something, above all a decision (a choice and "
@@ -168,9 +168,9 @@ def ingest(content: str, thread_id: str | None = None, attribution: str = "self"
         content: The turn's text, verbatim.
         thread_id: Conversation this turn belongs to (from `start_thread`).
         attribution: Whose words these are, from the user's standpoint. "self" is
-            the user (the default); "other" is someone or some agent the user is
-            talking with; "source" is external material the user brought in, like
-            a pasted article.
+            the user (the default); "assistant" is the AI the user is talking
+            with; "source" is external material the user brought in, like a
+            pasted article.
 
     Returns:
         {"queued": bool, "event_id": str, "thread_id": str}

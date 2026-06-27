@@ -191,6 +191,9 @@ class Database:
             self.conn.execute("ALTER TABLE events ADD COLUMN attribution TEXT")
         if "extraction_status" not in cols:
             self.conn.execute("ALTER TABLE events ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'extracted'")
+        # The AI's attribution was renamed 'other' -> 'assistant'; carry old rows
+        # forward so the value set stays consistent. Idempotent: a no-op once done.
+        self.conn.execute("UPDATE events SET attribution = 'assistant' WHERE attribution = 'other'")
         self.conn.commit()
 
     def _reconcile_fts(self) -> None:
