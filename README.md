@@ -28,7 +28,7 @@ The MCP server is launched by its full path, so Claude Code finds it whether or 
 
 ### First run
 
-The first run downloads three models from [Hugging Face](https://huggingface.co/) that then run locally: an embedding model (`all-MiniLM-L6-v2`), a reranker (`ms-marco-MiniLM-L-6-v2`), and an NLI model (`nli-deberta-v3-small`) for contradiction detection, about 300 MB together. They are cached after the first download, so later runs work offline. No API key is needed for recall: the three models run locally on your machine. Capture streams turns to Phileas with `ingest`; with a configured Anthropic key Phileas distills them into memories itself (off by default, so a keyless install still captures and recalls the raw turns).
+The first run downloads three models from [Hugging Face](https://huggingface.co/) that then run locally: an embedding model (`all-MiniLM-L6-v2`), a reranker (`ms-marco-MiniLM-L-6-v2`), and an NLI model (`nli-deberta-v3-small`) for contradiction detection, about 300 MB together. They are cached after the first download, so later runs work offline. No API key is needed: the three models run locally on your machine. In Claude Code, capture hooks store every turn verbatim as it happens (the raw floor under memory), and Claude records the conclusions you endorse with `memorize`.
 
 ## Connect other MCP clients
 

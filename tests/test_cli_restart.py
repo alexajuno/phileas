@@ -2,8 +2,7 @@
 
 On a systemd box it restarts the ``phileas-daemon@<profile>`` unit; without a
 systemd user manager it stops any running daemon and respawns it in the
-background. Both paths point the operator at reconnecting the MCP server, whose
-stdio child this command cannot respawn.
+background.
 """
 
 from __future__ import annotations
@@ -42,7 +41,6 @@ def test_restart_uses_systemd_when_available(monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls == ["default"]
     assert "Restarted phileas-daemon@default" in result.output
-    assert "reconnect" in result.output.lower()
 
 
 def test_restart_warns_when_no_active_unit(monkeypatch):

@@ -1,12 +1,10 @@
 """Phileas MCP server.
 
-A thin stdio/HTTP relay to the daemon. Clients stream conversation turns in
-with `ingest`; Phileas distills durable memories from them internally. The
-rest of the surface retrieves and curates what it kept.
+A thin stdio/HTTP relay to the daemon. The model records what the user endorses
+with `memorize`; the rest of the surface retrieves and curates what it kept.
 
 Tools:
-  - ingest: hand a conversation turn to Phileas to remember; returns its event_id
-  - start_thread: open/resume a conversation thread; returns its thread_id
+  - memorize: record a memory the user has endorsed; returns its id
   - recall: retrieve relevant memories
   - forget: archive a memory
   - relate: create a graph edge between entities
@@ -31,36 +29,21 @@ from phileas.mcp_auth import build_auth_components, register_login_routes
 # nothing. See phileas.mcp_auth and ~/notes/vps/.
 _auth_kwargs, _oauth_provider = build_auth_components()
 
-# Loaded up front so both the capture instructions and the exposed tool surface
-# match the active flow. With a reachable extraction key, ingest distills turns
-# on its own (observer flow); without one, an ingested turn never becomes a
-# memory, so the model records with memorize instead (direct flow).
 _config = load_config()
 
-_CAPTURE_OBSERVER = (
-    "Capture has two paths. By default, hand conversation turns to Phileas with "
-    "ingest(content, attribution): it distills durable memories on its own, so you do not judge "
-    "what is worth keeping. Tag attribution as 'self' (the user), 'assistant' (the AI "
-    "they are talking with), or 'source' (external material they brought in), and pass "
-    "start_thread()'s thread_id so a conversation's turns read back together. The exception: when "
-    "the user explicitly asks to remember or record something, above all a decision (a choice and "
-    "why), call memorize(summary, source_text, memory_type='decision', entities=[...]) yourself "
-    "instead, and no extraction model runs. Put the choice in summary, the reasoning and the "
+# Capture is not a tool the model calls. Raw turns are stored for it (by the
+# Claude Code hooks), so the model's one capture job is to record what the user
+# endorses with memorize. This guidance rides on the server's tool list.
+_capture_instructions = (
+    "Capture: record what the user endorses with memorize, not what you say. Two moments earn a "
+    "memorize: the user states something durable about themselves outright, or you proposed "
+    "something and the user's reply takes it up (the endorsement is the signal; your suggestion "
+    "alone is not, so record it on the turn they accept it). Never memorize your own words on "
+    "their own, or anything the user waves off or passes over. memorize(summary, source_text, "
+    "memory_type='decision', entities=[...]): the choice in summary, the reasoning and the "
     "alternatives passed over in source_text, and tag entities with the repo, file, and concept it "
     "governs so a later about(file, memory_type='decision') surfaces it."
 )
-_CAPTURE_DIRECT = (
-    "Capture: this Phileas runs without a separate extraction model, by choice, so turning the "
-    "conversation into durable memory is your job, done inline as you go. Capture on your own "
-    "initiative the moment something durable surfaces (a decision and why, a fact or preference "
-    "about the user, a time-anchored event, the project archaeology code and git will not "
-    "preserve), and also whenever the user asks you to remember or record something. Above all a "
-    "decision. Let pure task chatter pass. Use memorize(summary, source_text, "
-    "memory_type='decision', entities=[...]): the choice in summary, the reasoning and the "
-    "alternatives passed over in source_text, and tag entities with the repo, file, and concept so "
-    "a later about(file, memory_type='decision') surfaces it."
-)
-_capture_instructions = _CAPTURE_OBSERVER if _config.llm.available else _CAPTURE_DIRECT
 
 mcp = FastMCP(
     "phileas",
@@ -148,41 +131,9 @@ def _call_method(method: str, params: dict):
 def _call(name: str, params: dict):
     """Relay one MCP tool call (the daemon 'tool' branch) and return its result.
 
-    Most tools return a string; start_thread / ingest return a dict.
+    The tools return a string.
     """
     return _call_method("tool", {"name": name, "params": params})
-
-
-def ingest(content: str, thread_id: str | None = None, attribution: str = "self") -> dict:
-    """Hand a conversation turn to Phileas. It decides what, if anything, to remember.
-
-    This is the capture surface. Stream turns in as they happen; Phileas watches
-    from the outside and distills durable memories on its own, so you never judge
-    what is worth keeping or run a memorize step. Read back what it kept with
-    `recall(query)`.
-
-    Pass the `thread_id` from `start_thread` so the turns of one conversation read
-    back together; omit it and the turn is its own one-turn thread.
-
-    Args:
-        content: The turn's text, verbatim.
-        thread_id: Conversation this turn belongs to (from `start_thread`).
-        attribution: Whose words these are, from the user's standpoint. "self" is
-            the user (the default); "assistant" is the AI the user is talking
-            with; "source" is external material the user brought in, like a
-            pasted article.
-
-    Returns:
-        {"queued": bool, "event_id": str, "thread_id": str}
-    """
-    return _call_method("ingest", {"text": content, "thread_id": thread_id, "attribution": attribution})
-
-
-# ingest only earns its place when Phileas can distill what it captures. Without a
-# reachable extraction key an ingested turn never becomes a memory, so the direct
-# flow drops the tool entirely and the model captures with memorize instead.
-if _config.llm.available:
-    ingest = mcp.tool()(ingest)
 
 
 @mcp.tool()
@@ -197,7 +148,6 @@ def memorize(
 ) -> str:
     """Write one memory directly, on the user's command — the human-initiated capture surface.
 
-    Where `ingest` streams a turn and lets Phileas's own model distill it later,
     `memorize` records a memory the user has already judged worth keeping. No
     extraction model runs: you phrase the `summary` and it is stored as-is. Reach
     for this when the user explicitly says to remember or record something, above
@@ -294,8 +244,8 @@ def thread(thread_id: str) -> str:
     turns are the spine; memories hang off the turn they were distilled from.
 
     Args:
-        thread_id: A thread id (from start_thread / hydrate), or an event id —
-            either resolves to its conversation.
+        thread_id: A thread id (from hydrate), or an event id; either resolves
+            to its conversation.
     """
     return _call("thread", {"thread_id": thread_id})
 
@@ -631,30 +581,6 @@ def list_day_memories(date: str | None = None) -> str:
         date: Date to list (YYYY-MM-DD). Defaults to today.
     """
     return _call("list_day_memories", {"date": date})
-
-
-@mcp.tool()
-def start_thread(label: str | None = None, client_key: str | None = None, source_kind: str = "agent") -> dict:
-    """Open (or resume) a conversation thread — the frame a run of turns lives in.
-
-    Call this at the start of a conversation, then pass the returned `thread_id`
-    to every `ingest` for that conversation so the turns read back in order
-    via `thread(thread_id)`.
-
-    Pass a stable `client_key` (e.g. "claude_code:<session_id>") to make this
-    idempotent: a resumed or compacted session that calls again with the same
-    key continues the same thread instead of fragmenting. The `resumed` flag in
-    the result says which happened.
-
-    Args:
-        label: Optional human-readable name for the conversation.
-        client_key: Stable client identity to resume on. Omit for a fresh thread.
-        source_kind: Which surface this came from. Default "agent".
-
-    Returns:
-        {"thread_id": str, "started_at": ISO-8601, "resumed": bool, ...}
-    """
-    return _call("start_thread", {"label": label, "client_key": client_key, "source_kind": source_kind})
 
 
 @mcp.tool()

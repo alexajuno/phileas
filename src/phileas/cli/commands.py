@@ -980,9 +980,7 @@ def restart_cmd():
     """Restart the daemon so it reloads config (and reloads models).
 
     On a systemd box this restarts the ``phileas-daemon@<profile>`` unit;
-    elsewhere it stops the running daemon and respawns it in the background. The
-    MCP server is a stdio child of the host client and reads config at startup,
-    so reconnect it separately for a capture-surface change to follow.
+    elsewhere it stops the running daemon and respawns it in the background.
     """
     from phileas import systemd
     from phileas.daemon import is_running
@@ -996,7 +994,6 @@ def restart_cmd():
             print_success(f"Restarted phileas-daemon@{cfg.profile}.")
         else:
             print_warning(f"No active phileas-daemon@{cfg.profile} to restart. Start it with `phileas start`.")
-        _mcp_reconnect_hint()
         return
 
     # No systemd user manager: stop the running process (if any) and respawn it.
@@ -1007,7 +1004,6 @@ def restart_cmd():
         print_error(f"Failed to start daemon: {exc}")
         raise SystemExit(1)
     print_success(f"{'Restarted' if was_running else 'Started'} the daemon on port {port}.")
-    _mcp_reconnect_hint()
 
 
 # ------------------------------------------------------------------
@@ -1076,33 +1072,19 @@ def config_cmd():
     """View and change the internal extraction LLM settings.
 
     These write the ``[llm]`` block of the user ``config.toml``. The daemon reads
-    them at startup to decide whether to run its own extraction worker, and the
-    MCP server reads them at startup to choose the capture surface: the observer
-    ``ingest`` flow when extraction is reachable, the direct ``memorize`` flow
-    when it is not. ``enable``, ``disable``, and ``set-model`` restart the daemon
-    for you and print how to reconnect the MCP server so its capture surface
-    follows.
+    them at startup to decide whether to run its own extraction worker, which
+    distills memories from the turns the capture hooks store. ``enable``,
+    ``disable``, and ``set-model`` restart the daemon for you so the change takes
+    effect.
     """
-
-
-def _mcp_reconnect_hint() -> None:
-    """Point the user at reconnecting the MCP server after an LLM config change.
-
-    The ``serve`` process is a stdio child of the host client (Claude Code), so
-    this command cannot respawn it; the operator triggers the reconnect.
-    """
-    console.print(
-        "[dim]The MCP server reads this at startup, so reconnect it for the capture "
-        "surface to follow (in Claude Code: /mcp, then reconnect; or restart the client).[/dim]"
-    )
 
 
 def _apply_llm_config_change(cfg) -> None:
-    """Make a just-written ``[llm]`` change take effect on the running processes.
+    """Make a just-written ``[llm]`` change take effect on the running daemon.
 
-    Restart the daemon so it re-reads the config (a no-op message when there is
-    no systemd-managed daemon to restart), then hand off to the MCP reconnect
-    hint, since the two readers each load this config once at startup.
+    Restart the daemon so it re-reads the config and starts or stops its
+    extraction worker (a no-op message when there is no systemd-managed daemon to
+    restart).
     """
     from phileas import systemd
     from phileas.daemon import is_running
@@ -1111,7 +1093,6 @@ def _apply_llm_config_change(cfg) -> None:
         console.print(f"[dim]Restarted phileas-daemon@{cfg.profile} so the daemon re-reads it.[/dim]")
     elif is_running():
         console.print("[dim]A daemon is running outside systemd; restart it with `phileas restart` to apply.[/dim]")
-    _mcp_reconnect_hint()
 
 
 @config_cmd.command("show")
