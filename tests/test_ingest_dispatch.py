@@ -51,6 +51,26 @@ def test_ingest_coerces_unknown_attribution_to_none(engine, monkeypatch):
     assert engine.db.get_event(result["event_id"]).attribution is None
 
 
+def test_ingest_accepts_assistant_attribution(engine, monkeypatch):
+    monkeypatch.setattr(daemon, "_extraction_worker", None)
+    result = daemon._dispatch(engine, "ingest", {"text": "hello back", "attribution": "assistant"})
+    assert engine.db.get_event(result["event_id"]).attribution == "assistant"
+
+
+def test_ingest_resolves_client_key_to_one_thread(engine, monkeypatch):
+    # The capture hooks key turns by session identity, not a thread id. The two
+    # turns of a session must land in the same get-or-created thread.
+    monkeypatch.setattr(daemon, "_extraction_worker", None)
+    first = daemon._dispatch(
+        engine, "ingest", {"text": "I play tennis", "attribution": "self", "client_key": "claude_code:s1"}
+    )
+    second = daemon._dispatch(
+        engine, "ingest", {"text": "nice", "attribution": "assistant", "client_key": "claude_code:s1"}
+    )
+    assert first["thread_id"] == second["thread_id"]
+    assert engine.db.get_thread_by_client_key("claude_code:s1").id == first["thread_id"]
+
+
 def test_ingest_stays_extracted_when_extraction_disabled(engine, monkeypatch):
     engine.config.llm.enabled = False  # truly dark: no queue grows
     monkeypatch.setattr(daemon, "_extraction_worker", None)

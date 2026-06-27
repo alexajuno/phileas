@@ -669,12 +669,19 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         from phileas.models import Event
 
         attribution = params.get("attribution")
-        if attribution not in ("self", "other", "source"):
+        if attribution not in ("self", "assistant", "source"):
             attribution = None
+        # A turn can arrive keyed by client identity rather than a known thread id
+        # (the capture hooks pass client_key, not thread_id). Resolve it to the
+        # session's thread, get-or-create, so a missed SessionStart can't fragment
+        # or drop the turn.
+        thread_id = params.get("thread_id")
+        if thread_id is None and params.get("client_key"):
+            thread_id = engine.start_thread(client_key=params["client_key"], source_kind="claude_code")["thread_id"]
         event = Event(
             text=text,
             source_kind=params.get("source_kind", "claude_code"),
-            thread_id=params.get("thread_id"),
+            thread_id=thread_id,
             attribution=attribution,
             extraction_status="pending" if engine.config.llm.enabled else "extracted",
         )

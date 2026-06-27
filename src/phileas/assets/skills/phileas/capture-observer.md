@@ -6,8 +6,8 @@ There are two ways in. Most of the time you stream the conversation and let Phil
 
 Hand conversation turns to Phileas with `ingest`; it distills durable memories from them in the background, with its own model. You do not judge what becomes a memory, you only choose which turns are worth streaming.
 
-- `ingest(content=<the turn, verbatim>, attribution=<self|other|source>)`.
-- `attribution` is whose words the turn is: `self` (the user's own words, the default), `other` (someone or an agent they are talking with), `source` (external material they brought in).
+- `ingest(content=<the turn, verbatim>, attribution=<self|assistant|source>)`.
+- `attribution` is whose words the turn is: `self` (the user's own words, the default), `assistant` (the AI they are talking with), `source` (external material they brought in).
 - To keep a conversation's turns together, call `start_thread(client_key="claude_code:<session_id>")` once, keep the returned `thread_id`, and pass it to every `ingest`. The `client_key` makes it resume-safe across a compaction or `--resume`.
 - Pipe the turns that carry something durable: personal facts, decisions and their reasons, preferences, time-anchored events, patterns, the project archaeology that code and git will not preserve. Let pure task chatter pass.
 
