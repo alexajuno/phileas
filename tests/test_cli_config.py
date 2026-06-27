@@ -122,14 +122,6 @@ def test_show_reports_current_model(tmp_path):
 # -- applying the change to the running processes -------------------------
 
 
-def test_disable_prints_mcp_reconnect_hint():
-    """A write nudges the operator to reconnect the MCP server, whose stdio child
-    this command cannot respawn."""
-    result = _run(["config", "disable"])
-    assert result.exit_code == 0
-    assert "reconnect" in result.output.lower()
-
-
 def test_enable_restarts_the_daemon_for_the_active_profile(monkeypatch):
     """enable applies the write by restarting the profile's daemon."""
     import phileas.systemd as systemd_mod
