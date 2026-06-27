@@ -56,8 +56,16 @@ _RECORD_MEMORIES_TOOL: dict = {
                                 "properties": {
                                     "name": {"type": "string"},
                                     "type": {"type": "string"},
+                                    "description": {
+                                        "type": "string",
+                                        "description": (
+                                            "A brief, stable phrase identifying which entity this is, "
+                                            "grounded enough to tell it apart from others with a similar "
+                                            "name. Describe what the entity is, not its current status."
+                                        ),
+                                    },
                                 },
-                                "required": ["name", "type"],
+                                "required": ["name", "type", "description"],
                             },
                         },
                         "relationships": {
