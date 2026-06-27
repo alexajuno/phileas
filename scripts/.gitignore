@@ -1,0 +1,9 @@
+# Personal memory data dumps (names, places, dated events) live in this dir and
+# must never be tracked. The dir holds both shareable tooling and private data,
+# so the policy is a whitelist: track only code and its docs, ignore everything
+# else, data dumps included. This moved the "never track the dumps" guarantee out
+# of a local-only .git/info/exclude and into the repo, where it holds for clones.
+*
+!.gitignore
+!*.py
+!*.md
