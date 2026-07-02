@@ -1,7 +1,7 @@
 """Phileas MCP server.
 
-A thin stdio/HTTP relay to the daemon. The model records what the user endorses
-with `memorize`; the rest of the surface retrieves and curates what it kept.
+A thin stdio/HTTP relay to the daemon. The model distills what's worth recalling
+later into `memorize`; the rest of the surface retrieves and curates what it kept.
 
 Tools:
   - memorize: record a memory the user has endorsed; returns its id
@@ -32,14 +32,16 @@ _auth_kwargs, _oauth_provider = build_auth_components()
 _config = load_config()
 
 # Capture is not a tool the model calls. Raw turns are stored for it (by the
-# Claude Code hooks), so the model's one capture job is to record what the user
-# endorses with memorize. This guidance rides on the server's tool list.
+# Claude Code hooks), so the model's one capture job is to distill what's worth
+# recalling later into a memorize. This guidance rides on the server's tool list.
 _capture_instructions = (
-    "Capture: record what the user endorses with memorize, not what you say. Two moments earn a "
-    "memorize: the user states something durable about themselves outright, or you proposed "
-    "something and the user's reply takes it up (the endorsement is the signal; your suggestion "
-    "alone is not, so record it on the turn they accept it). Never memorize your own words on "
-    "their own, or anything the user waves off or passes over. memorize(summary, source_text, "
+    "Capture: memorize what's worth recalling later, whether it came from the user or from your "
+    "own work. Fair game: a durable fact or preference; a decision and its why; a gotcha or root "
+    "cause; a wiring or location fact that would otherwise go stale; a dead end worth not "
+    "re-walking; a command or recipe that worked. A thing you discovered counts on its own; it "
+    "does not need the user to have endorsed it. The bar is usefulness: will this still be useful "
+    "once the code shows only the result and git shows only the diff? Skip what's obvious from the "
+    "code or the diff, and anything the user waves off. memorize(summary, source_text, "
     "memory_type='decision', entities=[...]): the choice in summary, the reasoning and the "
     "alternatives passed over in source_text, and tag entities with the repo, file, and concept it "
     "governs so a later about(file, memory_type='decision') surfaces it."

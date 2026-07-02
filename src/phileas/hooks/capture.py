@@ -179,13 +179,19 @@ def _memorize_hint(event_id: str | None) -> str:
     )
     return (
         "<phileas-memorize-hint>\n"
-        "End of turn -- evaluate whether this exchange produced anything worth "
-        "saving to long-term memory (see the phileas skill's Capture section). "
-        "Memorize what the user stated or endorsed as durable -- a fact, a "
-        "preference, a decision and its reasoning -- not what you merely "
-        "proposed. Quit-tomorrow test: would this still matter if the user "
-        "quit their job tomorrow?\n" + link + "If something qualifies, call mcp__phileas__memorize now. If not, "
-        "just stop -- don't ask permission either way.\n"
+        "End of turn -- capture what this turn taught that's worth recalling "
+        "later, whether it came from the user or from your own work (see the "
+        "phileas skill's Capture section). Fair game: a durable fact or "
+        "preference; a decision and its why; a gotcha or root cause; a "
+        "wiring/location fact that would otherwise go stale; a dead end worth "
+        "not re-walking; a command or recipe that worked. A thing you "
+        "discovered counts on its own -- it does not need the user to have "
+        "endorsed it. Bar: the archaeology test -- will this still be useful "
+        "once the code shows only the result and git shows only the diff? If "
+        "it's obvious from the code or the diff, skip it; don't save what the "
+        "user waved off.\n" + link + "If something qualifies, call "
+        "mcp__phileas__memorize now, one memory per fact. If not, just stop -- "
+        "don't ask permission either way.\n"
         "</phileas-memorize-hint>"
     )
 
