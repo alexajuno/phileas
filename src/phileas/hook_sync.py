@@ -26,6 +26,19 @@ HOOK_EVENTS = {
     "Stop": "stop",
 }
 
+# Extra per-event fields merged into the base {"type": "command", "command": ...}
+# entry. Stop needs Claude Code's asyncRewake contract so the memorize nudge
+# wakes the model in the background — a clean one-line "Phileas: memorize
+# check" notification — instead of blocking the turn on a synchronous
+# decision:"block" JSON reply.
+HOOK_EXTRA_FIELDS: dict[str, dict] = {
+    "Stop": {
+        "asyncRewake": True,
+        "rewakeMessage": "<phileas-memorize-hint>",
+        "rewakeSummary": "Phileas: memorize check",
+    },
+}
+
 
 def settings_path() -> Path:
     """The user-scope Claude Code settings file the hooks live in."""
@@ -74,7 +87,8 @@ def install_hooks(profile: str = DEFAULT_PROFILE) -> bool:
     for event, subcommand in HOOK_EVENTS.items():
         existing = hooks.get(event, [])
         kept = [g for g in existing if not _is_phileas_group(g, subcommand)] if isinstance(existing, list) else []
-        kept.append({"hooks": [{"type": "command", "command": hook_command(subcommand, profile)}]})
+        entry = {"type": "command", "command": hook_command(subcommand, profile), **HOOK_EXTRA_FIELDS.get(event, {})}
+        kept.append({"hooks": [entry]})
         hooks[event] = kept
 
     try:

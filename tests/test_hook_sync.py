@@ -28,6 +28,17 @@ def test_install_writes_the_three_hooks(settings):
     assert hooks["Stop"][0]["hooks"][0]["command"] == "/abs/phileas hook stop"
 
 
+def test_stop_hook_carries_async_rewake(settings):
+    hook_sync.install_hooks(DEFAULT_PROFILE)
+    hooks = json.loads(settings.read_text())["hooks"]
+    stop_entry = hooks["Stop"][0]["hooks"][0]
+    assert stop_entry["asyncRewake"] is True
+    assert stop_entry["rewakeMessage"] == "<phileas-memorize-hint>"
+    assert stop_entry["rewakeSummary"] == "Phileas: memorize check"
+    # Only Stop gets the extra fields.
+    assert "asyncRewake" not in hooks["UserPromptSubmit"][0]["hooks"][0]
+
+
 def test_install_is_idempotent(settings):
     hook_sync.install_hooks(DEFAULT_PROFILE)
     hook_sync.install_hooks(DEFAULT_PROFILE)

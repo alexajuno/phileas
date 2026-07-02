@@ -42,23 +42,58 @@ def test_session_start_without_id_is_noop(monkeypatch):
 def test_user_prompt_ingests_as_self(monkeypatch):
     calls = _record_calls(monkeypatch)
     capture.handle_user_prompt({"session_id": "s1", "prompt": "  I play tennis  "})
-    assert calls == [
-        (
-            "ingest",
-            {
-                "text": "I play tennis",
-                "client_key": "claude_code:s1",
-                "attribution": "self",
-                "source_kind": "claude_code",
-            },
-        )
-    ]
+    assert calls[0] == (
+        "ingest",
+        {
+            "text": "I play tennis",
+            "client_key": "claude_code:s1",
+            "attribution": "self",
+            "source_kind": "claude_code",
+        },
+    )
 
 
 def test_user_prompt_empty_is_noop(monkeypatch):
     calls = _record_calls(monkeypatch)
     capture.handle_user_prompt({"session_id": "s1", "prompt": "   "})
     assert calls == []
+
+
+def test_user_prompt_recalls_and_prints_pointers(monkeypatch, capsys):
+    def fake_call(method, params):
+        if method == "ingest":
+            return {"ok": True, "result": {"event_id": "e1"}}
+        if method == "recall":
+            assert params == {"query": "I play tennis", "top_k": capture.RECALL_TOP_K}
+            return {
+                "ok": True,
+                "result": [{"id": "abcd1234", "type": "knowledge", "summary": "User plays tennis", "score": 0.9}],
+            }
+        raise AssertionError(method)
+
+    monkeypatch.setattr(capture, "call", fake_call)
+    capture.handle_user_prompt({"session_id": "s1", "prompt": "I play tennis"})
+    out = capsys.readouterr().out
+    assert "<phileas-recall>" in out
+    assert "abcd1234" in out
+    assert "User plays tennis" in out
+
+
+def test_user_prompt_skips_recall_for_obvious_ack(monkeypatch):
+    calls = _record_calls(monkeypatch)
+    capture.handle_user_prompt({"session_id": "s1", "prompt": "thanks!"})
+    assert calls == [
+        (
+            "ingest",
+            {"text": "thanks!", "client_key": "claude_code:s1", "attribution": "self", "source_kind": "claude_code"},
+        )
+    ]
+
+
+def test_user_prompt_recall_daemon_down_is_silent(monkeypatch, capsys):
+    monkeypatch.setattr(capture, "call", lambda method, params: None)
+    assert capture.handle_user_prompt({"session_id": "s1", "prompt": "I play tennis"}) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_stop_ingests_whole_assistant_turn(tmp_path, monkeypatch):
@@ -96,7 +131,7 @@ def test_stop_ingests_whole_assistant_turn(tmp_path, monkeypatch):
         + "\n"
     )
     calls = _record_calls(monkeypatch)
-    capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)})
+    exit_code = capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)})
 
     assert len(calls) == 1
     method, params = calls[0]
@@ -104,6 +139,77 @@ def test_stop_ingests_whole_assistant_turn(tmp_path, monkeypatch):
     assert params["attribution"] == "assistant"
     assert params["client_key"] == "claude_code:s1"
     assert params["text"] == "Let me check.\n\nDone."
+    # "Let me check.\n\nDone." is well under TRIVIAL_TURN_CHARS -- no nudge.
+    assert exit_code == 0
+
+
+def _turn_transcript(tmp_path, assistant_text: str, *, memorize_call: bool = False, user_prompt: str = "hi"):
+    content = [{"type": "text", "text": assistant_text}]
+    if memorize_call:
+        content.append({"type": "tool_use", "name": "mcp__phileas__memorize", "input": {}})
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "user", "message": {"role": "user", "content": user_prompt}}),
+                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}}),
+            ]
+        )
+        + "\n"
+    )
+    return transcript
+
+
+def test_stop_nudges_when_user_prompt_carries_the_substance(tmp_path, monkeypatch, capsys):
+    # The user's own message is long enough to matter; the assistant's reply
+    # alone is trivial. The nudge must fire on the combined turn, not just the
+    # assistant's side of it.
+    transcript = _turn_transcript(tmp_path, "Got it.", user_prompt="x" * 100)
+    monkeypatch.setattr(capture, "call", lambda method, params: {"ok": True, "result": {"event_id": "e1"}})
+
+    exit_code = capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)})
+
+    assert exit_code == 2
+    assert "<phileas-memorize-hint>" in capsys.readouterr().err
+
+
+def test_stop_nudges_on_a_substantial_turn(tmp_path, monkeypatch, capsys):
+    transcript = _turn_transcript(tmp_path, "x" * 100)
+
+    def fake_call(method, params):
+        assert method == "ingest"
+        return {"ok": True, "result": {"event_id": "e42"}}
+
+    monkeypatch.setattr(capture, "call", fake_call)
+    exit_code = capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)})
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "<phileas-memorize-hint>" in err
+    assert "event_id=e42" in err
+
+
+def test_stop_skips_nudge_when_memorize_already_called(tmp_path, monkeypatch, capsys):
+    transcript = _turn_transcript(tmp_path, "x" * 100, memorize_call=True)
+    calls = _record_calls(monkeypatch)
+
+    exit_code = capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)})
+
+    assert exit_code == 0
+    assert capsys.readouterr().err == ""
+    assert len(calls) == 1  # raw capture still runs
+    assert calls[0][0] == "ingest"
+
+
+def test_stop_loop_guard_skips_everything(tmp_path, monkeypatch, capsys):
+    transcript = _turn_transcript(tmp_path, "x" * 100)
+    calls = _record_calls(monkeypatch)
+
+    exit_code = capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript), "stop_hook_active": True})
+
+    assert exit_code == 0
+    assert calls == []  # no re-ingest on the asyncRewake re-fire
+    assert capsys.readouterr().err == ""
 
 
 def test_last_assistant_text_stops_at_human_prompt(tmp_path):
