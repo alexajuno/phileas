@@ -18,6 +18,7 @@ the daemon; the daemon owns the graph directly).
 from __future__ import annotations
 
 import json
+import re
 from datetime import date as _date
 from datetime import timedelta
 from typing import Callable
@@ -43,6 +44,24 @@ ToolResult = dict  # {"items": list[dict], "text": str, "tokens": int}
 def no_entities(items: list[dict]) -> dict[str, list[dict]]:
     """An ``entities_fn`` that skips entity tags — for callers without a graph."""
     return {}
+
+
+# A memory summary can only contain tool-call markup if the calling client's
+# tool invocation was malformed and its parameter block leaked in as literal
+# text — a real fact never includes these tags. Rejecting at the boundary
+# keeps a mangled call from polluting the store (and its FTS/embedding
+# indexes) with kilobytes of XML residue.
+_TOOL_MARKUP = re.compile(r"</?(?:antml:)?(?:parameter|invoke|function_calls)\b", re.IGNORECASE)
+
+
+def _reject_tool_markup(**fields: str | None) -> None:
+    for field_name, value in fields.items():
+        if value and _TOOL_MARKUP.search(value):
+            raise ValueError(
+                f"{field_name} contains tool-call markup (e.g. '<parameter'), which means the "
+                "calling invocation was malformed and this text is corrupted parameter residue. "
+                "Re-issue the call with clean argument values."
+            )
 
 
 def estimate_tokens(text: str) -> int:
@@ -472,6 +491,10 @@ def memorize(
     contexts: list | str | None = None,
     child_ids: list | str | None = None,
 ) -> str:
+    # A summary is the pointer recall surfaces — it can never legitimately
+    # contain tool-call markup (source_text can, when a conversation is
+    # *about* tool calls, so only the summary is guarded).
+    _reject_tool_markup(summary=summary)
     # The pointer/body split for a human-initiated write: when the caller hands
     # over verbatim source (a decision's reasoning, the alternatives passed over),
     # capture it as its own event and hang the memory off it. The event is born
@@ -523,6 +546,7 @@ def memorize_batch(
     validated: dict[int, str] = {}
     for i, mem in enumerate(items):
         if mem.get("summary"):
+            _reject_tool_markup(summary=mem.get("summary"))
             validated[i] = _resolve_event_id(engine, mem.get("source_event_id") or source_event_id)
 
     results = []
@@ -637,6 +661,7 @@ def update(
     entities: list | str | None = None,
     relationships: list | str | None = None,
 ) -> str:
+    _reject_tool_markup(summary=summary)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
 
@@ -730,7 +755,8 @@ def reconcile(engine, entities_fn: EntitiesFn) -> str:
     lines.append(
         "\nSame referent → merge_entities(canonical_id, [duplicate_id]) "
         "(override_types=[..] to fix a mistyped kind), then alias(name, alias). "
-        "Distinct → leave them; a wrong merge can't be undone."
+        "Distinct → mark_distinct(a_id, b_id) so the pair never resurfaces. "
+        "Unsure → leave it; a wrong merge can't be undone."
     )
     return "\n".join(lines)
 
@@ -743,13 +769,27 @@ def merge_entities(
     duplicate_ids: list[str],
     override_types: list[str] | None = None,
 ) -> str:
-    summary = engine.graph.merge_entities(canonical_id, duplicate_ids, override_types=override_types)
+    # reconcile prints 8-char prefixes, so the id boundary must accept them.
+    resolved_canonical = engine.graph.resolve_entity_id(canonical_id)
+    if not resolved_canonical:
+        return f"No entity matches canonical_id '{canonical_id}' (pass a full uuid or an unambiguous 8-char prefix)."
+    resolved_duplicates = []
+    for dup in duplicate_ids:
+        resolved = engine.graph.resolve_entity_id(dup)
+        if not resolved:
+            return f"No entity matches duplicate id '{dup}' — nothing merged."
+        resolved_duplicates.append(resolved)
+    summary = engine.graph.merge_entities(resolved_canonical, resolved_duplicates, override_types=override_types)
     if not summary or not summary.get("merged_count"):
         return "No entities merged (graph unavailable, canonical missing, or no valid duplicates)."
     return (
         f"Merged {summary['merged_count']} entity/entities into {summary['canonical_id']} — "
         f"{summary['edges_moved']} edges moved, {summary['aliases_added']} aliases added."
     )
+
+
+def mark_distinct(engine, entities_fn: EntitiesFn, *, a_id: str, b_id: str) -> str:
+    return engine.mark_distinct(a_id, b_id)
 
 
 def alias(engine, entities_fn: EntitiesFn, *, name: str, alias: str, entity_type: str | None = None) -> str:
@@ -860,6 +900,7 @@ MCP_ACTIONS: dict[str, Callable[..., object]] = {
     "survey": survey,
     "reconcile": reconcile,
     "merge_entities": merge_entities,
+    "mark_distinct": mark_distinct,
     "alias": alias,
     "status": status,
     "start_thread": start_thread,

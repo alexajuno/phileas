@@ -19,7 +19,7 @@ from phileas import contradiction
 from phileas.config import PhileasConfig, load_config
 from phileas.db import Database, clean_source_event_id
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
-from phileas.graph import GraphStore
+from phileas.graph import GraphStore, _norm_type
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Thread
 from phileas.reconcile import candidate_pairs
@@ -279,6 +279,14 @@ class MemoryEngine:
         self.vector = vector
         self.graph = graph
         self.config = config if config is not None else load_config()
+
+        # Give the entity linker its description signal: GraphStore stays free
+        # of any Chroma dependency, so the engine injects the vector store's
+        # embedder as the scorer. Best-effort — a store without the method
+        # (fakes, proxies) just leaves the signal off.
+        scorer = getattr(vector, "text_similarities", None)
+        if scorer is not None:
+            graph.description_scorer = scorer
 
         # Usage tracking (records daemon op metrics)
         from phileas.stats.usage import UsageTracker
@@ -640,14 +648,22 @@ class MemoryEngine:
         # 5. Add to ChromaDB (with type metadata for future filtering)
         self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
 
-        # 6. Link entities and relationships in KuzuDB
+        # 6. Link entities and relationships in KuzuDB. Entities resolved so
+        # far in this memory are passed as context_neighbors to the next
+        # lookup — co-mention is the linker's neighborhood signal, and a
+        # memory's own entity list is exactly the co-mention set.
         if entities:
+            linked_ids: list[str] = []
             for entity in entities:
                 name = entity.get("name")
                 etype = entity.get("type")
                 desc = entity.get("description") or ""
                 if name and etype:
-                    self.graph.link_memory(item.id, etype, name, description=desc)
+                    eid = self.graph.link_memory(
+                        item.id, etype, name, description=desc, context_neighbors=linked_ids or None
+                    )
+                    if eid:
+                        linked_ids.append(eid)
 
         if relationships:
             for rel in relationships:
@@ -1818,14 +1834,20 @@ class MemoryEngine:
                     extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
                 )
 
-        # 5. Link entities and relationships in graph
+        # 5. Link entities and relationships in graph, feeding already-resolved
+        # ids forward as context_neighbors (same co-mention signal as memorize).
         if entities:
+            linked_ids: list[str] = []
             for entity in entities:
                 name = entity.get("name")
                 etype = entity.get("type")
                 desc = entity.get("description") or ""
                 if name and etype:
-                    self.graph.link_memory(memory_id, etype, name, description=desc)
+                    eid = self.graph.link_memory(
+                        memory_id, etype, name, description=desc, context_neighbors=linked_ids or None
+                    )
+                    if eid:
+                        linked_ids.append(eid)
 
         if relationships:
             for rel in relationships:
@@ -2141,6 +2163,16 @@ class MemoryEngine:
         rows = self.graph.reconciliation_rows(limit=limit, sample_k=sample_k) or []
         pairs = candidate_pairs(rows, include_shared_token=include_shared_token)
 
+        # Judged pairs stay judged: filter out every pair a judge already
+        # ruled distinct (mark_distinct), so each run surfaces only new work.
+        dismissed = self.db.reconcile_dismissal_keys()
+        if dismissed:
+            pairs = [
+                (a, b, reason)
+                for a, b, reason in pairs
+                if self.db.reconcile_pair_key(a["id"], b["id"]) not in dismissed
+            ]
+
         def _samples(row: dict) -> list[str]:
             out: list[str] = []
             for mid in row.get("sample_memory_ids", []):
@@ -2167,6 +2199,82 @@ class MemoryEngine:
         candidates = [{"reason": reason, "a": _side(a), "b": _side(b)} for a, b, reason in pairs]
         op_extra(candidates=len(candidates))
         return {"roster_total": len(rows), "candidates": candidates}
+
+    @timed_op("mark_distinct")
+    def mark_distinct(self, a_id: str, b_id: str) -> str:
+        """Record a judge's ruling that two reconcile candidates are different referents.
+
+        Accepts full entity uuids or the 8-char prefixes ``reconcile`` prints.
+        The pair is written to the dismissal ledger and never surfaced again.
+        """
+        op_extra(a_id=a_id, b_id=b_id)
+        resolved_a = self.graph.resolve_entity_id(a_id)
+        resolved_b = self.graph.resolve_entity_id(b_id)
+        if not resolved_a or not resolved_b:
+            missing = a_id if not resolved_a else b_id
+            return f"No entity matches id '{missing}' (pass a full uuid or the 8-char prefix reconcile shows)."
+        if resolved_a == resolved_b:
+            return "Both ids resolve to the same entity — nothing to mark."
+        self.db.add_reconcile_dismissal(resolved_a, resolved_b)
+        return f"Marked distinct: [{resolved_a[:8]}] and [{resolved_b[:8]}] will not be paired again."
+
+    @timed_op("auto_reconcile")
+    def auto_reconcile(self) -> dict:
+        """Retrospective convergence pass: fold stored types, then merge the safest band.
+
+        The band merged without a judge is exactly the one the online linker's
+        hot path would have reused at write time, applied with hindsight:
+        identical normalized primary name and folded type sets where one side
+        is a subset of the other. Anything looser (disjoint types, name
+        variants, an untyped twin with real mass) stays for ``reconcile``'s
+        judged flow. Every merge goes through ``merge_entities`` and lands in
+        the merge log, so the pass is audited like a manual fold.
+        """
+        from phileas.graph import _normalize_name, _types_lower
+
+        folded_rows = self.graph.fold_entity_types()
+        rows = self.graph.reconciliation_rows(limit=100_000, sample_k=0) or []
+        dismissed = self.db.reconcile_dismissal_keys()
+
+        by_norm: dict[str, list[dict]] = {}
+        for row in rows:
+            key = _normalize_name(row.get("name"))
+            if key:
+                by_norm.setdefault(key, []).append(row)
+
+        merged = 0
+        skipped = 0
+        for group in by_norm.values():
+            if len(group) < 2:
+                continue
+            group.sort(key=lambda r: r.get("memory_count", 0), reverse=True)
+            canonical = group[0]
+            canonical_types = _types_lower(canonical.get("types", []))
+            for dup in group[1:]:
+                if self.db.reconcile_pair_key(canonical["id"], dup["id"]) in dismissed:
+                    skipped += 1
+                    continue
+                dup_types = _types_lower(dup.get("types", []))
+                subset = dup_types <= canonical_types or canonical_types <= dup_types
+                # An untyped twin carries no type evidence at all; folding it
+                # is safe only while it has almost no mass of its own.
+                if not dup_types and dup.get("memory_count", 0) > 2:
+                    skipped += 1
+                    continue
+                if not subset or (dup_types and not canonical_types):
+                    skipped += 1
+                    continue
+                try:
+                    summary = self.graph.merge_entities(canonical["id"], [dup["id"]])
+                    merged += int(summary.get("merged_count", 0))
+                except Exception as e:
+                    log.debug(
+                        "auto_reconcile merge failed",
+                        extra={"op": "auto_reconcile", "data": {"dup": dup["id"], "error": str(e)}},
+                    )
+        result = {"types_folded": folded_rows, "merged": merged, "skipped": skipped, "roster": len(rows)}
+        op_extra(**result)
+        return result
 
     # ------------------------------------------------------------------
     # scope (AA-118)
@@ -2376,10 +2484,13 @@ class MemoryEngine:
             memory_type_filter=sorted(type_filter) if type_filter else None,
         )
 
-        # Search graph for the entity
+        # Search graph for the entity. The type filter compares synonym-folded
+        # forms so about("X", entity_type="Company") still matches a node
+        # stored as Organization.
         node_hits = self.graph.search_nodes(name)
         if entity_type:
-            node_hits = [n for n in node_hits if n.get("type") == entity_type]
+            wanted = _norm_type(entity_type)
+            node_hits = [n for n in node_hits if _norm_type(n.get("type") or "") == wanted]
 
         items: list[MemoryItem] = []
         seen_ids: set[str] = set()

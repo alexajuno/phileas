@@ -18,7 +18,16 @@ from __future__ import annotations
 
 import re
 
-_HONORIFIC = re.compile(r"^(the|dr|mr|ms|mrs)\.?\s+")
+from phileas.graph import _normalize_name as _fold_name
+
+# Leading address terms stripped from the blocking key. The Vietnamese set
+# (post-diacritic-fold spellings: anh, chị→chi, cô→co, chú→chu, bác→bac,
+# ông→ong, bà→ba, thầy→thay) are kinship honorifics that prefix a name the
+# way "Dr." does — "chị Quỳnh Anh" and "Quỳnh Anh" are one referent. Some
+# folded forms double as real name syllables ("Ba", "Chi"); over-stripping
+# here only widens the candidate pairing, and the judge reads the samples
+# before any merge, so blocking recall wins over precision.
+_HONORIFIC = re.compile(r"^(the|dr|mr|ms|mrs|anh|chi|em|co|chu|bac|ong|ba|thay)\.?\s+")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -28,18 +37,26 @@ def is_date_node(name: str) -> bool:
 
 
 def normalize_name(name: str) -> str:
-    """Lowercase, drop a leading honorific, strip punctuation: the blocking key."""
-    n = (name or "").lower().strip()
+    """Diacritic-fold, lowercase, drop a leading honorific, strip punctuation: the blocking key.
+
+    Folds through the same NFD normalization the online linker uses
+    (``graph._normalize_name``), so the pairs the linker would consider
+    identical are identical here too. Stripping punctuation *before* folding
+    used to delete accented letters outright ("bánh" → "bnh"), silently
+    demoting exact Vietnamese name matches to the gated-off shared-token band.
+    """
+    n = _fold_name(name)
     n = _HONORIFIC.sub("", n)
     n = re.sub(r"[^a-z0-9 ]", "", n)
-    return n.strip()
+    return " ".join(n.split())
 
 
 def name_variant_signal(a: str, b: str) -> str | None:
     """Return a reason two names look like variants worth judging, else None.
 
-    The reasons, strongest first: an identical normalized form; one name's tokens
-    a subset of the other's ("Priya" within "Priya Nair"); a shared prefix
+    The reasons, strongest first: an identical normalized form; identical
+    once spaces are removed ("banhmi" / "banh mi"); one name's tokens a
+    subset of the other's ("Priya" within "Priya Nair"); a shared prefix
     ("Priyanka" / "Priyanka Shah"); or a shared word of four or more letters.
     None of these decides identity, they only flag a pair for the judge to read.
     """
@@ -48,6 +65,8 @@ def name_variant_signal(a: str, b: str) -> str | None:
         return None
     if na == nb:
         return "identical-normalized"
+    if na.replace(" ", "") == nb.replace(" ", ""):
+        return "identical-despaced"
     ta, tb = set(na.split()), set(nb.split())
     if ta < tb or tb < ta:
         return "token-subset"
@@ -63,11 +82,11 @@ def name_variant_signal(a: str, b: str) -> str | None:
 # always the same referent (usually a type-split); a shared common word is the
 # weakest, and on a real graph mostly pairs distinct things ("Template auth" vs
 # "Template model"), so it is gated off the default surface.
-_REASON_RANK = {"identical-normalized": 0, "token-subset": 1, "prefix": 2}
+_REASON_RANK = {"identical-normalized": 0, "identical-despaced": 1, "token-subset": 2, "prefix": 3}
 
 
 def _reason_rank(reason: str) -> int:
-    return _REASON_RANK.get(reason, 3)
+    return _REASON_RANK.get(reason, len(_REASON_RANK))
 
 
 def candidate_pairs(rows: list[dict], include_shared_token: bool = False) -> list[tuple[dict, dict, str]]:

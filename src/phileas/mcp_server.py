@@ -179,8 +179,15 @@ def memorize(
             "knowledge", "behavior", "reflection", "event", "profile" for other
             manual writes (e.g. a reflection written over a day's memories).
         entities: What the memory is about — a list (or JSON string) of
-            {"name": str, "type": str}. For a decision, include the repo, the
-            file/dir loci, and the concept names.
+            {"name": str, "type": str, "description": str (optional)}. For a
+            decision, include the repo, the file/dir loci, and the concept
+            names. Pick `type` from the canonical vocabulary: Person,
+            Organization, Place, Project, Tool, Object, Animal, Activity,
+            Event, Concept. The type is a collision-resistant bucket, not a
+            rich label — an invented synonym (Company, Topic, Repo) risks
+            splitting the referent across nodes. Richness belongs in
+            `description`: a brief stable phrase saying which entity this is,
+            which also helps the linker keep same-name entities apart.
         relationships: Optional list/JSON of edges between entities
             ({"from_name", "from_type", "edge", "to_name", "to_type"}).
         contexts: Optional list/JSON of context names to scope the memory to.
@@ -314,12 +321,17 @@ def relate(
 ) -> str:
     """Create a relationship edge between two entities in the knowledge graph.
 
+    Entity types come from the canonical vocabulary: Person, Organization,
+    Place, Project, Tool, Object, Animal, Activity, Event, Concept — an
+    invented synonym (Company, Topic, Repo) risks splitting the referent
+    across nodes.
+
     Args:
         from_name: Name of the source entity (e.g., "<person>").
         from_type: Type of the source entity (e.g., "Person").
         edge_type: Relationship type (e.g., "WORKS_AT", "KNOWS", "LIKES").
         to_name: Name of the target entity (e.g., "Anthropic").
-        to_type: Type of the target entity (e.g., "Company").
+        to_type: Type of the target entity (e.g., "Organization").
         memory_id: Optional memory UUID to link to the source entity.
     """
     return _call(
@@ -598,16 +610,35 @@ def reconcile() -> str:
     "Priya Nair" (the same nurse) and "Priyanka" (a different one), and it cannot
     tell that "TGH" is "the General" — so read the samples and judge each pair.
 
-    Per pair you judge to be the same referent:
-      • merge_entities(canonical_id, [duplicate_id]) — fold the lower-mass node
-        into the higher. Pass override_types=["Animal"] to correct a mistyped
-        kind rather than union the mistake.
-      • alias(name=<canonical name>, alias=<the variant>) — record the surface
-        form so the split does not recur.
-    Leave genuinely distinct people apart (the Priya / Priyanka case): a wrong
-    merge is unrecoverable, a miss is not.
+    Judge each pair, then act — every judgment gets recorded:
+      • Same referent → merge_entities(canonical_id, [duplicate_id]) — fold the
+        lower-mass node into the higher. Pass override_types=["Animal"] to
+        correct a mistyped kind rather than union the mistake. Then
+        alias(name=<canonical name>, alias=<the variant>) so the split does
+        not recur.
+      • Distinct (the Priya / Priyanka case) → mark_distinct(a_id, b_id), so
+        the pair never surfaces again. A wrong merge is unrecoverable, a miss
+        is not — when unsure, leave the pair unjudged instead.
+    Ids may be full uuids or the 8-char prefixes shown in the pair list.
+    Already-judged pairs are filtered out, so each run shows only new work.
     """
     return _call("reconcile", {})
+
+
+@mcp.tool()
+def mark_distinct(a_id: str, b_id: str) -> str:
+    """Record that two reconcile candidates are different referents.
+
+    The judged-distinct ledger: once marked, `reconcile` never surfaces the
+    pair again, so the candidate queue shrinks instead of re-litigating every
+    run. Use for pairs like "Priya" vs "Priyanka" — similar names, different
+    people/things.
+
+    Args:
+        a_id: One entity's uuid or the 8-char prefix reconcile shows.
+        b_id: The other entity's uuid or 8-char prefix.
+    """
+    return _call("mark_distinct", {"a_id": a_id, "b_id": b_id})
 
 
 @mcp.tool()

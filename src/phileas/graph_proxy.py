@@ -118,6 +118,22 @@ class GraphProxy:
             pass
         return {"canonical_id": canonical_id, "merged_count": 0, "edges_moved": 0, "aliases_added": 0}
 
+    def fold_entity_types(self) -> int:
+        try:
+            from phileas.daemon import call
+
+            response = call("graph_write", {"op": "fold_entity_types"})
+            if response is not None and response.get("ok", False):
+                inner = response.get("result") or {}
+                if inner.get("ok", False):
+                    return int(inner.get("folded", 0))
+        except Exception:
+            pass
+        return 0
+
+    def resolve_entity_id(self, id_or_prefix: str) -> str | None:
+        return self._read("resolve_entity_id", {"id_or_prefix": id_or_prefix}, default=None)
+
     def find_nodes(self, node_type: str, name: str) -> list[dict[str, Any]]:
         return self._read("find_nodes", {"node_type": node_type, "name": name}, default=[])
 

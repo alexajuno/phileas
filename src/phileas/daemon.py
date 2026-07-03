@@ -518,6 +518,30 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     elif config.sync.subscribe and not os.environ.get("PHILEAS_SYNC_TOKEN"):
         log.warning("sync.subscribe set but PHILEAS_SYNC_TOKEN missing — doorbell disabled", extra={"op": "sync"})
 
+    # -- Entity reconciliation heartbeat (background thread) ---------------
+    # The retrospective half of entity convergence: fold stored types onto the
+    # canonical vocabulary and merge the band the online linker's own hot path
+    # would have reused (identical normalized name, folded-type subset). Runs
+    # shortly after start (catching up on drift accumulated while down), then
+    # daily. Every merge goes through merge_entities and lands in the merge
+    # log, so the pass is as auditable as a manual fold.
+    _RECONCILE_STARTUP_DELAY_SEC = 120
+    _RECONCILE_INTERVAL_SEC = 24 * 3600
+
+    def _reconcile_loop():
+        import time
+
+        time.sleep(_RECONCILE_STARTUP_DELAY_SEC)
+        while True:
+            try:
+                summary = engine.auto_reconcile()
+                log.info("auto reconcile", extra={"op": "auto_reconcile", "data": summary})
+            except Exception as e:
+                log.debug("auto reconcile failed", extra={"op": "auto_reconcile", "data": {"error": str(e)}})
+            time.sleep(_RECONCILE_INTERVAL_SEC)
+
+    threading.Thread(target=_reconcile_loop, daemon=True, name="phileas-reconcile").start()
+
     # -- Observer extraction worker (background thread) -------------------
     # Distills ingested turns into memories with Phileas's own key, on a
     # debounced per-thread window. Started only when extraction is enabled, so a
@@ -659,6 +683,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         from phileas.sync import import_bundle
 
         return import_bundle(engine, params["bundle"])
+    elif method == "auto_reconcile":
+        return engine.auto_reconcile()
     elif method == "ingest":
         # Store the raw turn as an event in its conversation thread, then notify the
         # extraction worker. Marked "pending" only when extraction is enabled, so a
@@ -756,6 +782,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 confidence=params.get("confidence"),
             )
             return {"ok": True, "summary": summary}
+        elif op == "fold_entity_types":
+            return {"ok": True, "folded": graph.fold_entity_types()}
         else:
             raise ValueError(f"Unknown graph_write op: {op}")
     elif method == "graph_read":
@@ -813,6 +841,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
                 limit=params.get("limit", 1000),
                 sample_k=params.get("sample_k", 3),
             )
+        elif op == "resolve_entity_id":
+            return graph.resolve_entity_id(params["id_or_prefix"])
         elif op == "status":
             return graph.status()
         else:

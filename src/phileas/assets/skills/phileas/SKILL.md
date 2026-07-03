@@ -68,6 +68,7 @@ The bar is usefulness, not authorship: the archaeology test. Will this still be 
 - `memorize(summary=<the conclusion, one line>, source_text=<the why: the reasoning, the alternatives passed over, what it changes>, memory_type=<"decision" for a choice-and-why, else "knowledge">, entities=[...])`.
 - `summary` is the pointer recall surfaces; `source_text` is the body `hydrate` then `thread` drills into. Put the conclusion in `summary`, the reasoning in `source_text`.
 - Tag `entities` with what the memory governs, for a decision the repo, the file(s) or dir, and the concept, so a later `about(<file>, memory_type="decision")` surfaces it. With no entities it is findable only by full-text search.
+- Pick each entity's `type` from exactly this vocabulary, closest bucket wins: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept. The type is a collision-resistant bucket, not a rich label; an invented synonym (Company, Topic, Repo) splits the same referent across separate graph nodes. Put richness in the entity's `description` (a brief, stable phrase saying which one this is), which also helps the linker keep same-name entities apart.
 - When the user explicitly says to remember or record something, that is a `memorize` you make directly; you have already judged it worth keeping.
 - If the write conflicts with an existing memory, the result ends with a resolve menu; that is how a reversed decision supersedes the one it replaces.
 
