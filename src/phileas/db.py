@@ -145,6 +145,17 @@ CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
 CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at);
 CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, received_at);
 
+-- Reconciliation judgments that stuck: entity pairs a judge ruled distinct.
+-- ``reconcile`` filters these out so every run surfaces only unjudged pairs,
+-- instead of re-litigating the whole roster forever. Keyed by the sorted id
+-- pair; rows referencing a since-merged (deleted) entity are simply inert.
+CREATE TABLE IF NOT EXISTS reconcile_dismissals (
+    pair_key TEXT PRIMARY KEY,
+    a_id TEXT NOT NULL,
+    b_id TEXT NOT NULL,
+    judged_at TEXT NOT NULL
+);
+
 -- Inverted index over memory summaries, powering the keyword (sparse) leg of
 -- recall via FTS5 + BM25. Standalone (not external-content): it stores mem_id
 -- plus a copy of the summary, so it stays decoupled from memory_items' integer
@@ -907,6 +918,33 @@ class Database:
     def mark_events_failed(self, event_ids: list[str]) -> None:
         """Flip a window the worker gave up on to 'failed' after its retries."""
         self._set_extraction_status(event_ids, "failed")
+
+    # --- Reconciliation dismissals (judged-distinct entity pairs) ---
+
+    @staticmethod
+    def reconcile_pair_key(a_id: str, b_id: str) -> str:
+        """Order-insensitive key for an entity pair."""
+        return "|".join(sorted((a_id, b_id)))
+
+    @_locked
+    def add_reconcile_dismissal(self, a_id: str, b_id: str) -> None:
+        """Record that a judge ruled this entity pair distinct, so reconcile stops surfacing it."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO reconcile_dismissals (pair_key, a_id, b_id, judged_at) VALUES (?, ?, ?, ?)",
+            (
+                self.reconcile_pair_key(a_id, b_id),
+                a_id,
+                b_id,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self.conn.commit()
+
+    @_locked
+    def reconcile_dismissal_keys(self) -> set[str]:
+        """Every judged-distinct pair key."""
+        rows = self.conn.execute("SELECT pair_key FROM reconcile_dismissals").fetchall()
+        return {row["pair_key"] for row in rows}
 
     def _set_extraction_status(self, event_ids: list[str], status: str) -> None:
         ids = [e for e in dict.fromkeys(event_ids) if e]

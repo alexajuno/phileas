@@ -76,8 +76,40 @@ class VectorStore:
         except Exception:
             pass
 
+        # Lazy embedding function for text_similarities — same default model
+        # Chroma attaches to the collections, instantiated only when the
+        # entity linker first asks for a description similarity.
+        self._embed_fn = None
+
     def close(self):
         pass  # ChromaDB PersistentClient doesn't need explicit close
+
+    def text_similarities(self, query: str, texts: list[str]) -> list[float]:
+        """Cosine similarity between ``query`` and each of ``texts``, without persisting.
+
+        Backs the entity linker's description signal: candidate sets are tiny
+        (a handful of same-name entities), so embedding both sides per lookup
+        on the daemon's warm model is cheaper and simpler than maintaining a
+        synced per-entity description collection.
+        """
+        if not texts:
+            return []
+        if self._embed_fn is None:
+            from chromadb.utils import embedding_functions
+
+            self._embed_fn = embedding_functions.DefaultEmbeddingFunction()
+        vectors = [[float(x) for x in vec] for vec in self._embed_fn([query, *texts])]
+        qvec, rest = vectors[0], vectors[1:]
+        qnorm = sum(x * x for x in qvec) ** 0.5
+        sims: list[float] = []
+        for vec in rest:
+            vnorm = sum(x * x for x in vec) ** 0.5
+            if qnorm == 0 or vnorm == 0:
+                sims.append(0.0)
+                continue
+            dot = sum(a * b for a, b in zip(qvec, vec))
+            sims.append(dot / (qnorm * vnorm))
+        return sims
 
     def add(self, memory_id: str, text: str, metadata: dict | None = None) -> None:
         """Add or update a memory embedding."""

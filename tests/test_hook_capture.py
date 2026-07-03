@@ -41,7 +41,7 @@ def test_session_start_without_id_is_noop(monkeypatch):
 
 def test_user_prompt_ingests_as_self(monkeypatch):
     calls = _record_calls(monkeypatch)
-    capture.handle_user_prompt({"session_id": "s1", "prompt": "  I play tennis  "})
+    capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "  I play tennis  "})
     assert calls[0] == (
         "ingest",
         {
@@ -55,45 +55,40 @@ def test_user_prompt_ingests_as_self(monkeypatch):
 
 def test_user_prompt_empty_is_noop(monkeypatch):
     calls = _record_calls(monkeypatch)
-    capture.handle_user_prompt({"session_id": "s1", "prompt": "   "})
+    capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "   "})
     assert calls == []
 
 
-def test_user_prompt_recalls_and_prints_pointers(monkeypatch, capsys):
+def test_user_prompt_prints_recall_hint(monkeypatch, capsys):
     def fake_call(method, params):
         if method == "ingest":
             return {"ok": True, "result": {"event_id": "e1"}}
-        if method == "recall":
-            assert params == {"query": "I play tennis", "top_k": capture.RECALL_TOP_K}
-            return {
-                "ok": True,
-                "result": [{"id": "abcd1234", "type": "knowledge", "summary": "User plays tennis", "score": 0.9}],
-            }
-        raise AssertionError(method)
+        raise AssertionError(f"unexpected daemon call: {method}")
 
     monkeypatch.setattr(capture, "call", fake_call)
-    capture.handle_user_prompt({"session_id": "s1", "prompt": "I play tennis"})
+    capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "I play tennis"})
     out = capsys.readouterr().out
-    assert "<phileas-recall>" in out
-    assert "abcd1234" in out
-    assert "User plays tennis" in out
+    assert "<phileas-recall-hint>" in out
+    assert "</phileas-recall-hint>" in out
+    assert "recall_recent" in out  # names the tool family, not just "recall"
 
 
-def test_user_prompt_skips_recall_for_obvious_ack(monkeypatch):
+def test_user_prompt_skips_recall_for_obvious_ack(monkeypatch, capsys):
     calls = _record_calls(monkeypatch)
-    capture.handle_user_prompt({"session_id": "s1", "prompt": "thanks!"})
+    capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "thanks!"})
     assert calls == [
         (
             "ingest",
             {"text": "thanks!", "client_key": "claude_code:s1", "attribution": "self", "source_kind": "claude_code"},
         )
     ]
-
-
-def test_user_prompt_recall_daemon_down_is_silent(monkeypatch, capsys):
-    monkeypatch.setattr(capture, "call", lambda method, params: None)
-    assert capture.handle_user_prompt({"session_id": "s1", "prompt": "I play tennis"}) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_user_prompt_prints_hint_even_when_daemon_down(monkeypatch, capsys):
+    monkeypatch.setattr(capture, "call", lambda method, params: None)
+    assert capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "I play tennis"}) == 0
+    assert "<phileas-recall-hint>" in capsys.readouterr().out
 
 
 def test_stop_ingests_whole_assistant_turn(tmp_path, monkeypatch):

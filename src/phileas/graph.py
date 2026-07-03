@@ -40,6 +40,7 @@ import math
 import threading
 import unicodedata
 import uuid as _uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -57,10 +58,15 @@ log = logging.getLogger("phileas.graph")
 LINK_HIGH = 0.6
 LINK_LOW = 0.3
 
-# Score weights — must sum to 1.0. Description-similarity weight reserved
-# for a follow-up that wires a Chroma-backed description embedder; for now
-# its slot is folded into type-overlap, the most discriminative signal.
-_W_TYPE = 0.50
+# Score weights — must sum to 1.0 when every signal is present. A signal that
+# is *absent* (an untyped side, no co-mentioned entities, no description on
+# either side) contributes nothing and its weight drops out of the
+# denominator: absence is not evidence, so it must not be scored like a zero
+# (see ``_score_candidate``). Description similarity is computed by an
+# injectable scorer (``description_scorer``) the engine wires to the vector
+# store's embedder, keeping this module free of a Chroma dependency.
+_W_TYPE = 0.35
+_W_DESC = 0.15
 _W_NEIGHBORHOOD = 0.35
 _W_PRIOR = 0.15
 
@@ -107,18 +113,74 @@ CANONICAL_TYPES = (
 )
 
 
+# Synonym fold onto CANONICAL_TYPES. Live data shows the dominant duplicate
+# factory is the same referent arriving under synonym types (Qikify as
+# Organization once and Company once, a topic as Topic/Theme/Concept), which
+# the linker then scores as *conflicting* kinds and forks. The fold maps the
+# spellings models actually reach for onto the canonical bucket, applied both
+# at storage (`_norm_type`) and at comparison (`_types_lower`) so pre-fold
+# rows still match post-fold mentions. Only unambiguous synonyms belong here:
+# a murky mapping (Game→Object? Website→Organization?) is left out and its
+# pairs go to reconciliation instead.
+TYPE_SYNONYMS = {
+    "Topic": "Concept",
+    "Theme": "Concept",
+    "Subject": "Concept",
+    "Idea": "Concept",
+    "Pattern": "Concept",
+    "Emotion": "Concept",
+    "Feeling": "Concept",
+    "Company": "Organization",
+    "Corporation": "Organization",
+    "Business": "Organization",
+    "Employer": "Organization",
+    "Team": "Organization",
+    "Org": "Organization",
+    "Repo": "Project",
+    "Repository": "Project",
+    "Codebase": "Project",
+    "Technology": "Tool",
+    "Tech": "Tool",
+    "Framework": "Tool",
+    "Library": "Tool",
+    "App": "Tool",
+    "Application": "Tool",
+    "Software": "Tool",
+    "Service": "Tool",
+    "Location": "Place",
+    "City": "Place",
+    "Country": "Place",
+    "Region": "Place",
+    "Food": "Object",
+    "Dish": "Object",
+    "Drink": "Object",
+    "Product": "Object",
+    "Item": "Object",
+    "Device": "Object",
+    "Hobby": "Activity",
+    "Sport": "Activity",
+    "Human": "Person",
+    "User": "Person",
+    "Friend": "Person",
+    "Colleague": "Person",
+    "Coworker": "Person",
+}
+
+
 def _norm_type(t: str) -> str:
     """Canonicalize a type string for storage and comparison.
 
     Title-case folds the LLM's call-to-call casing drift (Tool / tool /
-    TOOL → Tool) so the types-list set semantics aren't fooled by case. The
-    value is not forced onto `CANONICAL_TYPES`: an off-vocabulary type still
-    stores, because silently rewriting it here (without migrating existing
-    rows that used the old string) would itself split a referent across two
-    type spellings. Consistency is steered at the source, where the type is
-    chosen, not patched after the fact.
+    TOOL → Tool), then `TYPE_SYNONYMS` folds common off-vocabulary spellings
+    onto their canonical bucket, so the same referent lands in one node
+    regardless of which synonym the writer picked. A type outside the fold
+    map still stores as-is: an unknown kind matching only itself is harmless,
+    whereas a wrong guess here would split a referent. Comparison-side
+    folding in `_types_lower` keeps rows written before the fold matching
+    mentions written after it; `fold_entity_types` migrates the stored rows.
     """
-    return t.strip().title()
+    folded = t.strip().title()
+    return TYPE_SYNONYMS.get(folded, folded)
 
 
 def _parse_list(raw: str | None) -> list[str]:
@@ -171,7 +233,13 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 
 def _types_lower(types: list[str]) -> set[str]:
-    return {t.strip().lower() for t in types if t}
+    """Lowercased, synonym-folded type set for comparison.
+
+    Folding here (not just at write time) is what lets an entity stored as
+    ``Company`` before the fold existed match a mention arriving as
+    ``Organization`` after it.
+    """
+    return {_norm_type(t).lower() for t in types if t}
 
 
 def _normalize_name(name: str | None) -> str:
@@ -223,6 +291,12 @@ class GraphStore:
         # Entity table. Cleared by every write method that touches Entity
         # rows or ABOUT edges (since memory_count comes from COUNT(:ABOUT)).
         self._candidate_cache: dict[str, list[dict[str, Any]]] = {}
+        # Injectable description-similarity scorer for the linker's _W_DESC
+        # signal: (mention_description, [candidate_descriptions]) -> [cosine].
+        # The engine wires the vector store's embedder in after construction;
+        # this module stays free of any Chroma dependency, and a missing
+        # scorer just drops the signal (see _description_similarities).
+        self.description_scorer: Callable[[str, list[str]], list[float]] | None = None
 
     def recycle(self) -> None:
         """Close and forget the kuzu Database/Connection so they reopen lazily.
@@ -875,31 +949,37 @@ class GraphStore:
         hint_types: list[str],
         context_neighbors: list[str],
         max_count: int,
+        desc_sim: float | None = None,
     ) -> float:
+        """Weighted evidence that ``candidate`` is the mention's referent.
+
+        Each signal contributes only when it is actually present; an absent
+        signal drops out of the denominator rather than scoring as zero.
+        Absence is not evidence: an untyped side is compatible with anything
+        (the path a deferred-type mention takes), a mention with no
+        co-mentioned entities says nothing about the neighborhood, a missing
+        description says nothing about identity. A *present* signal at 0.0,
+        by contrast, is genuine counter-evidence — disjoint asserted types
+        are what keep Apple-the-fruit and Apple-the-company on separate
+        nodes, and that suppression survives the renormalization because the
+        type weight stays in the denominator while contributing nothing.
+        """
         cand_types = _types_lower(candidate["types"])
         hint_lower = _types_lower(hint_types)
-        nbhd = self._neighborhood_overlap(candidate["id"], context_neighbors)
         if max_count > 0:
             prior = math.log1p(candidate["memory_count"]) / math.log1p(max_count)
         else:
             prior = 0.0
 
+        terms: list[tuple[float, float]] = [(_W_PRIOR, prior)]
         if cand_types and hint_lower:
-            # Both sides carry a type, so overlap is informative. A disjoint
-            # result (0.0) is genuine evidence of a different referent and is
-            # left to suppress reuse — this is what keeps Apple-the-fruit and
-            # Apple-the-company on separate nodes.
-            type_overlap = _jaccard(cand_types, hint_lower)
-            return _W_TYPE * type_overlap + _W_NEIGHBORHOOD * nbhd + _W_PRIOR * prior
-
-        # One side has no type. The type signal is absent, not contradictory —
-        # an unknown type is compatible with anything, so it must not be scored
-        # like a conflict. Drop the type term and renormalize the rest so name
-        # plus context can still carry the mention to reuse. This is the path a
-        # mention takes when extraction deferred the type (a referent named
-        # before its kind is known) and a later, typed mention arrives.
-        denom = _W_NEIGHBORHOOD + _W_PRIOR
-        return (_W_NEIGHBORHOOD * nbhd + _W_PRIOR * prior) / denom
+            terms.append((_W_TYPE, _jaccard(cand_types, hint_lower)))
+        if context_neighbors:
+            terms.append((_W_NEIGHBORHOOD, self._neighborhood_overlap(candidate["id"], context_neighbors)))
+        if desc_sim is not None:
+            terms.append((_W_DESC, desc_sim))
+        denom = sum(weight for weight, _ in terms)
+        return sum(weight * signal for weight, signal in terms) / denom if denom else 0.0
 
     def entity_lookup(
         self,
@@ -935,13 +1015,14 @@ class GraphStore:
                     self._merge_into_existing(c["id"], hint_types, description)
                     return c["id"]
 
+            desc_sims = self._description_similarities(description, candidates)
             max_count = self._max_memory_count()
-            best = max(
-                candidates,
-                key=lambda c: self._score_candidate(c, hint_types, context_neighbors, max_count),
-            )
-            best_score = self._score_candidate(best, hint_types, context_neighbors, max_count)
-            if best_score >= LINK_HIGH:
+
+            def _score(c: dict[str, Any]) -> float:
+                return self._score_candidate(c, hint_types, context_neighbors, max_count, desc_sims.get(c["id"]))
+
+            best = max(candidates, key=_score)
+            if _score(best) >= LINK_HIGH:
                 self._merge_into_existing(best["id"], hint_types, description)
                 return best["id"]
             # Below LINK_HIGH (including the LINK_LOW..LINK_HIGH mid-band)
@@ -967,6 +1048,29 @@ class GraphStore:
         )
         self._invalidate_candidate_cache()
         return new_id
+
+    def _description_similarities(self, description: str, candidates: list[dict[str, Any]]) -> dict[str, float]:
+        """Cosine similarity of the mention's description against each described candidate.
+
+        Returns ``{entity_id: similarity}`` only for candidates that carry a
+        description; a candidate with none stays absent so the signal drops
+        out of its score rather than reading as 0. Requires an injected
+        ``description_scorer`` (the engine wires the vector store's embedder
+        in); without one, or on any scorer failure, returns empty and the
+        linker scores exactly as before — the signal is additive, never a
+        dependency.
+        """
+        if not self.description_scorer or not description:
+            return {}
+        described = [c for c in candidates if c.get("description")]
+        if not described:
+            return {}
+        try:
+            sims = self.description_scorer(description, [c["description"] for c in described])
+            return {c["id"]: float(s) for c, s in zip(described, sims)}
+        except Exception as e:
+            log.debug("description scorer failed: %s", e)
+            return {}
 
     def _append_alias(self, entity_id: str, incoming_name: str) -> bool:
         """Append ``incoming_name`` to the entity's alias list iff it's a new variant.
@@ -1045,21 +1149,26 @@ class GraphStore:
         Used by the public ``find_nodes`` / ``link_memory`` / ``get_memories_about``
         readers so reads see the same disambiguation choices as writes.
         """
-        candidates = self._candidate_rows(name)
+        candidates = self._match_candidates(node_type, name)
         if not candidates:
             return None
-        if node_type:
-            tlower = node_type.strip().lower()
+        return max(candidates, key=lambda c: c["memory_count"])["id"]
+
+    def _match_candidates(self, node_type: str, name: str) -> list[dict[str, Any]]:
+        """Every candidate row matching ``name`` (normalized), narrowed by folded type.
+
+        When a type is given and any candidate carries it (post-fold), only
+        those candidates match; with no typed match the full name-match set
+        is returned — readers tolerate this since callers commonly pass a
+        hint type that may have been dropped from a multi-type entity.
+        """
+        candidates = self._candidate_rows(name)
+        if candidates and node_type:
+            tlower = _norm_type(node_type).lower()
             typed = [c for c in candidates if tlower in _types_lower(c["types"])]
             if typed:
-                # Prefer the typed candidate with the most ABOUT-edge mass.
-                typed.sort(key=lambda c: c["memory_count"], reverse=True)
-                return typed[0]["id"]
-            # No type-overlap candidate: fall back to highest-mass any-type
-            # match — readers tolerate this since callers commonly pass a
-            # hint type that may have been dropped from a multi-type entity.
-        candidates.sort(key=lambda c: c["memory_count"], reverse=True)
-        return candidates[0]["id"]
+                return typed
+        return candidates
 
     # ------------------------------------------------------------------
     # Entity node operations (public API)
@@ -1642,15 +1751,23 @@ class GraphStore:
 
     @_locked
     def get_memories_about(self, entity_type: str, entity_name: str) -> list[str]:
-        """Return memory IDs linked to the entity (resolved by type+name)."""
+        """Return memory IDs linked to the entity, unioned across name twins.
+
+        Until reconciliation folds them, one referent can live on several
+        same-name nodes (split by a type the fold doesn't cover). Reads union
+        the ABOUT sets of *every* candidate matching the normalized name (and
+        folded type, when given) instead of picking the highest-mass twin —
+        so a memory linked to the smaller twin is never invisible while the
+        graph converges.
+        """
         if not self._ensure_connected():
             return []
-        eid = self._lookup_id(entity_type, entity_name)
-        if not eid:
+        candidates = self._match_candidates(entity_type, entity_name)
+        if not candidates:
             return []
         result = self._conn.execute(
-            "MATCH (m:Memory)-[:ABOUT]->(e:Entity {id: $eid}) RETURN m.id",
-            parameters={"eid": eid},
+            "MATCH (m:Memory)-[:ABOUT]->(e:Entity) WHERE e.id IN $eids RETURN DISTINCT m.id",
+            parameters={"eids": [c["id"] for c in candidates]},
         )
         try:
             ids = []
@@ -2435,6 +2552,67 @@ class GraphStore:
             if len(rows) >= int(limit):
                 break
         return rows
+
+    @_locked
+    def fold_entity_types(self) -> int:
+        """Rewrite every entity's stored types through ``_norm_type`` (the synonym fold).
+
+        The comparison-side fold in ``_types_lower`` already makes pre-fold
+        rows *match* correctly; this migrates what they *store*, so listings,
+        merges, and exports show one vocabulary. Idempotent — rows already in
+        canonical form are untouched. Returns the number of rows rewritten.
+        """
+        if not self._ensure_connected():
+            return 0
+        result = self._conn.execute("MATCH (e:Entity) RETURN e.id, e.types")
+        pending: list[tuple[str, list[str]]] = []
+        try:
+            while result.has_next():
+                r = result.get_next()
+                raw_types = _parse_list(r[1])
+                folded: list[str] = []
+                for t in raw_types:
+                    ft = _norm_type(t)
+                    if ft and ft not in folded:
+                        folded.append(ft)
+                if folded != raw_types:
+                    pending.append((r[0], folded))
+        finally:
+            result.close()
+        for entity_id, folded in pending:
+            self._conn.execute(
+                "MATCH (e:Entity {id: $id}) SET e.types = $types",
+                parameters={"id": entity_id, "types": _dump_list(folded)},
+            )
+        if pending:
+            self._invalidate_candidate_cache()
+        return len(pending)
+
+    @_locked
+    def resolve_entity_id(self, id_or_prefix: str) -> str | None:
+        """Resolve a full entity uuid or an 8+ char prefix to the full id.
+
+        Reconciliation surfaces (``reconcile``'s pair list) print 8-char
+        prefixes, and the judge passes those back to ``merge_entities`` /
+        ``mark_distinct`` — so the id boundary must accept them. Returns None
+        when nothing (or more than one entity) matches.
+        """
+        candidate = (id_or_prefix or "").strip()
+        if not candidate or len(candidate) < 8:
+            return None
+        if not self._ensure_connected():
+            return None
+        result = self._conn.execute(
+            "MATCH (e:Entity) WHERE e.id STARTS WITH $p RETURN e.id LIMIT 3",
+            parameters={"p": candidate},
+        )
+        try:
+            matches = []
+            while result.has_next():
+                matches.append(result.get_next()[0])
+            return matches[0] if len(matches) == 1 else None
+        finally:
+            result.close()
 
     # ------------------------------------------------------------------
     # Stats

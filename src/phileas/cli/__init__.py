@@ -26,6 +26,7 @@ from phileas.cli.commands import (
     list_day,
     recall,
     recall_recent,
+    reconcile,
     resolve_cmd,
     restart_cmd,
     retry_events,
@@ -115,6 +116,7 @@ app.add_command(config_cmd)
 app.add_command(profile_group)
 app.add_command(hook_group)
 app.add_command(retry_events)
+app.add_command(reconcile)
 app.add_command(sync_export_cmd)
 app.add_command(sync_plan_cmd)
 app.add_command(sync_import_cmd)

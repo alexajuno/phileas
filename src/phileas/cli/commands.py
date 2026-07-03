@@ -1031,6 +1031,45 @@ def retry_events(event_ids: tuple[str, ...]):
 
 
 @click.command()
+@click.option(
+    "--apply-safe",
+    is_flag=True,
+    help="Fold stored entity types and auto-merge the safest duplicate band instead of listing candidates.",
+)
+def reconcile(apply_safe: bool):
+    """Surface duplicate-entity candidates, or fold the safe band with --apply-safe.
+
+    Without flags, prints the reconciliation queue (name-variant pairs with
+    sample memories, already-judged pairs filtered out) — the same view the
+    MCP `reconcile` tool gives the model. With --apply-safe, runs the
+    retrospective convergence pass the daemon also runs daily: fold entity
+    types onto the canonical vocabulary, then auto-merge pairs the online
+    linker itself would have reused (identical normalized name, folded-type
+    subset). Requires the daemon.
+    """
+    if apply_safe:
+        resp = _daemon_call("auto_reconcile", timeout=600)
+    else:
+        resp = _daemon_call("tool", {"name": "reconcile", "params": {}}, timeout=120)
+    if not resp:
+        print_error("daemon not running — start it with `phileas start`")
+        raise SystemExit(1)
+    if not resp.get("ok"):
+        print_error(resp.get("error") or "unknown error")
+        raise SystemExit(1)
+    result = resp.get("result")
+    if apply_safe:
+        print_success(
+            f"Types folded on {result.get('types_folded', 0)} entity(ies); "
+            f"merged {result.get('merged', 0)} duplicate(s); "
+            f"left {result.get('skipped', 0)} pair(s) for judgment "
+            f"(roster {result.get('roster', 0)})."
+        )
+    else:
+        click.echo(result)
+
+
+@click.command()
 @click.option("--since", default="all", show_default=True, help="Time window: 24h, 7d, 30d, all.")
 @click.pass_context
 def usage(ctx, since: str):
