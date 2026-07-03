@@ -44,7 +44,7 @@ def session_start() -> None:
 @hook_group.command("user-prompt")
 def user_prompt() -> None:
     """Store the user's prompt verbatim (attribution: self)."""
-    raise SystemExit(_run(capture.handle_user_prompt))
+    raise SystemExit(_run(capture.handle_user_prompt_submit))
 
 
 @hook_group.command("stop")

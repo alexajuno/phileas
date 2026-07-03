@@ -1,17 +1,23 @@
 """The raw floor, plus two llm-less nudges built on top of it.
 
 Three hooks, one job each. SessionStart opens (or resumes) the session's
-thread; UserPromptSubmit stores the human's prompt and injects a local recall
-of relevant memories; Stop stores the assistant's reply and, when the turn
-looks durable, nudges the same live model to consider a `memorize` call.
-Every turn lands as an event, attributed and threaded, before any of that —
-so memory always has the original to point back to.
+thread; UserPromptSubmit stores the human's prompt and nudges the model to
+recall relevant memories itself before answering; Stop stores the assistant's
+reply and, when the turn looks durable, nudges the same live model to
+consider a `memorize` call. Every turn lands as an event, attributed and
+threaded, before any of that — so memory always has the original to point
+back to.
 
-Recall and the memorize nudge are both llm-less: recall is local hybrid
-search (no Anthropic key), and the nudge reuses the client's own inference via
-Claude Code's ``asyncRewake`` Stop-hook contract rather than a separate model
-call. Neither depends on ``[llm].enabled`` — that flag only gates the
-*background* ExtractionWorker, a separate path.
+Both nudges are llm-less from the hook's side: neither one calls a model or
+the daemon to decide what to print — each is a fixed string, injected as
+context for a turn the model was already about to run. They differ in
+forcing mechanism: the Stop nudge rides Claude Code's ``asyncRewake``
+contract, so weighing it is a guaranteed extra inference step on the same
+live model; the UserPromptSubmit nudge has no equivalent contract for a
+pre-turn hook — it's just additional context for the upcoming turn,
+best-effort like everything else here, not a forced one. Neither depends on
+``[llm].enabled`` — that flag only gates the *background* ExtractionWorker,
+a separate path.
 
 Every handler is best-effort. If the daemon is unreachable it stays silent and
 returns 0; capture never blocks or breaks the session. The handlers take an
@@ -27,14 +33,30 @@ import sys
 from pathlib import Path
 
 from phileas.daemon_client import call
-from phileas.recall_format import POINTER_SUMMARY_CHARS, render_pointers
 
 CLIENT_PREFIX = "claude_code:"
 
-# Recall injection (UserPromptSubmit) -----------------------------------------
-# Kept small: this runs on every prompt, unprompted, so it should read as a
-# light nudge, not a context dump.
-RECALL_TOP_K = 5
+# Recall hint (UserPromptSubmit) ----------------------------------------------
+# Static: the model picks its own query and tool (recall / recall_recent /
+# about / find_entities / list_day_memories / timeline — see the phileas
+# skill's Recall section). The hook no longer calls recall() itself; this is
+# a fixed-string nudge, injected the same way _memorize_hint is on Stop, just
+# with no asyncRewake equivalent for a pre-turn event.
+_RECALL_HINT = (
+    "<phileas-recall-hint>\n"
+    "Before answering, weigh whether this prompt calls back to something "
+    "durable -- past work, a decision, a named person/project, a date -- "
+    "worth recalling first. If so, call recall yourself: don't default to "
+    "one fixed-size recall(query=<the prompt>) call. Pick your own focused "
+    "query per concept (not the prompt verbatim) and match the tool to the "
+    "question's shape -- recall, recall_recent, about/find_entities, "
+    "list_day_memories, and timeline all exist for a reason; see the "
+    "phileas skill's Recall section for which one and how to size it. Fire "
+    "more than one in parallel and merge by id when the prompt holds more "
+    "than one concept. If nothing here calls for it, just answer -- don't "
+    "force a call, don't ask permission either way.\n"
+    "</phileas-recall-hint>"
+)
 
 # Cheap clear-skip patterns for recall — the goal is "obviously not memory
 # relevant", not detecting positive relevance (that's what the recalled
@@ -127,9 +149,9 @@ def handle_session_start(payload: dict) -> int:
 
 
 def _skip_recall(prompt: str) -> bool:
-    """True for prompts too short or too generic to be worth a recall call —
+    """True for prompts too short or too generic to be worth a recall hint —
     a bare ack, a one-word reply. Conservative: only filters unambiguous cases,
-    everything else still gets recalled against."""
+    everything else still gets the hint."""
     s = prompt.strip()
     if len(s) < 3:
         return True
@@ -137,37 +159,16 @@ def _skip_recall(prompt: str) -> bool:
     return bare in _OBVIOUS_SKIP_TOKENS
 
 
-def _recall_context(prompt: str) -> str:
-    """Local hybrid recall for this prompt, rendered as pointer lines. Empty on
-    any failure (daemon down, no hits) — recall injection never blocks or
-    errors the prompt."""
-    response = call("recall", {"query": prompt, "top_k": RECALL_TOP_K})
-    if not response or not response.get("ok"):
-        return ""
-    memories = response.get("result")
-    if not isinstance(memories, list) or not memories:
-        return ""
-    lines = render_pointers(memories, max_summary_chars=POINTER_SUMMARY_CHARS)
-    return (
-        "<phileas-recall>\n"
-        "Auto-recalled from long-term memory for this prompt. Use silently as "
-        "background context and name it only if it's load-bearing for the "
-        "answer; hydrate(id8) for the full body of any one.\n" + "\n".join(lines) + "\n</phileas-recall>"
-    )
-
-
-def handle_user_prompt(payload: dict) -> int:
-    """Store the user's prompt verbatim, attributed to the human, then inject a
-    local recall of relevant memories as context for the turn about to run."""
+def handle_user_prompt_submit(payload: dict) -> int:
+    """Store the user's prompt verbatim, attributed to the human, then nudge
+    the model to recall relevant memories itself before answering."""
     session_id = payload.get("session_id")
     prompt = (payload.get("prompt") or "").strip()
     if not session_id or not prompt:
         return 0
     _ingest(session_id, prompt, "self")
     if not _skip_recall(prompt):
-        context = _recall_context(prompt)
-        if context:
-            print(context)
+        print(_RECALL_HINT)
     return 0
 
 
