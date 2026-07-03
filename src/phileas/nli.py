@@ -1,10 +1,11 @@
 """NLI cross-encoder for contradiction scoring.
 
 Lazy-loaded like the reranker, so it never blocks MCP server startup. Uses
-cross-encoder/nli-deberta-v3-small (~140MB), which classifies a (premise,
-hypothesis) pair as contradiction / entailment / neutral. The contradiction
-probe gates this behind a cheap cosine filter and a structured check, so the
-model only scores a handful of candidate pairs per write.
+cross-encoder/nli-deberta-v3-small (~540MB — DeBERTa-v3's 128K-token vocab
+gives it a large embedding table despite the "small" body), which classifies
+a (premise, hypothesis) pair as contradiction / entailment / neutral. The
+contradiction probe gates this behind a cheap cosine filter and a structured
+check, so the model only scores a handful of candidate pairs per write.
 
 When the model can't be loaded, ``contradiction_prob`` raises ``NLIUnavailable``
 and the contradiction probe falls back to the plain cosine band — a missing NLI
