@@ -23,9 +23,9 @@ Route by the shape of the question. Call several in parallel when shapes overlap
 
 - **Time-relative** ("yesterday", "recently", "last week", "last session", "last time we talked") → `recall_recent(days=N)`. Top memories per day, newest first, bounded. Reach for this first when the question has a temporal anchor.
 - **Named entity** in the prompt (person, project, tool) → `about(name=...)`. Pass the bare name without a leading `@`. Returns every memory linked to that entity in the graph — the cheapest, most precise "who is X / what about Y" lookup. Bounded ("+N more" footer when a hub entity is capped).
-- **Explicit date** ("2026-04-14", "Apr 14") → `list_day_memories(date="YYYY-MM-DD")`. Every active memory anchored to that day.
+- **Explicit date** ("2026-04-14", "Apr 14") → `timeline(start_date="YYYY-MM-DD", window=0)`. Every active memory anchored to that day.
 - **Topic / concept** with no entity or date anchor → `recall(query=<focused term, 1–4 words>)`. Hybrid gather + cross-encoder rerank.
-- **Date range** spanning multiple days → `timeline(start=..., end=...)`.
+- **Date range** spanning multiple days → `timeline(start_date=..., end_date=...)`.
 - **Wildcard / cross-topic nudge** (no anchor; you want what the task *wouldn't* surface) → `serendipity(n=3)`. Opt-in, not relevance-gated. Pass ids already in context as `exclude_ids`.
 
 ### Pointers in, hydrate on demand

@@ -23,7 +23,6 @@ from phileas.cli.commands import (
     ingest,
     init_cmd,
     list_cmd,
-    list_day,
     recall,
     recall_recent,
     reconcile,
@@ -91,7 +90,6 @@ app.add_command(recall)
 app.add_command(recall_recent)
 app.add_command(timeline)
 app.add_command(about)
-app.add_command(list_day)
 app.add_command(serendipity)
 app.add_command(hydrate)
 app.add_command(thread)

@@ -38,7 +38,7 @@ CLIENT_PREFIX = "claude_code:"
 
 # Recall hint (UserPromptSubmit) ----------------------------------------------
 # Static: the model picks its own query and tool (recall / recall_recent /
-# about / find_entities / list_day_memories / timeline — see the phileas
+# about / find_entities / timeline — see the phileas
 # skill's Recall section). The hook no longer calls recall() itself; this is
 # a fixed-string nudge, injected the same way _memorize_hint is on Stop, just
 # with no asyncRewake equivalent for a pre-turn event.
@@ -52,7 +52,7 @@ _RECALL_HINT = (
     "when this conversation is in another language -- stored memories are "
     "in English, so a same-language query can miss them. Match the tool to "
     "the question's shape -- recall, recall_recent, about/find_entities, "
-    "list_day_memories, and timeline all exist for a reason; see the "
+    "and timeline all exist for a reason; see the "
     "phileas skill's Recall section for which one and how to size it. Fire "
     "more than one in parallel and merge by id when the prompt holds more "
     "than one concept. If nothing here calls for it, just answer -- don't "

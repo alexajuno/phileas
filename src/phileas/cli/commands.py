@@ -212,7 +212,7 @@ def recall(query: str, top_k: int, memory_type: str | None):
 
 
 # ------------------------------------------------------------------
-# recall-family read tools (recall-recent, timeline, about, list-day,
+# recall-family read tools (recall-recent, timeline, about,
 # serendipity, hydrate, thread, find-entities)
 #
 # Thin wrappers over the shared phileas.tool_runner so the CLI, the MCP
@@ -262,11 +262,14 @@ def recall_recent(days: int):
 
 
 @click.command("timeline")
-@click.argument("start_date")
+@click.argument("start_date", required=False, default=None)
 @click.option("--end", "end_date", default=None, help="End date YYYY-MM-DD (optional).")
 @click.option("--window", default=1, type=int, help="Days to expand search in both directions.")
-def timeline(start_date: str, end_date: str | None, window: int):
-    """Memories anchored to a date or date range (YYYY-MM-DD)."""
+def timeline(start_date: str | None, end_date: str | None, window: int):
+    """Memories anchored to a date or date range (YYYY-MM-DD; defaults to today).
+
+    Pass --window 0 for exactly the requested day(s).
+    """
     _run_tool("timeline", {"start_date": start_date, "end_date": end_date, "window": window})
 
 
@@ -278,13 +281,6 @@ def timeline(start_date: str, end_date: str | None, window: int):
 def about(name: str, entity_type: str | None, expand: bool, memory_type: str | None):
     """Memories connected to an entity in the knowledge graph."""
     _run_tool("about", {"name": name, "entity_type": entity_type, "expand": expand, "memory_type": memory_type})
-
-
-@click.command("list-day")
-@click.argument("date", required=False, default=None)
-def list_day(date: str | None):
-    """List a day's active memories (YYYY-MM-DD; defaults to today)."""
-    _run_tool("list_day_memories", {"date": date})
 
 
 @click.command("serendipity")

@@ -81,8 +81,8 @@ mcp = FastMCP(
         "topic-less time questions ('recently', 'yesterday', 'last chat', 'last night', "
         "'last session', 'last time we talked'). If the question carries a topic, prefer "
         "focused recall() — it already folds recency into its score.\n"
-        "- list_day_memories(date): all memories for a specific date — for single-day deep dives\n"
-        "- timeline(start, end): memories across a date range\n"
+        "- timeline(start, end): memories anchored to a date. One day, a range, or today "
+        "(omit start). For a single-day deep dive pass that date with window=0.\n"
         "- about(name): memories linked to a person/entity (bounded; '+N more' when capped) — for 'who is X'\n"
         "- serendipity(n): N high-signal memories NOT gated on relevance — a wildcard slot for "
         "cross-topic context the task wouldn't retrieve. Opt-in; keep n small.\n"
@@ -536,14 +536,19 @@ def about(
 
 
 @mcp.tool()
-def timeline(start_date: str, end_date: str | None = None, window: int = 1) -> str:
+def timeline(start_date: str | None = None, end_date: str | None = None, window: int = 1) -> str:
     """Get memories anchored to a date or date range.
 
+    The date-driven read: one day, a range, or today. For a single exact day
+    (e.g. all of an explicit date, or feeding a reflection over one day) pass
+    that date with window=0. Omit start_date for today.
+
     Args:
-        start_date: Start date in YYYY-MM-DD format.
+        start_date: Start date in YYYY-MM-DD format (optional; defaults to today).
         end_date: End date in YYYY-MM-DD format (optional; if omitted, returns only start_date).
-        window: Days to expand search in both directions (default 1).
-            Helps catch events that span midnight or were tagged to adjacent days.
+        window: Days to expand search in both directions (default 1). Helps catch
+            events that span midnight or were tagged to adjacent days. Pass 0 for
+            exactly the requested day(s).
     """
     return _call("timeline", {"start_date": start_date, "end_date": end_date, "window": window})
 
@@ -581,20 +586,6 @@ def serendipity(n: int = 3, exclude_ids: list | str | None = None) -> str:
         exclude_ids: List or JSON string of memory ids (full or id8) to skip.
     """
     return _call("serendipity", {"n": n, "exclude_ids": exclude_ids})
-
-
-@mcp.tool()
-def list_day_memories(date: str | None = None) -> str:
-    """List the day's active memories — the input for agent-driven reflection.
-
-    Returns every active memory anchored to the given date, with no window
-    expansion. An agent reads this, synthesizes a handful of reflection
-    memories, and writes them back via `memorize(memory_type="reflection")`.
-
-    Args:
-        date: Date to list (YYYY-MM-DD). Defaults to today.
-    """
-    return _call("list_day_memories", {"date": date})
 
 
 @mcp.tool()

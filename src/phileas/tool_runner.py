@@ -136,10 +136,11 @@ def timeline(
     engine,
     entities_fn: EntitiesFn,
     *,
-    start_date: str,
+    start_date: str | None = None,
     end_date: str | None = None,
     window: int = 1,
 ) -> ToolResult:
+    start_date = start_date or _date.today().isoformat()
     items = engine.timeline(start_date, end_date=end_date, window=window)
     if not items:
         if end_date:
@@ -174,18 +175,6 @@ def about(
     if len(items) > cap:
         lines.append(f"  … +{len(items) - cap} more (narrow with memory_type, or use timeline / hydrate to drill in)")
     return {"items": shown, "text": "\n".join(lines)}
-
-
-def list_day_memories(engine, entities_fn: EntitiesFn, *, date: str | None = None) -> ToolResult:
-    target = date or _date.today().isoformat()
-    items = engine.timeline(target, window=0)
-    if not items:
-        return {"items": [], "text": f"No memories for {target}."}
-
-    lines = [f"Memories for {target} ({len(items)} found):"]
-    for item in items:
-        lines.append(f"  [{item['id']}] [{item['type']}] {item['summary']}")
-    return {"items": items, "text": "\n".join(lines)}
 
 
 def serendipity(
@@ -347,7 +336,6 @@ TOOLS: dict[str, Callable[..., ToolResult]] = {
     "recall_recent": recall_recent,
     "timeline": timeline,
     "about": about,
-    "list_day_memories": list_day_memories,
     "serendipity": serendipity,
     "hydrate": hydrate,
     "thread": thread,

@@ -768,7 +768,7 @@ class MemoryEngine:
         Day nodes intentionally have no natural-language aliases: bare forms
         ("Thursday", "April 9") collide across years and flood recall via
         substring CONTAINS in search_nodes (see issue #37). Date-based
-        retrieval should go through list_day_memories / timeline.
+        retrieval should go through timeline.
         """
         self.graph.upsert_node("Day", iso_date)
         self.graph.link_memory(memory_id, "Day", iso_date)
