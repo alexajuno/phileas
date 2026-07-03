@@ -100,3 +100,52 @@ def test_relay_surfaces_daemon_error(monkeypatch):
 def test_relay_returns_result(monkeypatch):
     monkeypatch.setattr(daemon_client, "call", lambda *a, **k: {"ok": True, "result": "done"})
     assert mcp_server._call("status", {}) == "done"
+
+
+# -- the client's response taxonomy: reachable-but-erroring vs unreachable ----
+
+
+def test_call_surfaces_daemon_error_on_http_500(monkeypatch, tmp_dir):
+    """An HTTP 500 means the daemon answered: the engine raised while serving.
+    Its {"ok": False, "error": ...} body must reach the caller so the relay can
+    report the real error instead of a false "not reachable". This is the exact
+    shape a memorize that raises after persisting produces: the memory is saved
+    (recall finds it) yet the request 500s.
+    """
+    import io
+    import urllib.error
+
+    monkeypatch.setattr(daemon_client, "is_running", lambda *a, **k: 12345)
+
+    def _raise_500(*a, **k):
+        raise urllib.error.HTTPError(
+            url="http://127.0.0.1:12345/",
+            code=500,
+            msg="Internal Server Error",
+            hdrs=None,
+            fp=io.BytesIO(b'{"ok": false, "error": "\'str\' object has no attribute \'get\'"}'),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _raise_500)
+    resp = daemon_client.call("tool", {"name": "memorize"}, config=load_config(home=tmp_dir))
+    assert resp == {"ok": False, "error": "'str' object has no attribute 'get'"}
+    # Through the relay, that becomes a truthful error string, not "not reachable".
+    monkeypatch.setattr(daemon_client, "call", lambda *a, **k: resp)
+    out = mcp_server._call("memorize", {})
+    assert "not reachable" not in out
+    assert "no attribute 'get'" in out
+
+
+def test_call_returns_none_on_transport_failure(monkeypatch, tmp_dir):
+    """A connection-level failure (refused, reset, timeout) is genuine
+    unreachability: no daemon answered, so call() returns None and the relay
+    reports "not reachable"."""
+    import urllib.error
+
+    monkeypatch.setattr(daemon_client, "is_running", lambda *a, **k: 12345)
+
+    def _refuse(*a, **k):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", _refuse)
+    assert daemon_client.call("tool", {"name": "memorize"}, config=load_config(home=tmp_dir)) is None

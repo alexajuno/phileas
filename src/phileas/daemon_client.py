@@ -65,6 +65,7 @@ def call(
     if port is None:
         return None
 
+    import urllib.error
     import urllib.request
 
     body = json.dumps({"method": method, "params": params or {}}).encode()
@@ -78,7 +79,20 @@ def call(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        # The daemon answered, so it is reachable; the engine raised while
+        # serving the request. Its error body is the same {"ok": False,
+        # "error": ...} envelope a 200 carries, so return that and let the caller
+        # surface the real error, rather than dropping to None and mislabeling a
+        # live daemon as unreachable (a write that raised after persisting still
+        # shows up in recall, so "not reachable" was doubly misleading).
+        try:
+            return json.loads(e.read())
+        except Exception:
+            return {"ok": False, "error": f"daemon returned HTTP {e.code}"}
     except Exception:
+        # No response reached us: connection refused, reset, or timed out. The
+        # daemon is genuinely unreachable (or died mid-flight); report as such.
         return None
 
 
