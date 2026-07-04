@@ -28,7 +28,6 @@ stay pure and testable; the CLI layer does the stdin read and the exit.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -59,43 +58,6 @@ _RECALL_HINT = (
     "force a call, don't ask permission either way.\n"
     "</phileas-recall-hint>"
 )
-
-# Cheap clear-skip patterns for recall — the goal is "obviously not memory
-# relevant", not detecting positive relevance (that's what the recalled
-# pointers themselves are for). Mirrors the SKILL.md query-shape guidance.
-_OBVIOUS_SKIP_TOKENS = frozenset(
-    {
-        "ok",
-        "okay",
-        "k",
-        "kk",
-        "yes",
-        "y",
-        "yep",
-        "yup",
-        "no",
-        "n",
-        "nope",
-        "thanks",
-        "thx",
-        "ty",
-        "lgtm",
-        "sure",
-        "go",
-        "cool",
-        "nice",
-        "done",
-        "stop",
-        "wait",
-        "right",
-        "great",
-        "good",
-        "fine",
-        "yeah",
-        "yea",
-    }
-)
-_TRAILING_PUNCT = re.compile(r"[!?.,;:]+$")
 
 # Memorize nudge (Stop) --------------------------------------------------------
 # Below this many combined chars of the user's prompt + the assistant's reply,
@@ -150,17 +112,6 @@ def handle_session_start(payload: dict) -> int:
     return 0
 
 
-def _skip_recall(prompt: str) -> bool:
-    """True for prompts too short or too generic to be worth a recall hint —
-    a bare ack, a one-word reply. Conservative: only filters unambiguous cases,
-    everything else still gets the hint."""
-    s = prompt.strip()
-    if len(s) < 3:
-        return True
-    bare = _TRAILING_PUNCT.sub("", s).lower()
-    return bare in _OBVIOUS_SKIP_TOKENS
-
-
 def handle_user_prompt_submit(payload: dict) -> int:
     """Store the user's prompt verbatim, attributed to the human, then nudge
     the model to recall relevant memories itself before answering."""
@@ -169,8 +120,7 @@ def handle_user_prompt_submit(payload: dict) -> int:
     if not session_id or not prompt:
         return 0
     _ingest(session_id, prompt, "self")
-    if not _skip_recall(prompt):
-        print(_RECALL_HINT)
+    print(_RECALL_HINT)
     return 0
 
 

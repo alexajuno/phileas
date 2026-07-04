@@ -73,7 +73,7 @@ def test_user_prompt_prints_recall_hint(monkeypatch, capsys):
     assert "recall_recent" in out  # names the tool family, not just "recall"
 
 
-def test_user_prompt_skips_recall_for_obvious_ack(monkeypatch, capsys):
+def test_user_prompt_prints_hint_even_for_a_bare_ack(monkeypatch, capsys):
     calls = _record_calls(monkeypatch)
     capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "thanks!"})
     assert calls == [
@@ -82,7 +82,7 @@ def test_user_prompt_skips_recall_for_obvious_ack(monkeypatch, capsys):
             {"text": "thanks!", "client_key": "claude_code:s1", "attribution": "self", "source_kind": "claude_code"},
         )
     ]
-    assert capsys.readouterr().out == ""
+    assert "<phileas-recall-hint>" in capsys.readouterr().out
 
 
 def test_user_prompt_prints_hint_even_when_daemon_down(monkeypatch, capsys):
