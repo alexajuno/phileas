@@ -26,6 +26,7 @@ from phileas.reconcile import candidate_pairs
 from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
+from phileas.temporal import resolve_deixis, resolve_temporal
 from phileas.vector import VectorStore
 
 log = get_logger()
@@ -1164,6 +1165,28 @@ class MemoryEngine:
                 )
         _mark("graph_path3c_referent")
 
+        # Path 3d: temporal deixis — resolve the time words in the query
+        # ("tonight", "yesterday", "this weekend", "next Friday") to concrete
+        # ISO dates and seed each resolved Day node's memories into the pool.
+        # For a deictic question the date is the query's primary constraint, so
+        # the day's full set enters (Day pulls uncapped in
+        # _add_memories_for_entity); the scope applied in Stage 2 then leads with
+        # that day and demotes off-day matches, ranking within the day on topic.
+        #
+        # This is the only path that populates day_ids on a natural query: Paths
+        # 3/3b/4 skip Day neighbours so an incidental date link can't flood, and
+        # no query word ever spells an ISO date, so without this the day never
+        # enters as a candidate at all.
+        deixis_mode = resolve_deixis()
+        deixis_ids: set[str] = set()
+        if deixis_mode != "off":
+            temporal = resolve_temporal(query, date.today())
+            for iso_date in temporal.dates:
+                _add_memories_for_entity("Day", iso_date, hop=0, sub_path=deixis_ids)
+            if temporal.dates:
+                op_extra(deixis_dates=temporal.dates, deixis_phrases=temporal.phrases)
+        _mark("graph_deixis")
+
         # Path 4: semantic-to-graph bridge
         # Use semantic hits to discover entities, then follow graph
         # edges (including entity↔entity) to find connected memories.
@@ -1297,6 +1320,22 @@ class MemoryEngine:
         if not filtered:
             op_extra(results=0)
             return []
+
+        # Temporal-deixis scope: the query named a date, so restrict the
+        # candidate set to that day's memories (Path 3d seeded them) and let
+        # Stage 2 rerank + cut work within the day. The restriction happens here,
+        # before scoring, so the day is reranked among itself and cut on its own
+        # relevance spread. Demoting off-day scores after the rerank instead
+        # leaves the day's #2/#3 pinned at their whole-pool ranks — compressed by
+        # the off-day memories the rerank interleaves — so they fall below the
+        # cut and the answer collapses to a single hit. Skipped when the day has
+        # no memory in the pool, so a dateful query against an empty day still
+        # answers topically rather than returning nothing.
+        if deixis_mode == "scope" and deixis_ids:
+            scoped = {mid: item for mid, item in filtered.items() if mid in deixis_ids}
+            if scoped:
+                filtered = scoped
+                op_extra(deixis_scoped=len(filtered))
 
         # ----------------------------------------------------------
         # Stage 2: Hybrid relevance scoring
