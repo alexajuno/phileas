@@ -1,0 +1,276 @@
+{
+  "fixture_version": "mara-eval@27ac3b512e58",
+  "_note": "relevant/excluded entries are distinctive summary SUBSTRINGS; the runner resolves each to exactly one memory id against the seeded store and errors on a non-unique match. Authored by hand from coldstart/persona.md — the trustworthy ground truth.",
+  "queries": [
+    {
+      "qid": "daniel-relocates",
+      "query": "Daniel relocating to Toronto",
+      "query_type": "entity",
+      "relevant": [
+        "said out loud for the first time that he might relocate",
+        "he has applied for a transfer to his firm's Toronto office",
+        "Nautilus approved Daniel's transfer to Toronto",
+        "Daniel moves to Toronto for good"
+      ]
+    },
+    {
+      "qid": "mother-afib",
+      "query": "mother atrial fibrillation health",
+      "query_type": "entity",
+      "relevant": [
+        "mother was diagnosed with atrial fibrillation",
+        "afib is controlled for now after a Lagos cardiologist",
+        "mother was admitted to hospital overnight",
+        "mother for the first time in person; her mother is thinner"
+      ]
+    },
+    {
+      "qid": "priya-not-priyanka",
+      "query": "Priya",
+      "query_type": "entity_nonmerge",
+      "relevant": [
+        "befriended Priya, a nurse on her unit",
+        "gave her first pottery piece she loved (a celadon bowl) to Priya",
+        "missed her friend Priya more than she expected"
+      ],
+      "excluded": [
+        "new charge nurse, Priyanka Shah, started on Mara's unit",
+        "Priyanka, the manager, came in at 2am"
+      ]
+    },
+    {
+      "qid": "priyanka-not-priya",
+      "query": "Priyanka charge nurse rota",
+      "query_type": "entity_nonmerge",
+      "relevant": [
+        "new charge nurse, Priyanka Shah, started on Mara's unit",
+        "Priyanka, the manager, came in at 2am",
+        "made peace with Priyanka"
+      ],
+      "excluded": [
+        "befriended Priya, a nurse on her unit",
+        "gave her first pottery piece she loved (a celadon bowl) to Priya"
+      ]
+    },
+    {
+      "qid": "tunde-uncle-not-doctor",
+      "query": "uncle Tunde",
+      "query_type": "entity_nonmerge",
+      "relevant": [
+        "Tunde Bakare is Mara's uncle",
+        "Uncle Tunde Bakare took Mara to his favourite suya spot"
+      ],
+      "excluded": [
+        "Dr. Tunde Adeyemi is an old family friend and doctor",
+        "Dr. Tunde Adeyemi, the family-friend doctor, signed off"
+      ]
+    },
+    {
+      "qid": "tunde-doctor-not-uncle",
+      "query": "Dr. Tunde Adeyemi family friend doctor",
+      "query_type": "entity_nonmerge",
+      "relevant": [
+        "Dr. Tunde Adeyemi is an old family friend and doctor",
+        "Dr. Tunde Adeyemi, the family-friend doctor, signed off",
+        "joined the 2026-07-16 appointment and walked the cardiologist's plan"
+      ],
+      "excluded": [
+        "Tunde Bakare is Mara's uncle",
+        "Uncle Tunde Bakare took Mara to his favourite suya spot"
+      ]
+    },
+    {
+      "qid": "patient-died-debrief",
+      "query": "patient died Halloran harsh debrief",
+      "query_type": "event",
+      "relevant": [
+        "a young patient died on Mara's hospital shift",
+        "Dr. Halloran was brutal in the post-loss debrief",
+        "colleague Priya found her in the supply room"
+      ]
+    },
+    {
+      "qid": "pottery-started",
+      "query": "started pottery class Clay & Co",
+      "query_type": "event",
+      "relevant": [
+        "signed up for a pottery class at a nearby studio called Clay & Co",
+        "took up pottery as a deliberate non-screen"
+      ]
+    },
+    {
+      "qid": "got-permanent-position",
+      "query": "permanent ICU position application and offer",
+      "query_type": "event",
+      "relevant": [
+        "submitted her application for the permanent ICU position",
+        "decided to apply for the permanent ICU position",
+        "learned she got the permanent ICU position"
+      ]
+    },
+    {
+      "qid": "bowl-sold-show",
+      "query": "pottery group show stranger bought a bowl",
+      "query_type": "event",
+      "relevant": [
+        "the Clay & Co group show happened; Mara exhibited three bowls",
+        "a stranger bought one of Mara's bowls",
+        "group show featuring Mara's pottery is scheduled"
+      ]
+    },
+    {
+      "qid": "travel-day-lagos",
+      "query": "Lagos travel day Pearson airport Paris layover",
+      "query_type": "temporal",
+      "relevant": [
+        "flew from Toronto to Lagos to visit her mother, departing Pearson",
+        "running on no sleep and a flat white at Pearson",
+        "Lagos flight was an Air France routing with a Paris (CDG) layover",
+        "ate a croissant at the Paris CDG layover"
+      ]
+    },
+    {
+      "qid": "chaotic-icu-night",
+      "query": "chaotic ICU night cardiac codes pileup",
+      "query_type": "temporal",
+      "relevant": [
+        "chaotic ICU shift at the General with three cardiac codes",
+        "multi-car pileup on the Gardiner came into the General",
+        "did chest compressions until her arms shook"
+      ]
+    },
+    {
+      "qid": "understaffing-opinion",
+      "query": "ICU understaffing management crisis",
+      "query_type": "opinion",
+      "relevant": [
+        "TGH is chronically understaffed and that this is a management-made staffing crisis",
+        "anger about TGH's understaffing",
+        "ICU's chronic understaffing is the core problem"
+      ]
+    },
+    {
+      "qid": "priya-burn-it-down",
+      "query": "Priya thinks management is a lost cause",
+      "query_type": "opinion",
+      "relevant": [
+        "Priya judged (2026-06-08) that Mara should leave the institution",
+        "Priya holds the view (relayed 2026-08-12) that the institution is a lost cause"
+      ]
+    },
+    {
+      "qid": "halloran-respect",
+      "query": "Halloran respects Mara",
+      "query_type": "opinion",
+      "relevant": [
+        "certain that Halloran respects her despite his harshness",
+        "called her one of the steadiest hands on the unit"
+      ]
+    },
+    {
+      "qid": "epic-dislike",
+      "query": "Epic charting system frustration",
+      "query_type": "opinion",
+      "relevant": [
+        "Epic EHR charting system in February 2026, and as of 2026-03-29 she finds it adds about an hour",
+        "deep dislike of the Epic charting system",
+        "she would have burned the server room down"
+      ]
+    },
+    {
+      "qid": "lagos-trip-stance",
+      "query": "deciding whether to fly to Lagos this year",
+      "query_type": "stance_evolution",
+      "relevant": [
+        "she will not fly home to Lagos this year",
+        "decided not to fly to Lagos right now",
+        "booked a flight to Lagos for July"
+      ]
+    },
+    {
+      "qid": "pottery-stance",
+      "query": "pottery silly distraction versus keeping sane",
+      "query_type": "stance_evolution",
+      "relevant": [
+        "took up pottery as a deliberate non-screen",
+        "relies on pottery as her main way of staying sane",
+        "once dismissed as a silly distraction that probably wouldn't stick, has grown into something she is exhibiting"
+      ]
+    },
+    {
+      "qid": "icu-vs-stepdown-stance",
+      "query": "stay in the ICU or move to a calmer step-down ward",
+      "query_type": "stance_evolution",
+      "relevant": [
+        "career choice between applying for a permanent position on her ICU unit or a quieter step-down ward",
+        "torn about whether to stay in the ICU or move to a calmer ward",
+        "wants to stay in the ICU and keep the work that matters"
+      ]
+    },
+    {
+      "qid": "priyanka-stance",
+      "query": "changing opinion of Priyanka over time",
+      "query_type": "stance_evolution",
+      "relevant": [
+        "reserved 'jury's out' view of new charge nurse Priyanka Shah",
+        "came in at 2am off shift because she heard the ICU was drowning",
+        "turned out to be one of the good ones"
+      ]
+    },
+    {
+      "qid": "healthcare-stance",
+      "query": "Canadian versus Nigerian healthcare quality",
+      "query_type": "stance_evolution",
+      "relevant": [
+        "wrong to assume Canadian healthcare is simply better than Nigerian healthcare",
+        "Reddington cardiologist to be sharp and unhurried"
+      ]
+    },
+    {
+      "qid": "jollof-cat-not-rice",
+      "query": "Jollof the cat",
+      "query_type": "decay_noise",
+      "relevant": [
+        "has a cat named Jollof, who moved with her",
+        "cat Jollof acting betrayed by her two-week absence"
+      ],
+      "excluded": [
+        "Priya brought Mara homemade jollof rice",
+        "mother made jollof rice during the Lagos visit"
+      ]
+    },
+    {
+      "qid": "half-marathon",
+      "query": "half marathon running",
+      "query_type": "decay_noise",
+      "relevant": [
+        "hasn't done anything physical since running a half marathon"
+      ]
+    },
+    {
+      "qid": "matcha-coffee",
+      "query": "switching from coffee to matcha",
+      "query_type": "decay_noise",
+      "relevant": [
+        "bought matcha on 2026-04-12 to cut down on coffee",
+        "gave up trying to switch from coffee to matcha"
+      ]
+    },
+    {
+      "qid": "lost-earring",
+      "query": "lost gold earring at the airport",
+      "query_type": "decay_noise",
+      "relevant": [
+        "lost a small gold hoop earring near airport security"
+      ]
+    },
+    {
+      "qid": "goat-december",
+      "query": "goat named December",
+      "query_type": "decay_noise",
+      "relevant": [
+        "keeps a goat at his compound that he named 'December'"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "memories": [
+    {
+      "summary": "On 2026-08-20 Wen, Mara's pottery teacher, invited her to put a couple of pieces into a group show of the studio's work; Mara decided to do it despite her nerves.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-20",
+      "entities": [
+        {
+          "name": "Wen",
+          "type": "Person",
+          "description": "Mara's pottery teacher at Clay & Co"
+        },
+        {
+          "name": "Clay & Co",
+          "type": "Organization",
+          "description": "the pottery studio"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Wen",
+          "from_type": "Person",
+          "edge": "TEACHES_AT",
+          "to_name": "Clay & Co",
+          "to_type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "The Clay & Co studio group show featuring Mara's pottery is scheduled for 2026-09-19 (a Saturday) at the studio.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-20",
+      "entities": [
+        {
+          "name": "Clay & Co",
+          "type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "Mara reflected (2026-08-20) that pottery, which she once dismissed as a silly distraction that probably wouldn't stick, has grown into something she is exhibiting in a show.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-08-20",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "pottery",
+          "type": "Activity"
+        }
+      ]
+    },
+    {
+      "summary": "Mara gave up trying to switch from coffee to matcha and is back on coffee (noted 2026-08-20).",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-20",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara prepared a set of three small bowls to glaze for the September Clay & Co show (as of 2026-08-20), and wished Daniel could be in Toronto for it, which hinged on the Nautilus transfer still being undecided.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-20",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Nautilus",
+          "type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "When Mara doubted her bowls were gallery-worthy, Wen told her (2026-08-20) that whether the work belongs in the show is 'for the room' to decide, not Mara.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-20",
+      "entities": [
+        {
+          "name": "Wen",
+          "type": "Person",
+          "description": "Mara's pottery teacher at Clay & Co"
+        }
+      ]
+    }
+  ]
+}

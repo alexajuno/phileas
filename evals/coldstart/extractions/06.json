@@ -1,0 +1,100 @@
+{
+  "memories": [
+    {
+      "summary": "Daniel cancelled his planned visit to Mara (the trip was set for May 2026) because his work would not grant him the time off; they had a tense phone call about it on 2026-04-20.",
+      "memory_type": "event",
+      "daily_ref": "2026-04-20",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "PARTNER_OF",
+          "to_name": "Daniel",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara decided (2026-04-20) she will not fly home to Lagos this year, reasoning that flights plus unpaid leave are unaffordable and her mother would object to the expense.",
+      "memory_type": "event",
+      "daily_ref": "2026-04-20",
+      "entities": [
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "summary": "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax.",
+      "memory_type": "profile",
+      "daily_ref": "2026-04-20",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Vancouver",
+          "type": "Place"
+        },
+        {
+          "name": "Lagos",
+          "type": "Place"
+        },
+        {
+          "name": "Halifax",
+          "type": "Place"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Daniel",
+          "from_type": "Person",
+          "edge": "LIVES_IN",
+          "to_name": "Vancouver",
+          "to_type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Mara feels the people she loves are all far away and staying far, a recurring sense of distance and isolation in her relationships (expressed 2026-04-20).",
+      "memory_type": "reflection",
+      "daily_ref": "2026-04-20",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "summary": "Mara has a pottery session on Thursdays, which she looks to as a bright spot in her week.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-04-20",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "pottery",
+          "type": "Activity"
+        }
+      ],
+      "relationships": []
+    }
+  ]
+}

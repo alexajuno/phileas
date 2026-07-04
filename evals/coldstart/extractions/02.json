@@ -1,0 +1,75 @@
+{
+  "memories": [
+    {
+      "summary": "Mara is a nurse who works hospital shifts in an ICU setting.",
+      "memory_type": "profile",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara's hospital rolled out the Epic EHR charting system in February 2026, and as of 2026-03-29 she finds it adds about an hour to every shift with excessive clicking.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-03-29",
+      "entities": [
+        {
+          "name": "Epic",
+          "type": "Organization",
+          "description": "Epic EHR charting system used at Mara's hospital"
+        }
+      ]
+    },
+    {
+      "summary": "As of 2026-03-29, Mara observes the nursing team is adjusting only slowly to the new Epic system, with everyone disliking it equally in a way that feels bonding.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-03-29",
+      "entities": [
+        {
+          "name": "Epic",
+          "type": "Organization",
+          "description": "Epic EHR charting system used at Mara's hospital"
+        }
+      ]
+    },
+    {
+      "summary": "Mara is partnered with Dan, who was also stressed at work as of 2026-03-29; she values that they can complain to each other affectionately.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-03-29",
+      "entities": [
+        {
+          "name": "Dan",
+          "type": "Person",
+          "description": "Mara's partner"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "PARTNER_OF",
+          "to_name": "Dan",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara values shared, affectionate complaining with her partner Dan as a way they connect and support each other.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-03-29",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Dan",
+          "type": "Person",
+          "description": "Mara's partner"
+        }
+      ]
+    }
+  ]
+}

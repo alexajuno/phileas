@@ -1,0 +1,70 @@
+{
+  "memories": [
+    {
+      "summary": "On 2026-08-12 Mara submitted her application for the permanent ICU position at the General, with references from Dr. Halloran and Priya; an interview was expected later that month.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-12",
+      "entities": [
+        {
+          "name": "the General",
+          "type": "Organization",
+          "description": "Toronto General Hospital, where Mara applied for the permanent ICU position"
+        },
+        {
+          "name": "Dr. Halloran",
+          "type": "Person"
+        },
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "Mara's friend and fellow ICU nurse; distinct from manager Priyanka"
+        }
+      ]
+    },
+    {
+      "summary": "In her application Mara wrote (2026-08-12) that she wants to help fix the staffing from inside the institution rather than flee it.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-12",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Priya holds the view (relayed 2026-08-12) that the institution is a lost cause and she would 'burn it down'; Mara agrees management has been bad but disagrees, believing it is fixable and wanting to 'renovate.' Two distinct holders of an overlapping grievance.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-12",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "Mara's friend and fellow ICU nurse who thinks the institution is unfixable; distinct from manager Priyanka"
+        }
+      ]
+    },
+    {
+      "summary": "Mara's interview for the permanent ICU position was expected later in August 2026 (noted 2026-08-12).",
+      "memory_type": "event",
+      "daily_ref": "2026-08-12",
+      "entities": [
+        {
+          "name": "the General",
+          "type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "Mara hit send on the permanent-position application before she could talk herself out of it, and felt settled but a little terrified (2026-08-12).",
+      "memory_type": "reflection",
+      "daily_ref": "2026-08-12",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

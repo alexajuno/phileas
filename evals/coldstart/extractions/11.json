@@ -1,0 +1,106 @@
+{
+  "memories": [
+    {
+      "summary": "Mara is in a long-distance relationship with Daniel, who visited her (he flew out the previous Friday and left for the airport on 2026-05-25); his work is more tied to Vancouver, while Mara's is tied to Toronto.",
+      "memory_type": "profile",
+      "daily_ref": "2026-05-25",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Vancouver",
+          "type": "Place"
+        },
+        {
+          "name": "Toronto",
+          "type": "Place"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "PARTNER_OF",
+          "to_name": "Daniel",
+          "to_type": "Person"
+        },
+        {
+          "from_name": "Daniel",
+          "from_type": "Person",
+          "edge": "WORKS_IN",
+          "to_name": "Vancouver",
+          "to_type": "Place"
+        },
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "LIVES_IN",
+          "to_name": "Toronto",
+          "to_type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "During his visit, Daniel met Mara's friend Priya, and Mara's cat Jollof tolerated him.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-25",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Priya",
+          "type": "Person"
+        },
+        {
+          "name": "Jollof",
+          "type": "Animal"
+        }
+      ]
+    },
+    {
+      "summary": "On 2026-05-25 Daniel said out loud for the first time that he might relocate (likely from Vancouver toward Mara in Toronto), without promising; it concerns the long-standing unresolved question of who moves, which Mara had been scared to bring up.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-25",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara wants Daniel to only say he'll relocate if he means it; she didn't push the conversation because she needs the commitment to be genuine.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-05-25",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara feels acute loneliness and longing after Daniel leaves; the apartment feels too quiet and she missed him within an hour of his departure, a bittersweet pattern she recognizes ('classic') after good visits.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-05-25",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

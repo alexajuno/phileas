@@ -1,0 +1,82 @@
+{
+  "memories": [
+    {
+      "summary": "On 2026-05-01, a young patient died on Mara's hospital shift; she felt nothing could have been done but the loss weighed on her anyway.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-01",
+      "entities": [],
+      "relationships": []
+    },
+    {
+      "summary": "Mara judged (2026-05-01) that Dr. Halloran was brutal in the post-loss debrief, picking apart timing as if the team hadn't all been there breaking themselves over the patient; basis: the harsh debrief came right after losing a young patient.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-05-01",
+      "entities": [
+        {
+          "name": "Dr. Halloran",
+          "type": "Person",
+          "description": "physician who led the debrief at TGH"
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "summary": "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-01",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "Mara's nursing colleague at TGH"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Priya",
+          "from_type": "Person",
+          "edge": "COLLEAGUE_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara judged (2026-05-01) that TGH is chronically understaffed and that this is a management-made staffing crisis, not a 'vibe'; basis: three nurses quit TGH in the prior two months.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-05-01",
+      "entities": [
+        {
+          "name": "TGH",
+          "type": "Organization",
+          "description": "the hospital where Mara works as a nurse"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "WORKS_AT",
+          "to_name": "TGH",
+          "to_type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "Mara carries anger about TGH's understaffing that she describes as bigger than any single bad shift, recurring as a throughline beyond tonight's loss.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-05-01",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "TGH",
+          "type": "Organization"
+        }
+      ],
+      "relationships": []
+    }
+  ]
+}

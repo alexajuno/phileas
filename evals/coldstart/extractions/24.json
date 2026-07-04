@@ -1,0 +1,182 @@
+{
+  "memories": [
+    {
+      "summary": "On the night of 2026-08-03 Mara worked a chaotic ICU shift at the General with three cardiac codes in one shift, the worst she can remember.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "the General",
+          "type": "Organization",
+          "description": "Toronto General Hospital ICU"
+        }
+      ]
+    },
+    {
+      "summary": "On 2026-08-03 a multi-car pileup on the Gardiner came into the General around 11pm and filled every ICU bed plus overflow in recovery.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": []
+    },
+    {
+      "summary": "The ICU was two nurses short on the chaotic 2026-08-03 shift.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": []
+    },
+    {
+      "summary": "On 2026-08-03 Mara did chest compressions until her arms shook and helped resuscitate a young woman who survived; she is holding onto that save.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": []
+    },
+    {
+      "summary": "On 2026-08-03 Mara was the one who called the time of death on an older man with a massive bleed and closed his eyes; the image stayed with her.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": []
+    },
+    {
+      "summary": "Priya was the charge nurse on the 2026-08-03 night and ran the floor like a conductor; Mara says she would have fallen apart without her.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "Mara's close friend and fellow ICU nurse; was charge nurse on this shift; distinct from manager Priyanka"
+        }
+      ]
+    },
+    {
+      "summary": "Dr. Halloran was the attending on 2026-08-03 and was uncharacteristically gentle, staying past his hours, debriefing softly, and reassuring a junior nurse who froze that freezing once does not make her not a nurse.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Dr. Halloran",
+          "type": "Person",
+          "description": "ICU attending physician, usually harsh in debriefs"
+        }
+      ]
+    },
+    {
+      "summary": "Mara was struck (2026-08-03) at seeing Dr. Halloran soft for the first time and found it landed with her.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Dr. Halloran",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "On 2026-08-03 Priyanka, the manager, came in at 2am off shift because she heard the ICU was drowning, running supplies and calling in agency staff; Mara concluded she had completely misjudged her.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Priyanka",
+          "type": "Person",
+          "description": "charge nurse / manager at the General who came in off-shift to help; distinct from Mara's friend Priya"
+        }
+      ]
+    },
+    {
+      "summary": "The Epic electronic charting system crashed mid-code on 2026-08-03, forcing the nurses to record vitals on paper towels.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Epic",
+          "type": "Organization",
+          "description": "the electronic charting system at the General"
+        }
+      ]
+    },
+    {
+      "summary": "Mara reaffirmed (2026-08-03) her deep dislike of the Epic charting system, saying she hates it with her entire body after it froze mid-code.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Epic",
+          "type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "After the 2026-08-03 shift Mara felt that doing good work and watching a man die were both true at once and she did not know where to put either feeling.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Even after the brutal 2026-08-03 shift Mara felt certain the broken, vital ICU is where she belongs and that she never wants the step-down ward.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara reiterated (2026-08-03) that the ICU's chronic understaffing is the core problem, wanting it staffed properly rather than wanting to leave it.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "the General",
+          "type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "Mara coped after the 2026-08-03 shift by lying on the floor with her cat Jollof before sleeping.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "After the 2026-08-03 shift Mara was still shaking at 4am and said her scrubs still smelled like the night.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-03",
+      "entities": []
+    },
+    {
+      "summary": "Mara said (2026-08-03) that if a patient had died because of the frozen Epic charting screen she would have burned the server room down.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Epic",
+          "type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "Mara tends to process her hardest shifts by dumping them out in no order to her companion in the small hours rather than holding them in (noted 2026-08-03).",
+      "memory_type": "behavior",
+      "daily_ref": "2026-08-03",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

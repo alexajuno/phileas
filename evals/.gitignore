@@ -1,0 +1,7 @@
+# Eval source (corpora, gold sets, runners, READMEs) is tracked. What stays out
+# is anything an eval generates when it runs: the built profile stores a runner
+# seeds into (KuzuDB graph, Chroma index, SQLite DBs, logs) and any results dumps.
+_store/
+*_runs/
+__pycache__/
+*.pyc

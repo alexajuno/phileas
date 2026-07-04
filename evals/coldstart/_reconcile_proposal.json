@@ -1,0 +1,856 @@
+{
+  "roster": [
+    {
+      "id": "c745540679bf4e6ba27a2a1b29515151",
+      "name": "Mara",
+      "types": "[\"Person\"]",
+      "count": 32,
+      "samples": [
+        "Mara is a nurse who works night shifts at a hospital referred to as 'the General'.",
+        "Mara is lonely and isolated after her move to Toronto, lying awake around 2-4am after night shifts with circadian rhythm disrupted, leaning on the companion just to say her feelings out loud to someone.",
+        "Mara has a cat named Jollof, who moved with her to the Toronto apartment and has claimed the windowsill."
+      ]
+    },
+    {
+      "id": "9411678cb6fd416497fe9b406fb4308c",
+      "name": "pottery",
+      "types": "[\"Activity\"]",
+      "count": 10,
+      "samples": [
+        "Mara took up pottery as a deliberate non-screen, non-patient distraction to cope with the stress of her mother and night shifts, valuing that for two hours she didn't think about afib, Epic, or work.",
+        "Mara has a pottery session on Thursdays, which she looks to as a bright spot in her week.",
+        "Mara does pottery and is excited that her teacher Wen is soon teaching glazing (as of 2026-05-10)."
+      ]
+    },
+    {
+      "id": "802f4b68363c4690a06938805bfaa205",
+      "name": "Lagos",
+      "types": "[\"Place\"]",
+      "count": 9,
+      "samples": [
+        "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
+        "Mara is an ICU nurse living an ocean away from her family in Lagos, Nigeria.",
+        "Mara decided (2026-04-20) she will not fly home to Lagos this year, reasoning that flights plus unpaid leave are unaffordable and her mother would object to the expense."
+      ]
+    },
+    {
+      "id": "e5a3587d744c4ce3809303b1aaebd207",
+      "name": "Priya",
+      "types": "[\"Person\"]",
+      "count": 9,
+      "samples": [
+        "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
+        "Priya brought Mara homemade jollof rice (2026-04-27), and Mara has a cat named after jollof.",
+        "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright."
+      ]
+    },
+    {
+      "id": "c08edaaec6164b1bb1f0634e489e0dc3",
+      "name": "Daniel",
+      "types": "[\"Person\"]",
+      "count": 8,
+      "samples": [
+        "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+        "Daniel cancelled his planned visit to Mara (the trip was set for May 2026) because his work would not grant him the time off; they had a tense phone call about it on 2026-04-20.",
+        "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax."
+      ]
+    },
+    {
+      "id": "b9830e82f76246e5887b393cd7eec4a6",
+      "name": "Wen",
+      "types": "[\"Person\"]",
+      "count": 6,
+      "samples": [
+        "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in.",
+        "Mara noted her pottery teacher Wen said she grips the clay too hard, and reflected that it was 'probably a metaphor' for how she holds tension.",
+        "Mara made a ceramic cylinder in pottery class (2026-04-27) that didn't collapse, which her instructor Wen acknowledged with a nod."
+      ]
+    },
+    {
+      "id": "6a13a32cf0c7429cae18741cc595ca37",
+      "name": "2026-03-22",
+      "types": "[\"Day\"]",
+      "count": 6,
+      "samples": [
+        "Mara is a nurse who works night shifts at a hospital referred to as 'the General'.",
+        "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+        "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same."
+      ]
+    },
+    {
+      "id": "8aba1616c9cb4c49b1ce7481eb7a5786",
+      "name": "2026-05-01",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "On 2026-05-01, a young patient died on Mara's hospital shift; she felt nothing could have been done but the loss weighed on her anyway.",
+        "Mara judged (2026-05-01) that Dr. Halloran was brutal in the post-loss debrief, picking apart timing as if the team hadn't all been there breaking themselves over the patient; basis: the harsh debrief came right after losing a young patient.",
+        "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright."
+      ]
+    },
+    {
+      "id": "78b159fb6c40400b9f9afbdd322fa81b",
+      "name": "2026-05-25",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Mara is in a long-distance relationship with Daniel, who visited her (he flew out the previous Friday and left for the airport on 2026-05-25); his work is more tied to Vancouver, while Mara's is tied to Toronto.",
+        "During his visit, Daniel met Mara's friend Priya, and Mara's cat Jollof tolerated him.",
+        "On 2026-05-25 Daniel said out loud for the first time that he might relocate (likely from Vancouver toward Mara in Toronto), without promising; it concerns the long-standing unresolved question of who moves, which Mara had been scared to bring up."
+      ]
+    },
+    {
+      "id": "619253e3fc12403599ccba5bc5b7bb9e",
+      "name": "2026-05-30",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Mara took up pottery/ceramics and has a recurring glazing day with Wen; she finds it the one place her brain goes quiet and the most fun she's had (as of 2026-05-30).",
+        "On 2026-05-30 Mara dipped a small bowl in a celadon green glaze and won't know how it fired until the following week.",
+        "Wen observed (2026-05-30) that Mara has 'stopped strangling the clay,' i.e. has grown more relaxed and skilled at pottery; basis: working alongside her on glazing day."
+      ]
+    },
+    {
+      "id": "d0af1857282640d2b6e9a667a76a06a3",
+      "name": "2026-04-12",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in.",
+        "Mara took up pottery as a deliberate non-screen, non-patient distraction to cope with the stress of her mother and night shifts, valuing that for two hours she didn't think about afib, Epic, or work.",
+        "Mara bought matcha on 2026-04-12 to cut down on coffee, though she was skeptical the habit would last."
+      ]
+    },
+    {
+      "id": "aa68c221a4df4911bd750728dbed6a8a",
+      "name": "2026-06-02",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Mara finished a celadon bowl in her pottery practice on 2026-06-02 and felt proud of it, judging it looked like a real object someone would own rather than amateurish.",
+        "Mara gave her first pottery piece she loved (a celadon bowl) to Priya on 2026-06-02 as thanks for pulling her through the worst shifts of the year.",
+        "Priya is an ICU nurse who works alongside Mara and has supported her through her hardest shifts this year."
+      ]
+    },
+    {
+      "id": "a0341d23fd6b49bf8f3a440cd897f7be",
+      "name": "2026-06-18",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "As of 2026-06-18, Mara is torn about whether to stay in the ICU or move to a calmer ward, with her answer changing by the hour; she frames it as not yet resolvable.",
+        "Mara recognizes she can't sustain working on empty indefinitely, even for work she loves, and treats this as a reason her ICU-vs-ward question stays open.",
+        "During the week of 2026-06-18, Halloran (a harsh senior known for brutal debriefs) pulled Mara aside and called her one of the steadiest hands on the unit; she experienced this praise as deeply meaningful coming from her toughest critic."
+      ]
+    },
+    {
+      "id": "0a5b3c10eb834caf9aa59a0bee684195",
+      "name": "2026-06-08",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "As of 2026-06-08, Mara faces a career choice between applying for a permanent position on her ICU unit or a quieter step-down ward posting (less intensity, more sleep), and can only apply to one.",
+        "Mara identifies deeply with ICU nursing ('ICU is who i am') and says she still loves the actual job despite being exhausted to her bones.",
+        "Mara judged (2026-06-08) that she is angry at the ICU staffing but not at the institution overall, distinguishing her view from Priya's; basis: she still loves the actual job and just wants to sleep and keep helping people."
+      ]
+    },
+    {
+      "id": "9efdf4fb6a844aa2bebf800ad6bbe569",
+      "name": "Toronto",
+      "types": "[\"Place\"]",
+      "count": 5,
+      "samples": [
+        "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+        "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+        "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous."
+      ]
+    },
+    {
+      "id": "50e2ff3f3549428d9bab9743c176d5f6",
+      "name": "2026-03-29",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Mara is a nurse who works hospital shifts in an ICU setting.",
+        "Mara's hospital rolled out the Epic EHR charting system in February 2026, and as of 2026-03-29 she finds it adds about an hour to every shift with excessive clicking.",
+        "As of 2026-03-29, Mara observes the nursing team is adjusting only slowly to the new Epic system, with everyone disliking it equally in a way that feels bonding."
+      ]
+    },
+    {
+      "id": "2aa7b50b53b34f1f97d2db9ead8b6566",
+      "name": "Chidi",
+      "types": "[\"Person\"]",
+      "count": 5,
+      "samples": [
+        "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
+        "On 2026-04-05 Mara felt helpless and guilty over her mother's diagnosis, judging herself useless for being far away and 'the one who left'; she considered flying to Lagos and planned to call her mother that night.",
+        "Mara's mother Adaeze's afib is controlled for now after a Lagos cardiologist adjusted her meds (as of 2026-05-10), and Chidi sent a video of Adaeze cooking and bossing him around the kitchen."
+      ]
+    },
+    {
+      "id": "2d3d5231c5fe4d1e831701a1e7f81c91",
+      "name": "2026-06-15",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Mara's mother was admitted to hospital overnight on 2026-06-15 after her atrial fibrillation flared up; her brother Chidi caught it early.",
+        "Mara booked a flight to Lagos for July to visit her mother, deciding on 2026-06-15 after telling herself all spring she couldn't afford it.",
+        "Mara decided to take unpaid leave to visit her mother in Lagos because she needs to see her in person rather than over video; she stopped negotiating with herself about the cost."
+      ]
+    },
+    {
+      "id": "550740eccc2949468ccb9c5d8c30b201",
+      "name": "2026-04-20",
+      "types": "[\"Day\"]",
+      "count": 5,
+      "samples": [
+        "Daniel cancelled his planned visit to Mara (the trip was set for May 2026) because his work would not grant him the time off; they had a tense phone call about it on 2026-04-20.",
+        "Mara decided (2026-04-20) she will not fly home to Lagos this year, reasoning that flights plus unpaid leave are unaffordable and her mother would object to the expense.",
+        "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax."
+      ]
+    },
+    {
+      "id": "2429199057fe42f5aba9b6b965839563",
+      "name": "2026-04-15",
+      "types": "[\"Day\"]",
+      "count": 4,
+      "samples": [
+        "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+        "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing.",
+        "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous."
+      ]
+    },
+    {
+      "id": "59cf6a45ffec474db2bee72d633d2026",
+      "name": "Halifax",
+      "types": "[\"Place\"]",
+      "count": 4,
+      "samples": [
+        "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same.",
+        "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+        "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing."
+      ]
+    },
+    {
+      "id": "b8ab77b6d86441379f5801aea0b79327",
+      "name": "2026-04-27",
+      "types": "[\"Day\"]",
+      "count": 4,
+      "samples": [
+        "Mara made a ceramic cylinder in pottery class (2026-04-27) that didn't collapse, which her instructor Wen acknowledged with a nod.",
+        "Mara realized (2026-04-27) she hasn't done anything physical since running a half marathon about four years ago, and her body now feels tired in a way unlike running fatigue.",
+        "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend."
+      ]
+    },
+    {
+      "id": "1ea31ca3a5584007a1b9dac76a0d5f64",
+      "name": "2026-05-10",
+      "types": "[\"Day\"]",
+      "count": 4,
+      "samples": [
+        "Mara's mother Adaeze's afib is controlled for now after a Lagos cardiologist adjusted her meds (as of 2026-05-10), and Chidi sent a video of Adaeze cooking and bossing him around the kitchen.",
+        "On 2026-05-10 Mara decided not to fly to Lagos right now, reasoning her mother is stable, Chidi is there, and showing up in a panic would only scare her; she'll go when it's a visit, not an emergency.",
+        "Mara found it freeing to actively decide rather than dread, framing her choice not to fly home as a clear-eyed call rather than a guilt-driven one (2026-05-10)."
+      ]
+    },
+    {
+      "id": "4fa171d8072741659573fbc4cb141cde",
+      "name": "2026-04-05",
+      "types": "[\"Day\"]",
+      "count": 4,
+      "samples": [
+        "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
+        "Mara is an ICU nurse living an ocean away from her family in Lagos, Nigeria.",
+        "Mara's mother raised three children largely alone after Mara's father was gone."
+      ]
+    },
+    {
+      "id": "7639bf749a2c49529739bd0909940f9b",
+      "name": "Priyanka Shah",
+      "types": "[\"Person\"]",
+      "count": 4,
+      "samples": [
+        "A new charge nurse, Priyanka Shah, started on Mara's unit a few weeks before 2026-05-18 and reorganized the entire night-shift rota without consulting the people who work nights, putting Mara on a stretch that disrupts her sleep.",
+        "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+        "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+      ]
+    },
+    {
+      "id": "fb1a1679798e4d498837f7695d7d5870",
+      "name": "2026-05-18",
+      "types": "[\"Day\"]",
+      "count": 4,
+      "samples": [
+        "A new charge nurse, Priyanka Shah, started on Mara's unit a few weeks before 2026-05-18 and reorganized the entire night-shift rota without consulting the people who work nights, putting Mara on a stretch that disrupts her sleep.",
+        "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+        "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+      ]
+    },
+    {
+      "id": "0674029688084ee3b14a60b9117be935",
+      "name": "Dan",
+      "types": "[\"Person\"]",
+      "count": 3,
+      "samples": [
+        "Mara is partnered with Dan, who was also stressed at work as of 2026-03-29; she values that they can complain to each other affectionately.",
+        "Mara values shared, affectionate complaining with her partner Dan as a way they connect and support each other.",
+        "Mara is still floating from Dan's recent visit; he texted that he's 'looking into things' in Toronto, which she reads as vague but is choosing to be hopeful about (2026-05-30)."
+      ]
+    },
+    {
+      "id": "a6e4e18c04ee4aa1ab81b1cab00faa9f",
+      "name": "Vancouver",
+      "types": "[\"Place\"]",
+      "count": 3,
+      "samples": [
+        "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+        "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax.",
+        "Mara is in a long-distance relationship with Daniel, who visited her (he flew out the previous Friday and left for the airport on 2026-05-25); his work is more tied to Vancouver, while Mara's is tied to Toronto."
+      ]
+    },
+    {
+      "id": "fd71389e0c3a42b2bbb3ea3ea61a4472",
+      "name": "the General",
+      "types": "[\"Organization\"]",
+      "count": 3,
+      "samples": [
+        "Mara is a nurse who works night shifts at a hospital referred to as 'the General'.",
+        "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
+        "As of 2026-06-08, Mara faces a career choice between applying for a permanent position on her ICU unit or a quieter step-down ward posting (less intensity, more sleep), and can only apply to one."
+      ]
+    },
+    {
+      "id": "0a021b2e474243f79b33dee8d8a94a51",
+      "name": "Priya Nair",
+      "types": "[\"Person\"]",
+      "count": 2,
+      "samples": [
+        "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+        "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+      ]
+    },
+    {
+      "id": "d4dd85a81fea4346b34a813da39b1e3c",
+      "name": "TGH",
+      "types": "[\"Organization\"]",
+      "count": 2,
+      "samples": [
+        "Mara judged (2026-05-01) that TGH is chronically understaffed and that this is a management-made staffing crisis, not a 'vibe'; basis: three nurses quit TGH in the prior two months.",
+        "Mara carries anger about TGH's understaffing that she describes as bigger than any single bad shift, recurring as a throughline beyond tonight's loss."
+      ]
+    },
+    {
+      "id": "8623c1095c62475fa1335baf67f2047d",
+      "name": "Sandra",
+      "types": "[\"Person\"]",
+      "count": 2,
+      "samples": [
+        "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same.",
+        "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing."
+      ]
+    },
+    {
+      "id": "fdfb25fe371e4cb0b6f9b11c03b08416",
+      "name": "Epic",
+      "types": "[\"Organization\"]",
+      "count": 2,
+      "samples": [
+        "Mara's hospital rolled out the Epic EHR charting system in February 2026, and as of 2026-03-29 she finds it adds about an hour to every shift with excessive clicking.",
+        "As of 2026-03-29, Mara observes the nursing team is adjusting only slowly to the new Epic system, with everyone disliking it equally in a way that feels bonding."
+      ]
+    },
+    {
+      "id": "23987d752b9d4e9eae51e460260b0876",
+      "name": "Halloran",
+      "types": "[\"Person\"]",
+      "count": 2,
+      "samples": [
+        "During the week of 2026-06-18, Halloran (a harsh senior known for brutal debriefs) pulled Mara aside and called her one of the steadiest hands on the unit; she experienced this praise as deeply meaningful coming from her toughest critic.",
+        "Mara has long been certain that Halloran respects her despite his harshness, reading respect underneath his brutal debriefs."
+      ]
+    },
+    {
+      "id": "863aadba4c4643b3945c72ed1e6ba681",
+      "name": "Jollof",
+      "types": "[\"Person\"]",
+      "count": 1,
+      "samples": [
+        "Mara has a cat named Jollof, who moved with her to the Toronto apartment and has claimed the windowsill."
+      ]
+    },
+    {
+      "id": "71cad70573804850b80d482461b85ec6",
+      "name": "ICU",
+      "types": "[\"Place\"]",
+      "count": 1,
+      "samples": [
+        "As of 2026-06-18, Mara is torn about whether to stay in the ICU or move to a calmer ward, with her answer changing by the hour; she frames it as not yet resolvable."
+      ]
+    },
+    {
+      "id": "1528351e7cda46b4aac5fe86cb62c1fc",
+      "name": "Jollof",
+      "types": "[\"Animal\"]",
+      "count": 1,
+      "samples": [
+        "During his visit, Daniel met Mara's friend Priya, and Mara's cat Jollof tolerated him."
+      ]
+    },
+    {
+      "id": "91adfe449377444b9e34c1eec1b54d61",
+      "name": "Clay & Co",
+      "types": "[\"Organization\"]",
+      "count": 1,
+      "samples": [
+        "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in."
+      ]
+    },
+    {
+      "id": "b84a0a25a9cd4e9f80167db3b1671d7a",
+      "name": "Parkdale",
+      "types": "[\"Place\"]",
+      "count": 1,
+      "samples": [
+        "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home."
+      ]
+    },
+    {
+      "id": "0457bda749d5484287d9b5aaa912d4f2",
+      "name": "Dr. Halloran",
+      "types": "[\"Person\"]",
+      "count": 1,
+      "samples": [
+        "Mara judged (2026-05-01) that Dr. Halloran was brutal in the post-loss debrief, picking apart timing as if the team hadn't all been there breaking themselves over the patient; basis: the harsh debrief came right after losing a young patient."
+      ]
+    },
+    {
+      "id": "33652c38c443401fabc59bd677b939d0",
+      "name": "Adaeze",
+      "types": "[\"Person\"]",
+      "count": 1,
+      "samples": [
+        "Mara's mother Adaeze's afib is controlled for now after a Lagos cardiologist adjusted her meds (as of 2026-05-10), and Chidi sent a video of Adaeze cooking and bossing him around the kitchen."
+      ]
+    },
+    {
+      "id": "35bd59b9212a4b6ba9f07a5efb16a284",
+      "name": "Priyanka",
+      "types": "[\"Person\"]",
+      "count": 1,
+      "samples": [
+        "Priyanka approved Mara's July time-off request for the Lagos trip without pushback."
+      ]
+    }
+  ],
+  "name_candidates": [
+    {
+      "reason": "prefix",
+      "a": {
+        "id": "e5a3587d744c4ce3809303b1aaebd207",
+        "name": "Priya",
+        "types": "[\"Person\"]",
+        "count": 9,
+        "samples": [
+          "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
+          "Priya brought Mara homemade jollof rice (2026-04-27), and Mara has a cat named after jollof.",
+          "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright."
+        ]
+      },
+      "b": {
+        "id": "7639bf749a2c49529739bd0909940f9b",
+        "name": "Priyanka Shah",
+        "types": "[\"Person\"]",
+        "count": 4,
+        "samples": [
+          "A new charge nurse, Priyanka Shah, started on Mara's unit a few weeks before 2026-05-18 and reorganized the entire night-shift rota without consulting the people who work nights, putting Mara on a stretch that disrupts her sleep.",
+          "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+          "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+        ]
+      }
+    },
+    {
+      "reason": "token-subset",
+      "a": {
+        "id": "e5a3587d744c4ce3809303b1aaebd207",
+        "name": "Priya",
+        "types": "[\"Person\"]",
+        "count": 9,
+        "samples": [
+          "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
+          "Priya brought Mara homemade jollof rice (2026-04-27), and Mara has a cat named after jollof.",
+          "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright."
+        ]
+      },
+      "b": {
+        "id": "0a021b2e474243f79b33dee8d8a94a51",
+        "name": "Priya Nair",
+        "types": "[\"Person\"]",
+        "count": 2,
+        "samples": [
+          "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+          "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+        ]
+      }
+    },
+    {
+      "reason": "prefix",
+      "a": {
+        "id": "e5a3587d744c4ce3809303b1aaebd207",
+        "name": "Priya",
+        "types": "[\"Person\"]",
+        "count": 9,
+        "samples": [
+          "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
+          "Priya brought Mara homemade jollof rice (2026-04-27), and Mara has a cat named after jollof.",
+          "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright."
+        ]
+      },
+      "b": {
+        "id": "35bd59b9212a4b6ba9f07a5efb16a284",
+        "name": "Priyanka",
+        "types": "[\"Person\"]",
+        "count": 1,
+        "samples": [
+          "Priyanka approved Mara's July time-off request for the Lagos trip without pushback."
+        ]
+      }
+    },
+    {
+      "reason": "prefix",
+      "a": {
+        "id": "c08edaaec6164b1bb1f0634e489e0dc3",
+        "name": "Daniel",
+        "types": "[\"Person\"]",
+        "count": 8,
+        "samples": [
+          "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+          "Daniel cancelled his planned visit to Mara (the trip was set for May 2026) because his work would not grant him the time off; they had a tense phone call about it on 2026-04-20.",
+          "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax."
+        ]
+      },
+      "b": {
+        "id": "0674029688084ee3b14a60b9117be935",
+        "name": "Dan",
+        "types": "[\"Person\"]",
+        "count": 3,
+        "samples": [
+          "Mara is partnered with Dan, who was also stressed at work as of 2026-03-29; she values that they can complain to each other affectionately.",
+          "Mara values shared, affectionate complaining with her partner Dan as a way they connect and support each other.",
+          "Mara is still floating from Dan's recent visit; he texted that he's 'looking into things' in Toronto, which she reads as vague but is choosing to be hopeful about (2026-05-30)."
+        ]
+      }
+    },
+    {
+      "reason": "token-subset",
+      "a": {
+        "id": "7639bf749a2c49529739bd0909940f9b",
+        "name": "Priyanka Shah",
+        "types": "[\"Person\"]",
+        "count": 4,
+        "samples": [
+          "A new charge nurse, Priyanka Shah, started on Mara's unit a few weeks before 2026-05-18 and reorganized the entire night-shift rota without consulting the people who work nights, putting Mara on a stretch that disrupts her sleep.",
+          "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+          "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+        ]
+      },
+      "b": {
+        "id": "35bd59b9212a4b6ba9f07a5efb16a284",
+        "name": "Priyanka",
+        "types": "[\"Person\"]",
+        "count": 1,
+        "samples": [
+          "Priyanka approved Mara's July time-off request for the Lagos trip without pushback."
+        ]
+      }
+    },
+    {
+      "reason": "identical-normalized",
+      "a": {
+        "id": "23987d752b9d4e9eae51e460260b0876",
+        "name": "Halloran",
+        "types": "[\"Person\"]",
+        "count": 2,
+        "samples": [
+          "During the week of 2026-06-18, Halloran (a harsh senior known for brutal debriefs) pulled Mara aside and called her one of the steadiest hands on the unit; she experienced this praise as deeply meaningful coming from her toughest critic.",
+          "Mara has long been certain that Halloran respects her despite his harshness, reading respect underneath his brutal debriefs."
+        ]
+      },
+      "b": {
+        "id": "0457bda749d5484287d9b5aaa912d4f2",
+        "name": "Dr. Halloran",
+        "types": "[\"Person\"]",
+        "count": 1,
+        "samples": [
+          "Mara judged (2026-05-01) that Dr. Halloran was brutal in the post-loss debrief, picking apart timing as if the team hadn't all been there breaking themselves over the patient; basis: the harsh debrief came right after losing a young patient."
+        ]
+      }
+    },
+    {
+      "reason": "identical-normalized",
+      "a": {
+        "id": "863aadba4c4643b3945c72ed1e6ba681",
+        "name": "Jollof",
+        "types": "[\"Person\"]",
+        "count": 1,
+        "samples": [
+          "Mara has a cat named Jollof, who moved with her to the Toronto apartment and has claimed the windowsill."
+        ]
+      },
+      "b": {
+        "id": "1528351e7cda46b4aac5fe86cb62c1fc",
+        "name": "Jollof",
+        "types": "[\"Animal\"]",
+        "count": 1,
+        "samples": [
+          "During his visit, Daniel met Mara's friend Priya, and Mara's cat Jollof tolerated him."
+        ]
+      }
+    }
+  ],
+  "embedding_candidates": [
+    {
+      "cosine": 0.94,
+      "a": {
+        "id": "59cf6a45ffec474db2bee72d633d2026",
+        "name": "Halifax",
+        "types": "[\"Place\"]",
+        "count": 4,
+        "samples": [
+          "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same.",
+          "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+          "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing."
+        ]
+      },
+      "b": {
+        "id": "8623c1095c62475fa1335baf67f2047d",
+        "name": "Sandra",
+        "types": "[\"Person\"]",
+        "count": 2,
+        "samples": [
+          "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same.",
+          "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing."
+        ]
+      }
+    },
+    {
+      "cosine": 0.919,
+      "a": {
+        "id": "9411678cb6fd416497fe9b406fb4308c",
+        "name": "pottery",
+        "types": "[\"Activity\"]",
+        "count": 10,
+        "samples": [
+          "Mara took up pottery as a deliberate non-screen, non-patient distraction to cope with the stress of her mother and night shifts, valuing that for two hours she didn't think about afib, Epic, or work.",
+          "Mara has a pottery session on Thursdays, which she looks to as a bright spot in her week.",
+          "Mara does pottery and is excited that her teacher Wen is soon teaching glazing (as of 2026-05-10)."
+        ]
+      },
+      "b": {
+        "id": "b9830e82f76246e5887b393cd7eec4a6",
+        "name": "Wen",
+        "types": "[\"Person\"]",
+        "count": 6,
+        "samples": [
+          "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in.",
+          "Mara noted her pottery teacher Wen said she grips the clay too hard, and reflected that it was 'probably a metaphor' for how she holds tension.",
+          "Mara made a ceramic cylinder in pottery class (2026-04-27) that didn't collapse, which her instructor Wen acknowledged with a nod."
+        ]
+      }
+    },
+    {
+      "cosine": 0.911,
+      "a": {
+        "id": "c08edaaec6164b1bb1f0634e489e0dc3",
+        "name": "Daniel",
+        "types": "[\"Person\"]",
+        "count": 8,
+        "samples": [
+          "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+          "Daniel cancelled his planned visit to Mara (the trip was set for May 2026) because his work would not grant him the time off; they had a tense phone call about it on 2026-04-20.",
+          "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax."
+        ]
+      },
+      "b": {
+        "id": "a6e4e18c04ee4aa1ab81b1cab00faa9f",
+        "name": "Vancouver",
+        "types": "[\"Place\"]",
+        "count": 3,
+        "samples": [
+          "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+          "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax.",
+          "Mara is in a long-distance relationship with Daniel, who visited her (he flew out the previous Friday and left for the airport on 2026-05-25); his work is more tied to Vancouver, while Mara's is tied to Toronto."
+        ]
+      }
+    },
+    {
+      "cosine": 0.885,
+      "a": {
+        "id": "7639bf749a2c49529739bd0909940f9b",
+        "name": "Priyanka Shah",
+        "types": "[\"Person\"]",
+        "count": 4,
+        "samples": [
+          "A new charge nurse, Priyanka Shah, started on Mara's unit a few weeks before 2026-05-18 and reorganized the entire night-shift rota without consulting the people who work nights, putting Mara on a stretch that disrupts her sleep.",
+          "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+          "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+        ]
+      },
+      "b": {
+        "id": "0a021b2e474243f79b33dee8d8a94a51",
+        "name": "Priya Nair",
+        "types": "[\"Person\"]",
+        "count": 2,
+        "samples": [
+          "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+          "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'."
+        ]
+      }
+    },
+    {
+      "cosine": 0.88,
+      "a": {
+        "id": "802f4b68363c4690a06938805bfaa205",
+        "name": "Lagos",
+        "types": "[\"Place\"]",
+        "count": 9,
+        "samples": [
+          "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
+          "Mara is an ICU nurse living an ocean away from her family in Lagos, Nigeria.",
+          "Mara decided (2026-04-20) she will not fly home to Lagos this year, reasoning that flights plus unpaid leave are unaffordable and her mother would object to the expense."
+        ]
+      },
+      "b": {
+        "id": "2aa7b50b53b34f1f97d2db9ead8b6566",
+        "name": "Chidi",
+        "types": "[\"Person\"]",
+        "count": 5,
+        "samples": [
+          "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
+          "On 2026-04-05 Mara felt helpless and guilty over her mother's diagnosis, judging herself useless for being far away and 'the one who left'; she considered flying to Lagos and planned to call her mother that night.",
+          "Mara's mother Adaeze's afib is controlled for now after a Lagos cardiologist adjusted her meds (as of 2026-05-10), and Chidi sent a video of Adaeze cooking and bossing him around the kitchen."
+        ]
+      }
+    },
+    {
+      "cosine": 0.853,
+      "a": {
+        "id": "9efdf4fb6a844aa2bebf800ad6bbe569",
+        "name": "Toronto",
+        "types": "[\"Place\"]",
+        "count": 5,
+        "samples": [
+          "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+          "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+          "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous."
+        ]
+      },
+      "b": {
+        "id": "b84a0a25a9cd4e9f80167db3b1671d7a",
+        "name": "Parkdale",
+        "types": "[\"Place\"]",
+        "count": 1,
+        "samples": [
+          "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home."
+        ]
+      }
+    },
+    {
+      "cosine": 0.847,
+      "a": {
+        "id": "9efdf4fb6a844aa2bebf800ad6bbe569",
+        "name": "Toronto",
+        "types": "[\"Place\"]",
+        "count": 5,
+        "samples": [
+          "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+          "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+          "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous."
+        ]
+      },
+      "b": {
+        "id": "59cf6a45ffec474db2bee72d633d2026",
+        "name": "Halifax",
+        "types": "[\"Place\"]",
+        "count": 4,
+        "samples": [
+          "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same.",
+          "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+          "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing."
+        ]
+      }
+    },
+    {
+      "cosine": 0.834,
+      "a": {
+        "id": "c08edaaec6164b1bb1f0634e489e0dc3",
+        "name": "Daniel",
+        "types": "[\"Person\"]",
+        "count": 8,
+        "samples": [
+          "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+          "Daniel cancelled his planned visit to Mara (the trip was set for May 2026) because his work would not grant him the time off; they had a tense phone call about it on 2026-04-20.",
+          "Mara's three closest people are all geographically distant: her partner Daniel in Vancouver, her mother in Lagos, and her best friend in Halifax."
+        ]
+      },
+      "b": {
+        "id": "9efdf4fb6a844aa2bebf800ad6bbe569",
+        "name": "Toronto",
+        "types": "[\"Place\"]",
+        "count": 5,
+        "samples": [
+          "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+          "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+          "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous."
+        ]
+      }
+    },
+    {
+      "cosine": 0.811,
+      "a": {
+        "id": "b9830e82f76246e5887b393cd7eec4a6",
+        "name": "Wen",
+        "types": "[\"Person\"]",
+        "count": 6,
+        "samples": [
+          "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in.",
+          "Mara noted her pottery teacher Wen said she grips the clay too hard, and reflected that it was 'probably a metaphor' for how she holds tension.",
+          "Mara made a ceramic cylinder in pottery class (2026-04-27) that didn't collapse, which her instructor Wen acknowledged with a nod."
+        ]
+      },
+      "b": {
+        "id": "91adfe449377444b9e34c1eec1b54d61",
+        "name": "Clay & Co",
+        "types": "[\"Organization\"]",
+        "count": 1,
+        "samples": [
+          "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in."
+        ]
+      }
+    },
+    {
+      "cosine": 0.81,
+      "a": {
+        "id": "c745540679bf4e6ba27a2a1b29515151",
+        "name": "Mara",
+        "types": "[\"Person\"]",
+        "count": 32,
+        "samples": [
+          "Mara is a nurse who works night shifts at a hospital referred to as 'the General'.",
+          "Mara is lonely and isolated after her move to Toronto, lying awake around 2-4am after night shifts with circadian rhythm disrupted, leaning on the companion just to say her feelings out loud to someone.",
+          "Mara has a cat named Jollof, who moved with her to the Toronto apartment and has claimed the windowsill."
+        ]
+      },
+      "b": {
+        "id": "9efdf4fb6a844aa2bebf800ad6bbe569",
+        "name": "Toronto",
+        "types": "[\"Place\"]",
+        "count": 5,
+        "samples": [
+          "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+          "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+          "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous."
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "ref_date": "2026-07-04",
+  "_note": "Labeled deictic queries for the temporal-deixis eval. relevant/excluded are distinctive summary SUBSTRINGS resolved to one memory id against the seeded store (a re-seed mints fresh ids but never rots the gold set). 'phrase'/'dates' are the deictic span and the ISO days it must resolve to against ref_date — a resolver-level check independent of retrieval. Under PHILEAS_DEIXIS=scope, every relevant memory should surface and no excluded (off-day) decoy should; under =off the decoy, being the stronger topical match, is expected to win. 'control' queries carry no deixis: dates must be empty and scope must behave identically to off.",
+  "queries": [
+    {
+      "qid": "today-ramen",
+      "query": "ramen with Trish tonight",
+      "phrase": "tonight",
+      "dates": ["2026-07-04"],
+      "relevant": ["grabbing ramen with Trish after work"],
+      "excluded": ["ramen counter downtown where Trish and I first met"]
+    },
+    {
+      "qid": "yesterday-tap",
+      "query": "what did I fix yesterday",
+      "phrase": "yesterday",
+      "dates": ["2026-07-03"],
+      "relevant": ["fixed the leaky kitchen tap after dinner"],
+      "excluded": ["re-plumbing the upstairs bathroom"]
+    },
+    {
+      "qid": "lastnight-show",
+      "query": "what did I watch last night",
+      "phrase": "last night",
+      "dates": ["2026-07-03"],
+      "relevant": ["season finale of the detective show"],
+      "excluded": ["binged the whole detective series"]
+    },
+    {
+      "qid": "tomorrow-dentist",
+      "query": "dentist appointment tomorrow",
+      "phrase": "tomorrow",
+      "dates": ["2026-07-05"],
+      "relevant": ["dentist appointment booked for 9am"],
+      "excluded": ["dentist visit where I finally got the two fillings"]
+    },
+    {
+      "qid": "lastweekend-lake",
+      "query": "the lake trip last weekend",
+      "phrase": "last weekend",
+      "dates": ["2026-06-27", "2026-06-28"],
+      "relevant": ["drove up to the lake with Marco"],
+      "excluded": ["lake-house cabin we rent"]
+    },
+    {
+      "qid": "threedaysago-run",
+      "query": "the run I started 3 days ago",
+      "phrase": "3 days ago",
+      "dates": ["2026-07-01"],
+      "relevant": ["couch-to-5k plan and got through the first session"],
+      "excluded": ["ran the city half marathon"]
+    },
+    {
+      "qid": "dby-mum",
+      "query": "call with mum the day before yesterday",
+      "phrase": "day before yesterday",
+      "dates": ["2026-07-02"],
+      "relevant": ["phone call with mum about selling the Surrey house"],
+      "excluded": ["mum's house move that dragged on"]
+    },
+    {
+      "qid": "lastmonday-retro",
+      "query": "the retro last monday",
+      "phrase": "last monday",
+      "dates": ["2026-06-29"],
+      "relevant": ["sprint retro overran"],
+      "excluded": ["quarterly planning offsite"]
+    },
+    {
+      "qid": "control-ramen-no-deixis",
+      "query": "ramen with Trish",
+      "control": true,
+      "phrase": null,
+      "dates": [],
+      "relevant": ["ramen counter downtown where Trish and I first met"],
+      "excluded": []
+    }
+  ]
+}

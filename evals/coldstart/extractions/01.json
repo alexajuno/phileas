@@ -1,0 +1,138 @@
+{
+  "memories": [
+    {
+      "summary": "Mara is a nurse who works night shifts at a hospital referred to as 'the General'.",
+      "memory_type": "profile",
+      "daily_ref": "2026-03-22",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "the General",
+          "type": "Organization",
+          "description": "hospital where Mara works night shifts"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "WORKS_AT",
+          "to_name": "the General",
+          "to_type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "Mara moved to Toronto about three weeks before 2026-03-22, into a small apartment of her own in the Parkdale neighbourhood, and still feels like a tourist in her own home.",
+      "memory_type": "event",
+      "daily_ref": "2026-03-22",
+      "entities": [
+        {
+          "name": "Toronto",
+          "type": "Place"
+        },
+        {
+          "name": "Parkdale",
+          "type": "Place",
+          "description": "Toronto neighbourhood where Mara's apartment is"
+        }
+      ]
+    },
+    {
+      "summary": "Mara misses Halifax, where she lived before moving to Toronto, and especially misses Sandra, a colleague she used to debrief with after every shift; they now only keep in touch by text, which Mara feels isn't the same.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-03-22",
+      "entities": [
+        {
+          "name": "Halifax",
+          "type": "Place"
+        },
+        {
+          "name": "Sandra",
+          "type": "Person",
+          "description": "Mara's former nursing colleague in Halifax"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Sandra",
+          "from_type": "Person",
+          "edge": "COLLEAGUE_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Daniel, Mara's partner, lives in Vancouver, and the time-zone gap means they struggle to connect, basically only catching each other briefly across the day.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-03-22",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person",
+          "description": "Mara's partner, lives in Vancouver"
+        },
+        {
+          "name": "Vancouver",
+          "type": "Place"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "PARTNER_OF",
+          "to_name": "Daniel",
+          "to_type": "Person"
+        },
+        {
+          "from_name": "Daniel",
+          "from_type": "Person",
+          "edge": "LIVES_IN",
+          "to_name": "Vancouver",
+          "to_type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Mara is lonely and isolated after her move to Toronto, lying awake around 2-4am after night shifts with circadian rhythm disrupted, leaning on the companion just to say her feelings out loud to someone.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-03-22",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara has a cat named Jollof, who moved with her to the Toronto apartment and has claimed the windowsill.",
+      "memory_type": "profile",
+      "daily_ref": "2026-03-22",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Jollof",
+          "type": "Person",
+          "description": "Mara's cat"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Mara",
+          "from_type": "Person",
+          "edge": "OWNER_OF",
+          "to_name": "Jollof",
+          "to_type": "Person"
+        }
+      ]
+    }
+  ]
+}

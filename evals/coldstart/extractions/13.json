@@ -1,0 +1,83 @@
+{
+  "memories": [
+    {
+      "summary": "Mara finished a celadon bowl in her pottery practice on 2026-06-02 and felt proud of it, judging it looked like a real object someone would own rather than amateurish.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-02",
+      "entities": [
+        {
+          "name": "Pottery",
+          "type": "Activity"
+        }
+      ]
+    },
+    {
+      "summary": "Mara gave her first pottery piece she loved (a celadon bowl) to Priya on 2026-06-02 as thanks for pulling her through the worst shifts of the year.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-02",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "fellow ICU nurse and close colleague of Mara"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Priya",
+          "from_type": "Person",
+          "edge": "COLLEAGUE_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Priya is an ICU nurse who works alongside Mara and has supported her through her hardest shifts this year.",
+      "memory_type": "profile",
+      "daily_ref": "2026-06-02",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "fellow ICU nurse and close colleague of Mara"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Priya",
+          "from_type": "Person",
+          "edge": "COLLEAGUE_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara relies on pottery as her main way of staying sane; it began as a joke distraction and became something she actively protects.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-06-02",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Pottery",
+          "type": "Activity"
+        }
+      ]
+    },
+    {
+      "summary": "Mara works as an ICU nurse and has described this year as having some of the worst shifts of her career.",
+      "memory_type": "profile",
+      "daily_ref": "2026-06-02",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "_note": "Named recall configs = the PHILEAS_* knobs recall() reads per call. 'baseline' is the production default (rrf / rank / ratio / index). Add your own and A/B with --a / --b.",
+  "baseline": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"},
+  "no_rerank": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "off", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"},
+  "floor_fusion": {"PHILEAS_FUSION": "floor", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"},
+  "gap_cut": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "gap", "PHILEAS_PATH3": "index"},
+  "legacy_path3": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "legacy"}
+}

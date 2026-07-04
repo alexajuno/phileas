@@ -1,0 +1,99 @@
+{
+  "memories": [
+    {
+      "summary": "On 2026-06-28 Daniel told Mara he has applied for a transfer to his firm's Toronto office (a Nautilus posting), the first concrete step in their long-standing 'who relocates' question; if approved he would move in the fall.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-28",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Nautilus",
+          "type": "Organization",
+          "description": "Daniel's firm, where he applied for a Toronto transfer"
+        },
+        {
+          "name": "Toronto",
+          "type": "Place"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Daniel",
+          "from_type": "Person",
+          "edge": "WORKS_AT",
+          "to_name": "Nautilus",
+          "to_type": "Organization"
+        },
+        {
+          "from_name": "Daniel",
+          "from_type": "Person",
+          "edge": "PARTNER_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara cried hearing Daniel had applied for the Toronto transfer, moved that after a year of being the only one bending her life around the distance, he was finally putting skin in the game too.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-06-28",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara is deliberately holding back from building the whole future on Daniel's job application, saying she has learned not to over-invest in unguaranteed news.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-06-28",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "As of 2026-06-28 Mara's Lagos departure is in eleven days (2026-07-09) and she has not started packing.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-28",
+      "entities": [
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "If Nautilus approves his transfer, Daniel would move to Toronto in the fall of 2026 (as discussed 2026-06-28).",
+      "memory_type": "event",
+      "daily_ref": "2026-06-28",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Toronto",
+          "type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Mara reflected (2026-06-28) that for a year she had been the only one bending her life around the long-distance relationship, so Daniel applying for the transfer felt like him finally bending too.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-06-28",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "memories": [
+    {
+      "summary": "A new charge nurse, Priyanka Shah, started on Mara's unit a few weeks before 2026-05-18 and reorganized the entire night-shift rota without consulting the people who work nights, putting Mara on a stretch that disrupts her sleep.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-18",
+      "entities": [
+        {
+          "name": "Priyanka Shah",
+          "type": "Person",
+          "description": "new charge nurse on Mara's unit; over-eager to fix things"
+        }
+      ]
+    },
+    {
+      "summary": "As of 2026-05-18, Mara and her colleague Priya Nair planned to jointly talk to charge nurse Priyanka Shah about the night-shift rota change, with Priya (who has known Priyanka longer) brokering the conversation.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-18",
+      "entities": [
+        {
+          "name": "Priya Nair",
+          "type": "Person",
+          "description": "Mara's nursing colleague; has known Priyanka Shah longer"
+        },
+        {
+          "name": "Priyanka Shah",
+          "type": "Person",
+          "description": "new charge nurse on Mara's unit"
+        }
+      ]
+    },
+    {
+      "summary": "Mara holds a positive view (2026-05-18) of her colleague Priya Nair but a reserved 'jury's out' view of new charge nurse Priyanka Shah; she distinguishes the two similar-sounding names as 'priya nair good, priyanka shah jury's out'.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-05-18",
+      "entities": [
+        {
+          "name": "Priya Nair",
+          "type": "Person",
+          "description": "Mara's trusted nursing colleague"
+        },
+        {
+          "name": "Priyanka Shah",
+          "type": "Person",
+          "description": "new charge nurse Mara is unsure about"
+        }
+      ]
+    },
+    {
+      "summary": "Mara works night shifts as a nurse and believes (2026-05-18) night shifts are fundamentally different from day shifts ('nights aren't days with the lights off'), so scheduling for them needs different consideration.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-05-18",
+      "entities": [
+        {
+          "name": "Priyanka Shah",
+          "type": "Person",
+          "description": "charge nurse Mara wants to understand this"
+        }
+      ]
+    }
+  ]
+}

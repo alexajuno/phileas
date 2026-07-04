@@ -2,8 +2,12 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.7
     hooks:
+      # Scoped to the shipped package + tests, matching CI (`ruff check src/ tests/`).
+      # evals/ is benchmark tooling, linted on demand rather than gated.
       - id: ruff
+        exclude: ^evals/
       - id: ruff-format
+        exclude: ^evals/
   - repo: local
     hooks:
       - id: pytest

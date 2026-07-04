@@ -1,0 +1,82 @@
+{
+  "memories": [
+    {
+      "summary": "Mara's mother was admitted to hospital overnight on 2026-06-15 after her atrial fibrillation flared up; her brother Chidi caught it early.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-15",
+      "entities": [
+        {
+          "name": "Chidi",
+          "type": "Person"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Chidi",
+          "from_type": "Person",
+          "edge": "SIBLING_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara booked a flight to Lagos for July to visit her mother, deciding on 2026-06-15 after telling herself all spring she couldn't afford it.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-15",
+      "entities": [
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Mara decided to take unpaid leave to visit her mother in Lagos because she needs to see her in person rather than over video; she stopped negotiating with herself about the cost.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-06-15",
+      "entities": [
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Priyanka approved Mara's July time-off request for the Lagos trip without pushback.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-15",
+      "entities": [
+        {
+          "name": "Priyanka",
+          "type": "Person",
+          "description": "Mara's manager/supervisor who approves her time off"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Priyanka",
+          "from_type": "Person",
+          "edge": "MANAGER_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara throws pots (does pottery) as a way to stay sane during stressful periods, planning to do so before her July trip.",
+      "memory_type": "behavior",
+      "daily_ref": "2026-06-15",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "pottery",
+          "type": "Activity"
+        }
+      ]
+    }
+  ]
+}

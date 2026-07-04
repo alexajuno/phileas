@@ -1,0 +1,92 @@
+{
+  "memories": [
+    {
+      "summary": "On 2026-08-30 Nautilus approved Daniel's transfer to Toronto; the move is signed with a start date of 2026-10-01, resolving the long-distance 'who relocates' question in Mara's favour.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-30",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        },
+        {
+          "name": "Nautilus",
+          "type": "Organization"
+        },
+        {
+          "name": "Toronto",
+          "type": "Place"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Daniel",
+          "from_type": "Person",
+          "edge": "MOVING_TO",
+          "to_name": "Toronto",
+          "to_type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Daniel is keeping the same firm in the Toronto move, so Mara feels it is not a sacrifice that could curdle into resentment, which had been her fear.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-08-30",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Daniel planned to fly to Toronto the last weekend of September 2026 to flat-hunt with Mara, with the possibility of them living together.",
+      "memory_type": "event",
+      "daily_ref": "2026-08-30",
+      "entities": [
+        {
+          "name": "Daniel",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "When Mara told her mother about Daniel's move (2026-08-30) her mother cried and immediately asked about marriage; Chidi sent a thumbs up and 'took him long enough.'",
+      "memory_type": "event",
+      "daily_ref": "2026-08-30",
+      "entities": [
+        {
+          "name": "Adaeze Okonkwo",
+          "type": "Person"
+        },
+        {
+          "name": "Chidi",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Even Priya, who Mara describes as allergic to sentiment, said she was happy for Mara about Daniel's move (2026-08-30).",
+      "memory_type": "event",
+      "daily_ref": "2026-08-30",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "Mara's close friend and fellow ICU nurse; distinct from manager Priyanka"
+        }
+      ]
+    },
+    {
+      "summary": "Mara called Daniel's approved Toronto move the best news in a brutal year, the long-distance distance finally having an end date of 2026-10-01.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-08-30",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

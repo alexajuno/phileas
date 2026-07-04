@@ -1,0 +1,143 @@
+{
+  "memories": [
+    {
+      "summary": "Mara arrived in Lagos on the night of 2026-07-08 (Toronto departure 2026-07-09 local) and is staying at her mother's house in Surulere; Chidi met her at arrivals.",
+      "memory_type": "event",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Surulere",
+          "type": "Place",
+          "description": "Lagos neighbourhood where Mara's mother's house is"
+        },
+        {
+          "name": "Chidi",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "On 2026-07-11 Mara saw her mother for the first time in person; her mother is thinner but stood and held her face, and is steady on her new atrial-fibrillation medication.",
+      "memory_type": "event",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Adaeze Okonkwo",
+          "type": "Person",
+          "description": "Mara's mother in Lagos, managing atrial fibrillation"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Adaeze Okonkwo",
+          "from_type": "Person",
+          "edge": "MOTHER_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Dr. Tunde Adeyemi is an old family friend and doctor who informally checks in on Mara's mother in Lagos; he has known the family since Chidi was a baby.",
+      "memory_type": "profile",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Dr. Tunde Adeyemi",
+          "type": "Person",
+          "description": "family-friend doctor who looks in on Mara's mother in Lagos; distinct from Mara's uncle Tunde Bakare"
+        },
+        {
+          "name": "Adaeze Okonkwo",
+          "type": "Person"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Dr. Tunde Adeyemi",
+          "from_type": "Person",
+          "edge": "FRIEND_OF",
+          "to_name": "Adaeze Okonkwo",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "On seeing her mother again on 2026-07-11 Mara broke down when her mother held her face and called her 'her stubborn one.'",
+      "memory_type": "event",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Adaeze Okonkwo",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Chidi met Mara at Lagos arrivals on her 2026-07-09 night landing holding a sign reading 'OYINBO' to tease her.",
+      "memory_type": "event",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Chidi",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Tunde Bakare is Mara's uncle, her mother's younger brother in Lagos; he drives a danfo and is around the family constantly. He is a different person from Dr. Tunde Adeyemi the family-friend doctor.",
+      "memory_type": "profile",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Tunde Bakare",
+          "type": "Person",
+          "description": "Mara's uncle (her mother's younger brother) in Lagos; distinct from Dr. Tunde Adeyemi the doctor"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Tunde Bakare",
+          "from_type": "Person",
+          "edge": "UNCLE_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        },
+        {
+          "from_name": "Tunde Bakare",
+          "from_type": "Person",
+          "edge": "SIBLING_OF",
+          "to_name": "Adaeze Okonkwo",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara's mother is being treated for atrial fibrillation in Lagos by both a hospital cardiologist and, informally, the family-friend doctor Dr. Tunde Adeyemi (noted 2026-07-11).",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Adaeze Okonkwo",
+          "type": "Person"
+        },
+        {
+          "name": "Dr. Tunde Adeyemi",
+          "type": "Person",
+          "description": "family-friend doctor; distinct from uncle Tunde Bakare"
+        }
+      ]
+    },
+    {
+      "summary": "Mara felt 'home in the strange way,' jetlagged and happy, during her first days back in Lagos in July 2026.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-07-11",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}

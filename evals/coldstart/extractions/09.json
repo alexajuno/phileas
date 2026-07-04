@@ -1,0 +1,84 @@
+{
+  "memories": [
+    {
+      "summary": "Mara's mother Adaeze's afib is controlled for now after a Lagos cardiologist adjusted her meds (as of 2026-05-10), and Chidi sent a video of Adaeze cooking and bossing him around the kitchen.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-10",
+      "entities": [
+        {
+          "name": "Adaeze",
+          "type": "Person",
+          "description": "Mara's mother, has atrial fibrillation, lives in Lagos"
+        },
+        {
+          "name": "Chidi",
+          "type": "Person",
+          "description": "Mara's younger brother, with their mother in Lagos"
+        },
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Adaeze",
+          "from_type": "Person",
+          "edge": "MOTHER_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        },
+        {
+          "from_name": "Chidi",
+          "from_type": "Person",
+          "edge": "SIBLING_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "On 2026-05-10 Mara decided not to fly to Lagos right now, reasoning her mother is stable, Chidi is there, and showing up in a panic would only scare her; she'll go when it's a visit, not an emergency.",
+      "memory_type": "event",
+      "daily_ref": "2026-05-10",
+      "entities": [
+        {
+          "name": "Chidi",
+          "type": "Person",
+          "description": "Mara's younger brother"
+        },
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Mara found it freeing to actively decide rather than dread, framing her choice not to fly home as a clear-eyed call rather than a guilt-driven one (2026-05-10).",
+      "memory_type": "reflection",
+      "daily_ref": "2026-05-10",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara does pottery and is excited that her teacher Wen is soon teaching glazing (as of 2026-05-10).",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-05-10",
+      "entities": [
+        {
+          "name": "Wen",
+          "type": "Person",
+          "description": "Mara's pottery teacher"
+        },
+        {
+          "name": "pottery",
+          "type": "Activity"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "memories": [
+    {
+      "summary": "As of 2026-06-08, Mara faces a career choice between applying for a permanent position on her ICU unit or a quieter step-down ward posting (less intensity, more sleep), and can only apply to one.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-08",
+      "entities": [
+        {
+          "name": "the General",
+          "type": "Organization",
+          "description": "the hospital where Mara works in the ICU and where Priya is"
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "summary": "Mara identifies deeply with ICU nursing ('ICU is who i am') and says she still loves the actual job despite being exhausted to her bones.",
+      "memory_type": "profile",
+      "daily_ref": "2026-06-08",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "summary": "Mara judged (2026-06-08) that she is angry at the ICU staffing but not at the institution overall, distinguishing her view from Priya's; basis: she still loves the actual job and just wants to sleep and keep helping people.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-06-08",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Priya",
+          "type": "Person"
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "summary": "Priya judged (2026-06-08) that Mara should leave the institution (not the ICU work itself); basis: she is convinced management is incompetent and will never fix the staffing.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-06-08",
+      "entities": [
+        {
+          "name": "Priya",
+          "type": "Person",
+          "description": "Mara's colleague at the General, angrier at the organization than Mara"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Priya",
+          "from_type": "Person",
+          "edge": "WORKS_AT",
+          "to_name": "the General",
+          "to_type": "Organization"
+        }
+      ]
+    },
+    {
+      "summary": "When facing the permanent-vs-step-down job decision (2026-06-08), Mara deferred rather than deciding, saying she'll 'sit with it' and 'see what i actually apply for.'",
+      "memory_type": "behavior",
+      "daily_ref": "2026-06-08",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ],
+      "relationships": []
+    }
+  ]
+}

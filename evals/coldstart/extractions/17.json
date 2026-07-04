@@ -1,0 +1,73 @@
+{
+  "memories": [
+    {
+      "summary": "Mara's flight to Lagos to visit her mother is booked for 2026-07-09; as of 2026-06-22 she is counting down, oscillating between excitement and bracing for impact.",
+      "memory_type": "event",
+      "daily_ref": "2026-06-22",
+      "entities": [
+        {
+          "name": "Lagos",
+          "type": "Place"
+        }
+      ]
+    },
+    {
+      "summary": "Mara feels a guilty imbalance that her brother Chidi has carried their mother's care in Lagos for months while she only sent money and worried from abroad; Chidi is picking her up at the airport.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-06-22",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        },
+        {
+          "name": "Chidi",
+          "type": "Person"
+        }
+      ],
+      "relationships": [
+        {
+          "from_name": "Chidi",
+          "from_type": "Person",
+          "edge": "SIBLING_OF",
+          "to_name": "Mara",
+          "to_type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Mara told Priyanka the exact dates of her July Lagos trip and Priyanka was fine with it, leading Mara to think she may have misjudged her.",
+      "memory_type": "knowledge",
+      "daily_ref": "2026-06-22",
+      "entities": [
+        {
+          "name": "Priyanka",
+          "type": "Person",
+          "description": "the charge nurse / manager at the General; distinct from Mara's friend Priya"
+        }
+      ]
+    },
+    {
+      "summary": "Ahead of the July trip Mara braced (2026-06-22) for seeing her mother smaller than she remembered, the Lagos heat, the chaotic airport, and relatives asking when she and Daniel will marry.",
+      "memory_type": "reflection",
+      "daily_ref": "2026-06-22",
+      "entities": [
+        {
+          "name": "Mara",
+          "type": "Person"
+        }
+      ]
+    },
+    {
+      "summary": "Chidi is picking Mara up from the Lagos airport so she won't have to fight the taxi touts (planned as of 2026-06-22).",
+      "memory_type": "event",
+      "daily_ref": "2026-06-22",
+      "entities": [
+        {
+          "name": "Chidi",
+          "type": "Person"
+        }
+      ]
+    }
+  ]
+}
