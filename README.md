@@ -10,6 +10,18 @@ AI conversations reset every session. Phileas is a local memory layer that any L
 
 ## Installation
 
+Install with [uv](https://docs.astral.sh/uv/) (recommended):
+
+```bash
+uv tool install phileas-memory --torch-backend cpu
+
+phileas init
+```
+
+`--torch-backend cpu` fetches PyTorch's lean CPU build (a few hundred MB) instead of the multi-gigabyte CUDA build uv would otherwise pull on Linux. Phileas runs two small models (an embedding model and a reranker) on the CPU and needs nothing more; on macOS and Windows the CPU build is the default anyway. `uv tool install` puts `phileas` on your PATH, so `phileas status` and the other commands just work.
+
+Prefer pip? Create a virtual environment and install into it:
+
 ```bash
 python3 -m venv ~/.venvs/phileas # an isolated environment
 source ~/.venvs/phileas/bin/activate
@@ -20,11 +32,11 @@ pip install phileas-memory
 phileas init
 ```
 
-Phileas uses PyTorch only to run two small models (an embedding model and a reranker) on the CPU, so the first install line fetches PyTorch's lean CPU build. That keeps the download to a few hundred MB; without it, `pip` pulls the multi-gigabyte CUDA build on Linux. On macOS and Windows the CPU build is already the default, so that line is harmless there too.
+With the pip route, activate that venv before running `phileas` commands yourself.
 
 `phileas init` is the setup wizard: it chooses where memories live, connects Phileas to Claude Code, downloads the models, and starts the background daemon. Restart Claude Code afterward so it picks up the memory tools.
 
-The MCP server is launched by its full path, so Claude Code finds it whether or not the venv is active. To run `phileas` commands yourself (such as `phileas status`), activate the venv first.
+The MCP server is launched by its full path, so Claude Code finds it regardless of your shell environment.
 
 ### First run
 
