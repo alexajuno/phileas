@@ -485,9 +485,7 @@ def get_thread_memories(thread_id: str) -> str:
 def survey(theme: str) -> str:
     """Survey a theme's un-consolidated cluster so you can roll it up: the consolidation read.
 
-    recall answers a query and, when a theme has grown past what it surfaces, ends
-    with a `↳ … aren't rolled up into a gist yet` cue. survey is how you act on that
-    cue: it returns the loose (un-gisted) memories on the theme grouped into candidate
+    survey returns the loose (un-gisted) memories on a theme grouped into candidate
     sub-threads (by their most distinctive entity), each with its full id8 list, plus
     any gist already covering part of the theme. Then, per sub-thread: write one
     focused reflection over that group's id8s (`memorize(memory_type="reflection",
@@ -495,6 +493,9 @@ def survey(theme: str) -> str:
     rolls the episodes up into it together; or when a sub-thread matches an existing
     gist shown below, `roll_up` into that gist rather than minting a sibling. Rolled
     memories leave the loose set, so the theme shrinks each pass.
+
+    Recall queues these loose clusters as it surfaces them; the `consolidate` command
+    drains that queue. survey re-splits a single theme on demand.
 
     Pass the same focused theme you would pass to recall (1-4 words).
 
@@ -614,6 +615,24 @@ def reconcile() -> str:
     Already-judged pairs are filtered out, so each run shows only new work.
     """
     return _call("reconcile", {})
+
+
+@mcp.tool()
+def consolidate(dismiss: str | None = None) -> str:
+    """Drain the consolidation queue: loose memory clusters awaiting roll-up.
+
+    Recall detects when a theme carries more un-gisted memories than it surfaces
+    and queues that cluster here. This returns each queued cluster with its member
+    ids, for you to judge and roll up: per coherent cluster,
+    `memorize(memory_type="reflection", summary="<the gist>", child_ids=[<the ids>])`
+    (or `survey` the theme first to re-split, then one reflection per sub-thread).
+    Skip an incoherent cluster and it resurfaces later; members already rolled up
+    or archived drop out on their own.
+
+    Args:
+        dismiss: A cluster id (from the listing) to retire without rolling it up.
+    """
+    return _call("consolidate", {"dismiss": dismiss} if dismiss else {})
 
 
 @mcp.tool()

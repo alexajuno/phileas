@@ -369,10 +369,9 @@ def run(engine, entities_fn: EntitiesFn, name: str, params: dict | None = None) 
 # entities_fn is unused by most but kept uniform so one dispatcher fits all.
 # ===========================================================================
 
-# Minimum count of closely-related, not-yet-gisted memories before recall appends
-# the consolidation nudge. The engine gates "related" on keyword + cosine (see
-# REPORT_COSINE_FLOOR); this just sets how big a loose cluster must be to surface.
-RECALL_REPORT_MIN_LOOSE = 12
+# Cap how many member pointers `consolidate` prints per cluster: a big loose theme
+# can carry 100+ members, so it shows a sample and defers the full split to survey.
+CONSOLIDATE_SAMPLE = 8
 
 # Cap how many name-variant pairs `reconcile` prints in one pass, so a graph with
 # many shared-token collisions doesn't flood the context. Overflow is reported,
@@ -452,16 +451,6 @@ def recall(
 
     lines = [f"Found {len(items)} memories:"]
     lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=POINTER_SUMMARY_CHARS))
-    report = getattr(engine, "_last_recall_report", None)
-    if report and report.get("loose", 0) >= RECALL_REPORT_MIN_LOOSE:
-        span = report.get("span")
-        when = f" ({span[0]} → {span[1]})" if span else ""
-        lines.append(
-            f"\n↳ {report['loose']} more memories on this theme aren't rolled up into a gist yet{when}. "
-            f'Cue to consolidate (see "Consolidation" in your instructions): call survey("{query}") to see '
-            "them grouped into sub-threads with their ids, then write one reflection per thread with its "
-            "members as child_ids. A few seconds now keeps this theme compact next time."
-        )
     return "\n".join(lines)
 
 
@@ -872,6 +861,57 @@ def _trace_recent(engine, items: list[dict], days: int, latency_ms: float, bound
         pass
 
 
+def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) -> str:
+    """Drain the consolidation queue: the loose clusters recall flagged for roll-up.
+
+    Prints each queued cluster with its member pointers and the roll-up instruction,
+    for the agent to judge and gist. Refs are hydrated to current state, so members
+    archived or already rolled up since detection drop out, and a cluster left with
+    no loose members is retired. Pass ``dismiss=<cluster id>`` to retire one by hand.
+    """
+    if dismiss:
+        engine.db.mark_consolidation(dismiss, "dismissed")
+        return f"Dismissed consolidation cluster {dismiss[:8]}."
+
+    def _clip(s: str) -> str:
+        return s if len(s) <= POINTER_SUMMARY_CHARS else s[:POINTER_SUMMARY_CHARS] + "…"
+
+    blocks: list[str] = []
+    shown_ids: list[str] = []
+    for row in engine.db.list_pending_consolidations():
+        # Refs, not snapshots: hydrate to current state and drop members archived or
+        # already rolled up since detection.
+        items = [it for it in (engine.db.get_item(mid) for mid in row["member_ids"]) if it and it.status == "active"]
+        if items:
+            parents = engine.graph.get_rollup_parents([it.id for it in items]) or {}
+            items = [it for it in items if not parents.get(it.id)]
+        if not items:
+            engine.db.drop_consolidation(row["id"])  # fully consolidated — retire it
+            continue
+        shown_ids.append(row["id"])
+        label = "(mixed cluster)" if row["anchor"].startswith("set:") else row["anchor"]
+        span = row["span"]
+        when = f" ({span[0]} → {span[1]})" if span and span[0] else ""
+        head = f"[{row['id'][:8]}] {label} · {len(items)} memories{when}"
+        body = [f"    · [{it.id[:8]}] {_clip(it.summary)}" for it in items[:CONSOLIDATE_SAMPLE]]
+        if len(items) > CONSOLIDATE_SAMPLE:
+            body.append(f"    · (+{len(items) - CONSOLIDATE_SAMPLE} more — survey this theme to split and roll up)")
+        blocks.append(head + "\n" + "\n".join(body))
+    if not blocks:
+        return "Nothing queued for consolidation."
+    engine.db.touch_consolidations_presented(shown_ids)
+    instr = (
+        f"{len(blocks)} memory cluster(s) queued for consolidation.\n\n"
+        "For each cluster, judge whether its members form one coherent theme.\n"
+        "If so, roll them up into a gist:\n"
+        '  memorize(memory_type="reflection", summary="<the gist>", child_ids=[<the id8s>])\n'
+        '  (or survey("<theme>") first to re-split, then one reflection per sub-thread).\n'
+        "Skip an incoherent cluster; it resurfaces later. Retire one without rolling "
+        'up via consolidate(dismiss="<cluster id>").\n'
+    )
+    return instr + "\n" + "\n\n".join(blocks)
+
+
 # Action tools that return their final string/dict directly (not via the
 # read-family pointer path).
 MCP_ACTIONS: dict[str, Callable[..., object]] = {
@@ -887,6 +927,7 @@ MCP_ACTIONS: dict[str, Callable[..., object]] = {
     "expand": expand,
     "survey": survey,
     "reconcile": reconcile,
+    "consolidate": consolidate,
     "merge_entities": merge_entities,
     "mark_distinct": mark_distinct,
     "alias": alias,

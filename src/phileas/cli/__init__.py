@@ -14,6 +14,7 @@ from phileas import __version__
 from phileas.cli.commands import (
     about,
     config_cmd,
+    consolidate,
     contradictions,
     export_cmd,
     find_entities,
@@ -116,6 +117,7 @@ app.add_command(profile_group)
 app.add_command(hook_group)
 app.add_command(retry_events)
 app.add_command(reconcile)
+app.add_command(consolidate)
 app.add_command(sync_export_cmd)
 app.add_command(sync_plan_cmd)
 app.add_command(sync_import_cmd)

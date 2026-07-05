@@ -1066,6 +1066,27 @@ def reconcile(apply_safe: bool):
 
 
 @click.command()
+@click.option("--dismiss", default=None, metavar="ID", help="Retire a queued cluster by its id without rolling it up.")
+def consolidate(dismiss: str | None):
+    """Drain the consolidation queue: loose memory clusters awaiting roll-up.
+
+    Prints each queued cluster with its member ids plus the roll-up instruction,
+    for the connected agent to gist via `memorize(..., child_ids=[...])`. Clusters
+    are detected during recall; members already rolled up or archived drop out at
+    drain time. Requires the daemon.
+    """
+    params = {"dismiss": dismiss} if dismiss else {}
+    resp = _daemon_call("tool", {"name": "consolidate", "params": params}, timeout=120)
+    if not resp:
+        print_error("daemon not running — start it with `phileas start`")
+        raise SystemExit(1)
+    if not resp.get("ok"):
+        print_error(resp.get("error") or "unknown error")
+        raise SystemExit(1)
+    click.echo(resp.get("result"))
+
+
+@click.command()
 @click.option("--since", default="all", show_default=True, help="Time window: 24h, 7d, 30d, all.")
 @click.pass_context
 def usage(ctx, since: str):

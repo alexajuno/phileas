@@ -5,10 +5,12 @@ that can be rebuilt from this database.
 """
 
 import functools
+import json
 import logging
 import re
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -155,6 +157,24 @@ CREATE TABLE IF NOT EXISTS reconcile_dismissals (
     b_id TEXT NOT NULL,
     judged_at TEXT NOT NULL
 );
+
+-- Loose clusters awaiting roll-up, detected during recall and drained by the
+-- ``consolidate`` command. Holds refs (member ids), not bodies, so it always
+-- reflects current memories at drain time. Keyed by an ``anchor`` theme so the
+-- same cluster re-surfaced by another query refreshes one row instead of
+-- stacking. ``presented_at`` gives an untouched cluster a resurface cooldown.
+CREATE TABLE IF NOT EXISTS consolidation_queue (
+    id TEXT PRIMARY KEY,
+    anchor TEXT NOT NULL,
+    member_ids TEXT NOT NULL,
+    loose_count INTEGER NOT NULL,
+    span_start TEXT,
+    span_end TEXT,
+    detected_at TEXT NOT NULL,
+    presented_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE INDEX IF NOT EXISTS idx_consqueue_status ON consolidation_queue(status);
 
 -- Inverted index over memory summaries, powering the keyword (sparse) leg of
 -- recall via FTS5 + BM25. Standalone (not external-content): it stores mem_id
@@ -945,6 +965,86 @@ class Database:
         """Every judged-distinct pair key."""
         rows = self.conn.execute("SELECT pair_key FROM reconcile_dismissals").fetchall()
         return {row["pair_key"] for row in rows}
+
+    # --- Consolidation queue (loose clusters awaiting roll-up) ---
+
+    @_locked
+    def enqueue_consolidation(self, anchor: str, member_ids: list[str], span: tuple[str, str] | None) -> None:
+        """Queue a loose cluster for roll-up, upserting by ``anchor``.
+
+        A theme re-surfaced by another recall refreshes its pending row rather
+        than stacking a duplicate; an unchanged member set is a no-op so a
+        repeated query doesn't reset the resurface cooldown.
+        """
+        if not member_ids:
+            return
+        members_json = json.dumps(sorted(member_ids))
+        span_start, span_end = span or (None, None)
+        now = datetime.now(timezone.utc).isoformat()
+        existing = self.conn.execute(
+            "SELECT id, member_ids FROM consolidation_queue WHERE anchor = ? AND status = 'pending'",
+            (anchor,),
+        ).fetchone()
+        if existing:
+            if existing["member_ids"] == members_json:
+                return
+            self.conn.execute(
+                "UPDATE consolidation_queue SET member_ids = ?, loose_count = ?, "
+                "span_start = ?, span_end = ?, detected_at = ? WHERE id = ?",
+                (members_json, len(member_ids), span_start, span_end, now, existing["id"]),
+            )
+        else:
+            self.conn.execute(
+                "INSERT INTO consolidation_queue (id, anchor, member_ids, loose_count, "
+                "span_start, span_end, detected_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+                (uuid.uuid4().hex, anchor, members_json, len(member_ids), span_start, span_end, now),
+            )
+        self.conn.commit()
+
+    @_locked
+    def list_pending_consolidations(self) -> list[dict]:
+        """Pending clusters, newest detection first; ``member_ids`` parsed to a list."""
+        rows = self.conn.execute(
+            "SELECT id, anchor, member_ids, loose_count, span_start, span_end, detected_at, presented_at "
+            "FROM consolidation_queue WHERE status = 'pending' ORDER BY detected_at DESC"
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "anchor": r["anchor"],
+                "member_ids": json.loads(r["member_ids"]),
+                "loose_count": r["loose_count"],
+                "span": (r["span_start"], r["span_end"]) if r["span_start"] else None,
+                "detected_at": r["detected_at"],
+                "presented_at": r["presented_at"],
+            }
+            for r in rows
+        ]
+
+    @_locked
+    def mark_consolidation(self, queue_id: str, status: str) -> None:
+        """Set a queue row's status (``done`` | ``dismissed`` | ``pending``)."""
+        self.conn.execute("UPDATE consolidation_queue SET status = ? WHERE id = ?", (status, queue_id))
+        self.conn.commit()
+
+    @_locked
+    def touch_consolidations_presented(self, queue_ids: list[str]) -> None:
+        """Stamp ``presented_at`` on the rows just shown, for the resurface cooldown."""
+        if not queue_ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        placeholders = ",".join("?" * len(queue_ids))
+        self.conn.execute(
+            f"UPDATE consolidation_queue SET presented_at = ? WHERE id IN ({placeholders})",
+            [now, *queue_ids],
+        )
+        self.conn.commit()
+
+    @_locked
+    def drop_consolidation(self, queue_id: str) -> None:
+        """Delete a queue row outright — used when its cluster is fully rolled up."""
+        self.conn.execute("DELETE FROM consolidation_queue WHERE id = ?", (queue_id,))
+        self.conn.commit()
 
     def _set_extraction_status(self, event_ids: list[str], status: str) -> None:
         ids = [e for e in dict.fromkeys(event_ids) if e]

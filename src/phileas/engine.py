@@ -10,6 +10,7 @@ SQLite is the canonical store. ChromaDB and KuzuDB are derived indexes.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 from datetime import date, datetime, timezone
@@ -71,14 +72,19 @@ BM25_FLOOR_SCALE = 6.0
 # bounding gather cost; the relevance cut — not this number — decides what returns.
 RECALL_POOL = 200
 
-# A gathered candidate counts as "related" for the consolidation report only when it
-# has BOTH a keyword hit and a cosine at least this high. Each single gather signal
-# admits one kind of noise: the fused rank inflates graph-bridge neighbours, a lone
-# keyword token ("quality" on "sleep quality") matches off-topic memories, and cosine
-# alone drops real low-cosine keyword hits. The off-topic noise sits near cosine 0 in
-# every case, so keyword AND a small cosine floor keeps real cluster members and drops
-# what any one signal lets through.
+# A gathered candidate counts as a loose-cluster member only when it has BOTH a
+# keyword hit and a cosine at least this high. Each single gather signal admits one
+# kind of noise: the fused rank inflates graph-bridge neighbours, a lone keyword token
+# ("quality" on "sleep quality") matches off-topic memories, and cosine alone drops
+# real low-cosine keyword hits. The off-topic noise sits near cosine 0 in every case,
+# so keyword AND a small cosine floor keeps real cluster members and drops what any one
+# signal lets through.
 REPORT_COSINE_FLOOR = 0.25
+
+# A recall must surface at least this many loose (un-gisted) cluster members before
+# the theme is queued for consolidation, so the queue holds real themes rather than
+# every stray two-memory overlap.
+CONSOLIDATION_MIN_LOOSE = 12
 
 # survey() partitions a theme's loose cluster into candidate sub-threads so the
 # host writes one focused reflection per thread, not one blind mega-gist. Grouping is
@@ -803,13 +809,10 @@ class MemoryEngine:
         from time import perf_counter
 
         _t0 = perf_counter()
-        # Consolidation report (PHILEAS_RECALL_REPORT): an opt-in one-line nudge
-        # built from the full gathered pool. It reports how many related memories
-        # sit beyond the returned head and how many are not yet rolled up into a
-        # gist. Reset per call (early-return paths leave it None); the default
-        # response shape stays unchanged.
-        self._last_recall_report = None
-        _want_report = bool(os.environ.get("PHILEAS_RECALL_REPORT", "").strip())
+        # Detection for the consolidation queue: from the full gathered pool we find
+        # the closely-related memories that sit beyond the returned head and are not
+        # yet rolled up into a gist, and queue a big-enough loose cluster for the
+        # `consolidate` command to drain. Snapshotted below before the relevance cut.
         _report_pool = None
         _effective_top_k = top_k if top_k is not None else 9999
         # Gather pool is fixed and independent of the requested result count, so
@@ -1501,10 +1504,9 @@ class MemoryEngine:
         # min_keep retains the single best item so a flat/weak spread still answers
         # rather than returning empty.
         gate_ids = list(filtered.keys())
-        # Snapshot the gathered pool before the cut prunes it, so the report
-        # reflects everything the query gathered, not just the surfaced head.
-        if _want_report:
-            _report_pool = dict(filtered)
+        # Snapshot the gathered pool before the cut prunes it, so queue detection
+        # sees everything the query gathered, not just the surfaced head.
+        _report_pool = dict(filtered)
         # RRF relevance is max-normalized rank-fusion, not absolute cosine, so the
         # 0.05 garbage-gate floor has no fixed meaning on it — let the relative cut
         # decide alone (min_keep still guarantees an answer). The floor only bites
@@ -1793,11 +1795,11 @@ class MemoryEngine:
             },
         )
 
-        # Build the consolidation report from the pre-cut pool: the closely-related
-        # memories that did not make the head (keyword hit AND cosine above the floor),
-        # and how many of those still lack a gist. The content gate is what makes the
-        # nudge fire on a real theme rather than on gather-pool size.
-        if _want_report and _report_pool:
+        # Queue a loose cluster from the pre-cut pool: the closely-related memories
+        # that did not make the head (keyword hit AND cosine above the floor) and
+        # still lack a gist. The content gate is what makes a real theme queue rather
+        # than gather-pool size. Bookkeeping only — never let it fail a recall.
+        if _report_pool:
             _returned = {r["id"] for r in results}
             # A real cluster member matches on content (a keyword hit) AND carries
             # non-trivial semantic similarity; the gather's off-topic noise fails one
@@ -1810,11 +1812,29 @@ class MemoryEngine:
             if _related:
                 _parents = self.graph.get_rollup_parents(_related) or {}
                 _loose = [mid for mid in _related if not _parents.get(mid)]
-                _dates = [_report_pool[mid].created_at for mid in _loose if _report_pool[mid].created_at]
-                _span = (min(_dates).date().isoformat(), max(_dates).date().isoformat()) if _dates else None
-                self._last_recall_report = {"related": len(_related), "loose": len(_loose), "span": _span}
+                if len(_loose) >= CONSOLIDATION_MIN_LOOSE:
+                    _dates = [_report_pool[mid].created_at for mid in _loose if _report_pool[mid].created_at]
+                    _span = (min(_dates).date().isoformat(), max(_dates).date().isoformat()) if _dates else None
+                    try:
+                        self._enqueue_consolidation(query, _loose, _span)
+                    except Exception:
+                        log.debug("consolidation enqueue failed", exc_info=True)
 
         return results
+
+    def _enqueue_consolidation(self, query: str, loose_ids: list[str], span: tuple[str, str] | None) -> None:
+        """Queue a loose cluster under its theme for the `consolidate` command.
+
+        The anchor is the recall query — the theme the user actually searched — so
+        the same theme re-surfaced by the same query refreshes one row. Keying on the
+        dominant shared entity instead collapses most clusters onto a pervasive entity
+        (the user, tagged on nearly everything). A blank query falls back to a stable
+        hash of the member id-set.
+        """
+        anchor = " ".join((query or "").split()).lower()
+        if not anchor:
+            anchor = "set:" + hashlib.sha1("|".join(sorted(loose_ids)).encode()).hexdigest()[:16]
+        self.db.enqueue_consolidation(anchor, loose_ids, span)
 
     # ------------------------------------------------------------------
     # update

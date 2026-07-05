@@ -1,11 +1,10 @@
-"""survey(): the consolidation read that turns a recall's '↳ aren't rolled up'
-signal into actionable material.
+"""survey(): the consolidation read that turns a theme's loose cluster into
+actionable material.
 
-recall answers a query and only *signals* that a theme is under-consolidated;
-survey gathers the same on-theme cluster the cue counts (keyword hit AND cosine
-above the floor), keeps the loose (un-gisted) members, and partitions them into
-candidate sub-threads (by topical entity, with the residual time-bucketed) so
-the host writes one focused reflection per thread instead of one blind mega-gist.
+survey gathers the on-theme cluster (keyword hit AND cosine above the floor),
+keeps the loose (un-gisted) members, and partitions them into candidate
+sub-threads (by topical entity, with the residual time-bucketed) so the host
+writes one focused reflection per thread instead of one blind mega-gist.
 
 These build a real cluster through ``memorize`` (embeds + FTS-indexes + links
 entities) so the gate and grouping run end-to-end over all three backends.
