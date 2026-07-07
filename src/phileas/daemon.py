@@ -228,10 +228,51 @@ def _sse_subscriber_loop(config: PhileasConfig, pull_pusher: SyncPusher) -> None
         time.sleep(config.sync.reconnect_seconds)
 
 
+def _spawn_background(config: PhileasConfig) -> int:
+    """Background the daemon in a detached child, the Windows path for start().
+
+    Windows has no ``os.fork()``, so launch ``phileas start --foreground`` as a
+    console-less, detached process and wait for it to publish its port file.
+    Mirrors the POSIX fork path: same 60s deadline, the same "exited during
+    startup" surface, and the same live port on return. The profile and home
+    ride along in the environment so the child resolves the identical store.
+    """
+    import shutil
+    import subprocess
+    import sys
+    import time
+
+    exe = shutil.which("phileas")
+    argv = [exe, "start", "--foreground"] if exe else [sys.executable, "-m", "phileas", "start", "--foreground"]
+    env = dict(os.environ)
+    env["PHILEAS_PROFILE"] = config.profile
+    env["PHILEAS_HOME"] = str(config.home)
+    proc = subprocess.Popen(
+        argv,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+    )
+
+    deadline_s = 60
+    port_file = _port_path(config)
+    for _ in range(deadline_s * 10):
+        if proc.poll() is not None:
+            raise RuntimeError("Daemon process exited during startup (see the daemon log)")
+        if port_file.exists():
+            return int(port_file.read_text().strip())
+        time.sleep(0.1)
+    raise RuntimeError(f"Daemon failed to start (no port file after {deadline_s}s)")
+
+
 def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     """Start the daemon. Returns the port number.
 
-    If foreground=True, blocks. Otherwise forks to background.
+    If foreground=True, blocks. Otherwise backgrounds itself: a fork on POSIX,
+    a detached child process on Windows.
     """
     config = config or load_config()
 
@@ -239,6 +280,9 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         # Drop a stale port file so the parent's wait can't read a previous
         # run's port before the fresh child writes its own.
         _port_path(config).unlink(missing_ok=True)
+        if os.name == "nt":
+            # Windows has no os.fork(); background a detached child instead.
+            return _spawn_background(config)
         # Fork to background
         pid = os.fork()
         if pid > 0:

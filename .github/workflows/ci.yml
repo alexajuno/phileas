@@ -55,6 +55,57 @@ jobs:
         env:
           PHILEAS_TEST_MODE: "1"
 
+  # Windows has no os.fork()/fcntl, so the daemon backgrounds via a detached
+  # spawn there. This exercises that real path end-to-end: install, download
+  # models, boot the daemon, confirm it is live, and stop it. The full pytest
+  # suite isn't run here because its home-isolation fixtures set HOME, which
+  # Path.home() ignores on Windows (it reads USERPROFILE).
+  windows-smoke:
+    runs-on: windows-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[embeddings]" --group dev
+
+      - name: CLI import smoke
+        run: phileas --help
+
+      - name: Cross-platform daemon primitives
+        run: pytest tests/test_platform_compat.py -q
+
+      - name: Cache local models
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.hf
+          key: hf-models-v1
+
+      - name: Install end-to-end (downloads models, spawns the daemon)
+        env:
+          HF_HOME: ${{ github.workspace }}\.hf
+        run: phileas init --yes
+
+      - name: Daemon is live (fork-free spawn)
+        env:
+          HF_HOME: ${{ github.workspace }}\.hf
+        run: |
+          python -c "import sys; from phileas.daemon import is_running; port = is_running(); print('daemon port:', port); sys.exit(0 if port else 1)"
+
+      - name: Status over the daemon
+        env:
+          HF_HOME: ${{ github.workspace }}\.hf
+        run: phileas status
+
+      - name: Stop the daemon
+        run: phileas stop
+
   build:
     runs-on: ubuntu-latest
     needs: test

@@ -932,7 +932,11 @@ def start(foreground: bool):
     # - MALLOC_ARENA_MAX=4: cap secondary arenas (default 8×ncpus = 160 here).
     # - OMP_NUM_THREADS / MKL_NUM_THREADS: each ThreadPoolExecutor worker that
     #   triggers the cross-encoder spawns its own OpenMP fan-out; cap at 2.
-    needs_reexec = any(os.environ.get(k) is None for k in ("MALLOC_ARENA_MAX", "OMP_NUM_THREADS"))
+    # POSIX only: MALLOC_ARENA_MAX is a glibc knob, and os.execvpe has no true
+    # process-replacement on Windows, where the daemon backgrounds via a spawn.
+    needs_reexec = os.name == "posix" and any(
+        os.environ.get(k) is None for k in ("MALLOC_ARENA_MAX", "OMP_NUM_THREADS")
+    )
     if needs_reexec:
         import sys
 
