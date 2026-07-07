@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara made a ceramic cylinder in pottery class (2026-04-27) that didn't collapse, which her instructor Wen acknowledged with a nod.",
+      "content": "Mara made a ceramic cylinder in pottery class (2026-04-27) that didn't collapse, which her instructor Wen acknowledged with a nod.",
       "memory_type": "event",
       "daily_ref": "2026-04-27",
       "entities": [
@@ -14,7 +14,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara realized (2026-04-27) she hasn't done anything physical since running a half marathon about four years ago, and her body now feels tired in a way unlike running fatigue.",
+      "content": "Mara realized (2026-04-27) she hasn't done anything physical since running a half marathon about four years ago, and her body now feels tired in a way unlike running fatigue.",
       "memory_type": "reflection",
       "daily_ref": "2026-04-27",
       "entities": [
@@ -26,7 +26,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
+      "content": "Mara befriended Priya, a nurse on her unit at the General who has worked there for years; assigned together this week, they clicked immediately and Mara considers her the first person at the hospital she'd call a friend.",
       "memory_type": "event",
       "daily_ref": "2026-04-27",
       "entities": [
@@ -59,7 +59,7 @@
       ]
     },
     {
-      "summary": "Priya brought Mara homemade jollof rice (2026-04-27), and Mara has a cat named after jollof.",
+      "content": "Priya brought Mara homemade jollof rice (2026-04-27), and Mara has a cat named after jollof.",
       "memory_type": "event",
       "daily_ref": "2026-04-27",
       "entities": [

@@ -110,8 +110,8 @@ def _engine(tmp_dir: Path) -> MemoryEngine:
     return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
-def _seed(eng: MemoryEngine, summary: str, **kw) -> str:
-    item = MemoryItem(summary=summary, **kw)
+def _seed(eng: MemoryEngine, content: str, **kw) -> str:
+    item = MemoryItem(content=content, **kw)
     eng.db.save_item(item)
     return item.id
 

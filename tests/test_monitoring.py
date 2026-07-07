@@ -52,7 +52,7 @@ def test_decided_by_is_component_argmax():
 
 def test_record_retrieval_returns_applied_delta(sqlite_path):
     db = Database(path=sqlite_path)
-    item = _save(db, summary="a", storage_strength=0.5)
+    item = _save(db, content="a", storage_strength=0.5)
     delta = db.record_retrieval(item.id, retrieval_before=0.0, relevance=1.0)
     assert delta == delta_storage(1.0, 0.0)
     assert db.get_item(item.id).storage_strength == 0.5 + delta
@@ -69,10 +69,10 @@ def test_storage_health_empty_store(sqlite_path):
 
 def test_storage_health_distribution_and_guardrails(sqlite_path):
     db = Database(path=sqlite_path)
-    _save(db, summary="fresh", storage_strength=0.5, last_accessed=NOW)
-    _save(db, summary="stale", storage_strength=0.5, last_accessed=OLD)  # decayed → fading
-    _save(db, summary="hot", storage_strength=2.0, last_accessed=NOW, access_count=10)
-    _save(db, summary="reinforced", storage_strength=0.5, last_accessed=NOW, last_reinforced=NOW)
+    _save(db, content="fresh", storage_strength=0.5, last_accessed=NOW)
+    _save(db, content="stale", storage_strength=0.5, last_accessed=OLD)  # decayed → fading
+    _save(db, content="hot", storage_strength=2.0, last_accessed=NOW, access_count=10)
+    _save(db, content="reinforced", storage_strength=0.5, last_accessed=NOW, last_reinforced=NOW)
 
     h = db.storage_health()
     assert h["active"] == 4

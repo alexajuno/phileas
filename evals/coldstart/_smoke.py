@@ -8,7 +8,7 @@ from phileas.models import Event
 ev = Event(text="Mara mentioned she works night shifts at the General.", thread_id=tid)
 eng.save_event(ev)
 res = eng.memorize(
-    summary="Mara works night shifts at Toronto General Hospital (the General).",
+    content="Mara works night shifts at Toronto General Hospital (the General).",
     memory_type="knowledge",
     source_event_id=ev.id,
     entities=[{"name": "Mara", "type": "Person"}, {"name": "Toronto General Hospital", "type": "Organization"}],

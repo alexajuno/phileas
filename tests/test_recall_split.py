@@ -40,8 +40,8 @@ def _seed(eng: MemoryEngine, **kw) -> str:
 
 def test_id_prefix_unique_ambiguous_and_empty(tmp_path: Path):
     eng = _engine(tmp_path)
-    _seed(eng, id="aaaa1111-0000-0000-0000-000000000000", summary="first")
-    _seed(eng, id="aaaa2222-0000-0000-0000-000000000000", summary="second")
+    _seed(eng, id="aaaa1111-0000-0000-0000-000000000000", content="first")
+    _seed(eng, id="aaaa2222-0000-0000-0000-000000000000", content="second")
 
     assert len(eng.db.get_items_by_id_prefix("aaaa1111")) == 1
     assert len(eng.db.get_items_by_id_prefix("aaaa")) == 2  # ambiguous stem
@@ -57,14 +57,14 @@ def test_hydrate_resolves_id8_to_full_record(tmp_path: Path):
     mid = _seed(
         eng,
         id="abcd1234-5e6f-7890-abcd-ef1234567890",
-        summary="the cake memory",
+        content="the cake memory",
         memory_type="event",
         source_event_id="99887766",
     )
     out = eng.hydrate("abcd1234")  # 8-char pointer prefix
     assert out is not None and "error" not in out
     assert out["id"] == mid  # resolves to the FULL id
-    assert out["summary"] == "the cake memory"
+    assert out["content"] == "the cake memory"
     assert out["source_event_id"] == "99887766"  # the handle for thread()
     assert out["entities"] == []  # graph down -> empty, not a crash
 
@@ -77,8 +77,8 @@ def test_hydrate_missing_returns_none(tmp_path: Path):
 
 def test_hydrate_ambiguous_prefix_returns_candidates(tmp_path: Path):
     eng = _engine(tmp_path)
-    _seed(eng, id="dup00001-0000-0000-0000-000000000000", summary="dup one")
-    _seed(eng, id="dup00002-0000-0000-0000-000000000000", summary="dup two")
+    _seed(eng, id="dup00001-0000-0000-0000-000000000000", content="dup one")
+    _seed(eng, id="dup00002-0000-0000-0000-000000000000", content="dup two")
     out = eng.hydrate("dup")
     assert out is not None and "error" in out
     assert len(out["candidates"]) == 2
@@ -89,7 +89,7 @@ def test_hydrate_ambiguous_prefix_returns_candidates(tmp_path: Path):
 
 def test_serendipity_count_exclude_and_daily_stability(tmp_path: Path):
     eng = _engine(tmp_path)
-    ids = [_seed(eng, summary=f"memory {i}", storage_strength=((i % 10) + 1) / 10) for i in range(20)]
+    ids = [_seed(eng, content=f"memory {i}", storage_strength=((i % 10) + 1) / 10) for i in range(20)]
 
     out = eng.serendipity(n=3)
     assert len(out) == 3
@@ -112,6 +112,6 @@ def test_serendipity_empty_db(tmp_path: Path):
 def test_serendipity_respects_n_bounds(tmp_path: Path, n: int):
     eng = _engine(tmp_path)
     for i in range(10):
-        _seed(eng, summary=f"m{i}")
+        _seed(eng, content=f"m{i}")
     out = eng.serendipity(n=n)
     assert len(out) == min(n, 10)

@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "As of 2026-09-05 Mara's mother is well and her cardiologist cleared her to travel short distances; she is talking about visiting Toronto for Christmas 2026.",
+      "content": "As of 2026-09-05 Mara's mother is well and her cardiologist cleared her to travel short distances; she is talking about visiting Toronto for Christmas 2026.",
       "memory_type": "event",
       "daily_ref": "2026-09-05",
       "entities": [
@@ -16,7 +16,7 @@
       ]
     },
     {
-      "summary": "Dr. Tunde Adeyemi, the family-friend doctor, signed off on Mara's mother being stable enough to travel to Toronto; Mara calls him a quiet anchor through the whole ordeal.",
+      "content": "Dr. Tunde Adeyemi, the family-friend doctor, signed off on Mara's mother being stable enough to travel to Toronto; Mara calls him a quiet anchor through the whole ordeal.",
       "memory_type": "knowledge",
       "daily_ref": "2026-09-05",
       "entities": [
@@ -28,7 +28,7 @@
       ]
     },
     {
-      "summary": "Mara's interview for the permanent ICU position was scheduled for Tuesday 2026-09-08.",
+      "content": "Mara's interview for the permanent ICU position was scheduled for Tuesday 2026-09-08.",
       "memory_type": "event",
       "daily_ref": "2026-09-05",
       "entities": [
@@ -39,7 +39,7 @@
       ]
     },
     {
-      "summary": "Mara said (2026-09-05) she would carry her mother to Toronto herself for a Christmas visit if needed, gladly hosting her.",
+      "content": "Mara said (2026-09-05) she would carry her mother to Toronto herself for a Christmas visit if needed, gladly hosting her.",
       "memory_type": "knowledge",
       "daily_ref": "2026-09-05",
       "entities": [

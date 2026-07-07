@@ -25,8 +25,8 @@ class _StubGraph:
         return {i: self._parents[i] for i in ids if i in self._parents}
 
 
-def _seed(db: Database, mid: str, summary: str, status: str = "active") -> None:
-    db.save_item(MemoryItem(id=mid, summary=summary, memory_type="event", status=status))
+def _seed(db: Database, mid: str, content: str, status: str = "active") -> None:
+    db.save_item(MemoryItem(id=mid, content=content, memory_type="event", status=status))
 
 
 def _engine(db: Database, parents: dict[str, str] | None = None):

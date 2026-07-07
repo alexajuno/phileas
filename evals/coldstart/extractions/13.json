@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara finished a celadon bowl in her pottery practice on 2026-06-02 and felt proud of it, judging it looked like a real object someone would own rather than amateurish.",
+      "content": "Mara finished a celadon bowl in her pottery practice on 2026-06-02 and felt proud of it, judging it looked like a real object someone would own rather than amateurish.",
       "memory_type": "event",
       "daily_ref": "2026-06-02",
       "entities": [
@@ -12,7 +12,7 @@
       ]
     },
     {
-      "summary": "Mara gave her first pottery piece she loved (a celadon bowl) to Priya on 2026-06-02 as thanks for pulling her through the worst shifts of the year.",
+      "content": "Mara gave her first pottery piece she loved (a celadon bowl) to Priya on 2026-06-02 as thanks for pulling her through the worst shifts of the year.",
       "memory_type": "event",
       "daily_ref": "2026-06-02",
       "entities": [
@@ -33,7 +33,7 @@
       ]
     },
     {
-      "summary": "Priya is an ICU nurse who works alongside Mara and has supported her through her hardest shifts this year.",
+      "content": "Priya is an ICU nurse who works alongside Mara and has supported her through her hardest shifts this year.",
       "memory_type": "profile",
       "daily_ref": "2026-06-02",
       "entities": [
@@ -54,7 +54,7 @@
       ]
     },
     {
-      "summary": "Mara relies on pottery as her main way of staying sane; it began as a joke distraction and became something she actively protects.",
+      "content": "Mara relies on pottery as her main way of staying sane; it began as a joke distraction and became something she actively protects.",
       "memory_type": "behavior",
       "daily_ref": "2026-06-02",
       "entities": [
@@ -69,7 +69,7 @@
       ]
     },
     {
-      "summary": "Mara works as an ICU nurse and has described this year as having some of the worst shifts of her career.",
+      "content": "Mara works as an ICU nurse and has described this year as having some of the worst shifts of her career.",
       "memory_type": "profile",
       "daily_ref": "2026-06-02",
       "entities": [

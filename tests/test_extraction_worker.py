@@ -55,7 +55,7 @@ class _FakeEngine:
 
     def memorize(self, **kwargs):
         self.memorized.append(kwargs)
-        return {"id": f"m-{len(self.memorized)}", "summary": kwargs.get("summary")}
+        return {"id": f"m-{len(self.memorized)}", "content": kwargs.get("content")}
 
 
 def _worker(tmp_dir, client, *, clock, debounce_s=8.0, max_buffer_s=120.0, max_retries=3):
@@ -90,7 +90,7 @@ def test_build_transcript_tags_attribution_and_defaults_to_self():
 
 def test_flush_after_debounce_writes_memories_and_marks_extracted(tmp_dir):
     clock = _Clock()
-    client = _FakeClient([{"summary": "The user plays tennis", "memory_type": "behavior"}])
+    client = _FakeClient([{"content": "The user plays tennis", "memory_type": "behavior"}])
     db, engine, worker = _worker(tmp_dir, client, clock=clock)
     _pending(db, "t1", "I play tennis", attribution="self", secs=0)
     _pending(db, "t1", "nice", attribution="assistant", secs=1)
@@ -106,7 +106,7 @@ def test_flush_after_debounce_writes_memories_and_marks_extracted(tmp_dir):
     clock.t = 8.0
     worker.tick(8.0)  # debounce elapsed -> flush
     assert len(engine.memorized) == 1
-    assert engine.memorized[0]["summary"] == "The user plays tennis"
+    assert engine.memorized[0]["content"] == "The user plays tennis"
     assert engine.memorized[0]["source_event_id"] == last  # the window's last turn
     assert engine.memorized[0]["detect_conflict"] is False
     assert db.get_pending_events_for_thread("t1") == []
@@ -115,7 +115,7 @@ def test_flush_after_debounce_writes_memories_and_marks_extracted(tmp_dir):
 
 def test_transcript_carries_attribution_into_extraction(tmp_dir):
     clock = _Clock()
-    client = _FakeClient([{"summary": "s", "memory_type": "event"}])
+    client = _FakeClient([{"content": "s", "memory_type": "event"}])
     db, engine, worker = _worker(tmp_dir, client, clock=clock)
     _pending(db, "t1", "I moved to Bangkok", attribution="self", secs=0)
     _pending(db, "t1", "congrats", attribution="assistant", secs=1)
@@ -130,7 +130,7 @@ def test_transcript_carries_attribution_into_extraction(tmp_dir):
 
 def test_max_buffer_forces_flush_despite_recent_activity(tmp_dir):
     clock = _Clock()
-    client = _FakeClient([{"summary": "x", "memory_type": "event"}])
+    client = _FakeClient([{"content": "x", "memory_type": "event"}])
     db, engine, worker = _worker(tmp_dir, client, clock=clock, debounce_s=8.0, max_buffer_s=20.0)
     _pending(db, "t1", "one")
 
@@ -179,7 +179,7 @@ def test_failure_marks_failed_after_max_retries(tmp_dir):
 
 def test_seed_recovers_pending_threads(tmp_dir):
     clock = _Clock()
-    client = _FakeClient([{"summary": "s", "memory_type": "event"}])
+    client = _FakeClient([{"content": "s", "memory_type": "event"}])
     db, engine, worker = _worker(tmp_dir, client, clock=clock)
     # Turns buffered before this worker existed (e.g. a daemon restart).
     _pending(db, "t1", "earlier turn")

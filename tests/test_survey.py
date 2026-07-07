@@ -33,8 +33,8 @@ def _engine(path: Path) -> MemoryEngine:
     return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
-def _mem(eng: MemoryEngine, summary: str, entities: list[dict]) -> str:
-    return eng.memorize(summary, entities=entities, detect_conflict=False)["id"]
+def _mem(eng: MemoryEngine, content: str, entities: list[dict]) -> str:
+    return eng.memorize(content, entities=entities, detect_conflict=False)["id"]
 
 
 # A shared "Hub" project on every on-theme memory (the ubiquitous theme entity)

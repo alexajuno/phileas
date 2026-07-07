@@ -101,7 +101,7 @@ def _samples(eng, entity_id: str, k: int = 3) -> list[str]:
     for mid in mids[:k]:
         item = eng.db.get_item(mid)
         if item:
-            out.append(item.summary)
+            out.append(item.content)
     return out
 
 

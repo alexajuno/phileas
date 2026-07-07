@@ -52,7 +52,7 @@ def _thread(eng: MemoryEngine, days_ago: int, types: list[str], hour: int = 2) -
         ts = datetime.fromisoformat(f"{day}T{hour:02d}:{i:02d}:00+00:00")
         eng.db.save_item(
             MemoryItem(
-                summary=f"{day} thread {ev.id[:4]} memory {i} ({mtype})",
+                content=f"{day} thread {ev.id[:4]} memory {i} ({mtype})",
                 memory_type=mtype,
                 source_event_id=ev.id,
                 daily_ref=day,

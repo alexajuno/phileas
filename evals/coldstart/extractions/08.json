@@ -1,14 +1,14 @@
 {
   "memories": [
     {
-      "summary": "On 2026-05-01, a young patient died on Mara's hospital shift; she felt nothing could have been done but the loss weighed on her anyway.",
+      "content": "On 2026-05-01, a young patient died on Mara's hospital shift; she felt nothing could have been done but the loss weighed on her anyway.",
       "memory_type": "event",
       "daily_ref": "2026-05-01",
       "entities": [],
       "relationships": []
     },
     {
-      "summary": "Mara judged (2026-05-01) that Dr. Halloran was brutal in the post-loss debrief, picking apart timing as if the team hadn't all been there breaking themselves over the patient; basis: the harsh debrief came right after losing a young patient.",
+      "content": "Mara judged (2026-05-01) that Dr. Halloran was brutal in the post-loss debrief, picking apart timing as if the team hadn't all been there breaking themselves over the patient; basis: the harsh debrief came right after losing a young patient.",
       "memory_type": "knowledge",
       "daily_ref": "2026-05-01",
       "entities": [
@@ -21,7 +21,7 @@
       "relationships": []
     },
     {
-      "summary": "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright.",
+      "content": "After the patient's death on 2026-05-01, Mara's colleague Priya found her in the supply room and stood with her without saying anything, which Mara credits as the only reason she stayed upright.",
       "memory_type": "event",
       "daily_ref": "2026-05-01",
       "entities": [
@@ -42,7 +42,7 @@
       ]
     },
     {
-      "summary": "Mara judged (2026-05-01) that TGH is chronically understaffed and that this is a management-made staffing crisis, not a 'vibe'; basis: three nurses quit TGH in the prior two months.",
+      "content": "Mara judged (2026-05-01) that TGH is chronically understaffed and that this is a management-made staffing crisis, not a 'vibe'; basis: three nurses quit TGH in the prior two months.",
       "memory_type": "knowledge",
       "daily_ref": "2026-05-01",
       "entities": [
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "summary": "Mara carries anger about TGH's understaffing that she describes as bigger than any single bad shift, recurring as a throughline beyond tonight's loss.",
+      "content": "Mara carries anger about TGH's understaffing that she describes as bigger than any single bad shift, recurring as a throughline beyond tonight's loss.",
       "memory_type": "reflection",
       "daily_ref": "2026-05-01",
       "entities": [

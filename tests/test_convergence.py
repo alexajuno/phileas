@@ -282,8 +282,8 @@ def test_get_memories_about_unions_across_twins(tmp_dir: Path):
     person_only = set(eng.graph.get_memories_about("Person", "Jollof"))
     assert m1["id"] in person_only and m2["id"] not in person_only, "a typed read still narrows"
 
-    summaries = {item["summary"] for item in eng.about("Jollof")}
-    assert len(summaries) == 2, "about() surfaces both twins while the graph converges"
+    contents = {item["content"] for item in eng.about("Jollof")}
+    assert len(contents) == 2, "about() surfaces both twins while the graph converges"
 
 
 # --- tool-call markup guard -------------------------------------------------------
@@ -293,19 +293,19 @@ def test_memorize_rejects_markup_residue(tmp_dir: Path):
     eng = _engine(tmp_dir)
     corrupted = 'A real fact</parameter>\n<parameter name="source_text">leaked parameter block'
     with pytest.raises(ValueError, match="markup"):
-        tool_runner.memorize(eng, tool_runner.no_entities, summary=corrupted)
+        tool_runner.memorize(eng, tool_runner.no_entities, content=corrupted)
     with pytest.raises(ValueError, match="markup"):
-        tool_runner.memorize_batch(eng, tool_runner.no_entities, memories=[{"summary": corrupted}])
+        tool_runner.memorize_batch(eng, tool_runner.no_entities, memories=[{"content": corrupted}])
     with pytest.raises(ValueError, match="markup"):
-        tool_runner.update(eng, tool_runner.no_entities, memory_id="anything", summary=corrupted)
+        tool_runner.update(eng, tool_runner.no_entities, memory_id="anything", content=corrupted)
 
 
-def test_memorize_accepts_clean_summary_mentioning_tags_in_source(tmp_dir: Path):
+def test_memorize_accepts_clean_content_mentioning_tags_in_source(tmp_dir: Path):
     eng = _engine(tmp_dir)
     out = tool_runner.memorize(
         eng,
         tool_runner.no_entities,
-        summary="The markup guard rejects corrupted memorize calls at the tool boundary",
+        content="The markup guard rejects corrupted memorize calls at the tool boundary",
         source_text='Example residue it catches: </parameter><parameter name="entities">',
     )
     assert out.startswith("Stored")

@@ -142,7 +142,7 @@ def _memorize_hint(event_id: str | None) -> str:
         "endorsed it. Bar: the archaeology test -- will this still be useful "
         "once the code shows only the result and git shows only the diff? If "
         "it's obvious from the code or the diff, skip it; don't save what the "
-        "user waved off. Write the summary and entity names in English, even "
+        "user waved off. Write the content and entity names in English, even "
         "when this conversation is in another language -- memories are "
         "stored and searched in English.\n" + link + "If something qualifies, call "
         "mcp__phileas__memorize now, one memory per fact. If not, just stop -- "

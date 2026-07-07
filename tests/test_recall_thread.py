@@ -32,7 +32,7 @@ def _ingest_event_with_memories(engine, event_text: str, memories: list[dict]) -
     engine.save_event(event)
     for m in memories:
         engine.memorize(
-            summary=m["summary"],
+            content=m["content"],
             memory_type=m.get("memory_type", "knowledge"),
             source_event_id=event.id,
         )
@@ -47,8 +47,8 @@ def test_thread_resolves_a_lone_event_to_a_singleton(tmp_dir):
         engine,
         event_text="The original conversation about thread-test-marker",
         memories=[
-            {"summary": "First extracted memory", "memory_type": "knowledge"},
-            {"summary": "Second extracted memory", "memory_type": "behavior"},
+            {"content": "First extracted memory", "memory_type": "knowledge"},
+            {"content": "Second extracted memory", "memory_type": "behavior"},
         ],
     )
 
@@ -70,17 +70,17 @@ def test_thread_groups_turns_oldest_first(tmp_dir):
     base = datetime(2026, 6, 16, 12, 0, 0, tzinfo=timezone.utc)
     e1 = Event(text="turn one about alpha", thread_id=tid, received_at=base)
     engine.save_event(e1)
-    engine.memorize(summary="alpha fact", source_event_id=e1.id)
+    engine.memorize(content="alpha fact", source_event_id=e1.id)
     e2 = Event(text="turn two about beta", thread_id=tid, received_at=base + timedelta(seconds=1))
     engine.save_event(e2)
-    engine.memorize(summary="beta fact", source_event_id=e2.id)
+    engine.memorize(content="beta fact", source_event_id=e2.id)
 
     result = engine.thread(tid)
     assert result["thread_id"] == tid
     assert result["label"] == "planning chat"
     assert [t["event_id"] for t in result["turns"]] == [e1.id, e2.id]
-    assert result["turns"][0]["memories"][0]["summary"] == "alpha fact"
-    assert result["turns"][1]["memories"][0]["summary"] == "beta fact"
+    assert result["turns"][0]["memories"][0]["content"] == "alpha fact"
+    assert result["turns"][1]["memories"][0]["content"] == "beta fact"
 
     # Following a memory's source event resolves to the same conversation.
     assert engine.thread(e2.id)["thread_id"] == tid

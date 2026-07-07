@@ -16,7 +16,7 @@ bloat git, so the fixture is reproduced from text on demand instead.
 
 Memory ids are random uuid4 assigned at write time, so they change on every
 re-seed. The gold set (`goldset.json`) therefore anchors each relevant memory by
-its **summary text**, and the A/B runner resolves anchors to live ids against the
+its **content text**, and the A/B runner resolves anchors to live ids against the
 seeded store at load. A re-seed does not rot the gold set; only a change to the
 corpus text does.
 

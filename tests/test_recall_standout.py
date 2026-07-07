@@ -58,16 +58,16 @@ def _engine(tmp_path: Path) -> MemoryEngine:
     )
 
 
-def _seed(eng: MemoryEngine, summary: str) -> str:
-    item = MemoryItem(summary=summary)
+def _seed(eng: MemoryEngine, content: str) -> str:
+    item = MemoryItem(content=content)
     eng.db.save_item(item)
     return item.id
 
 
-# Query shares no token with the summary, so Path 1 (keyword) can't match it —
+# Query shares no token with the content, so Path 1 (keyword) can't match it;
 # the memory can only enter via the stubbed semantic path, isolating the cut.
 _QUERY = "weekend mountain cycling"
-_SUMMARY = "Eleanor adopted a rescue greyhound named Biscuit last spring"
+_CONTENT = "Eleanor adopted a rescue greyhound named Biscuit last spring"
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +79,7 @@ def _stub_reranker(monkeypatch):
 
 def test_low_band_memory_surfaces_under_default_cut(tmp_path: Path):
     eng = _engine(tmp_path)
-    rescue = _seed(eng, _SUMMARY)
+    rescue = _seed(eng, _CONTENT)
     eng.vector = _StubVector(semantic=[(rescue, 0.42)])  # in the band the 0.5 floor dropped
 
     ids = {r["id"] for r in eng.recall(_QUERY, top_k=5)}
@@ -89,7 +89,7 @@ def test_low_band_memory_surfaces_under_default_cut(tmp_path: Path):
 def test_legacy_absolute_floor_control_drops_it(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PHILEAS_STANDOUT", "absolute:0.5")
     eng = _engine(tmp_path)
-    rescue = _seed(eng, _SUMMARY)
+    rescue = _seed(eng, _CONTENT)
     eng.vector = _StubVector(semantic=[(rescue, 0.42)])
 
     # Same harness, same 0.42 hit — the flat 0.5 control zeroes it at the gate.
@@ -106,7 +106,7 @@ def test_above_band_memory_kept_under_both(tmp_path: Path, monkeypatch):
         else:
             monkeypatch.delenv("PHILEAS_STANDOUT", raising=False)
         eng = _engine(tmp_path / (setting or "default"))
-        anchor = _seed(eng, _SUMMARY)
+        anchor = _seed(eng, _CONTENT)
         eng.vector = _StubVector(semantic=[(anchor, 0.60)])
         ids = {r["id"] for r in eng.recall(_QUERY, top_k=5)}
         assert anchor in ids, f"anchor dropped under {setting or 'default'}"

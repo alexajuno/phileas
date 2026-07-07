@@ -150,7 +150,7 @@ class ExtractionWorker:
             source_event_id = events[-1].id  # one FK per memory; point at the window's last turn
             for memory in memories:
                 self._engine.memorize(
-                    summary=memory["summary"],
+                    content=memory["content"],
                     memory_type=memory.get("memory_type", "knowledge"),
                     entities=memory.get("entities", []),
                     relationships=memory.get("relationships", []),

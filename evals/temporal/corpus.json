@@ -2,39 +2,39 @@
   "ref_date": "2026-07-04",
   "_note": "Synthetic day-anchored corpus for the temporal-deixis eval. 'ref_date' is the pinned 'now' (a Saturday); every deictic query in goldset.json resolves against it. Each memory carries an explicit daily_ref so memorize() links it to a known Day node. 'role' documents intent and is ignored by seed.py: target = the on-day memory a deictic query should surface; decoy = an off-day memory phrased to be the STRONGER topical match, which scope must beat; filler = same-day context; noise = unrelated. All data is fictional.",
   "memories": [
-    {"role": "target",  "summary": "grabbing ramen with Trish after work", "daily_ref": "2026-07-04", "memory_type": "event", "entities": [{"name": "Trish", "type": "Person"}]},
-    {"role": "filler",  "summary": "the morning standup ran a good fifteen minutes over", "daily_ref": "2026-07-04", "memory_type": "event"},
-    {"role": "filler",  "summary": "dropped the dry cleaning off on the walk in", "daily_ref": "2026-07-04", "memory_type": "event"},
+    {"role": "target",  "content": "grabbing ramen with Trish after work", "daily_ref": "2026-07-04", "memory_type": "event", "entities": [{"name": "Trish", "type": "Person"}]},
+    {"role": "filler",  "content": "the morning standup ran a good fifteen minutes over", "daily_ref": "2026-07-04", "memory_type": "event"},
+    {"role": "filler",  "content": "dropped the dry cleaning off on the walk in", "daily_ref": "2026-07-04", "memory_type": "event"},
 
-    {"role": "target",  "summary": "fixed the leaky kitchen tap after dinner", "daily_ref": "2026-07-03", "memory_type": "event"},
-    {"role": "filler",  "summary": "a slow afternoon of code review on the payments branch", "daily_ref": "2026-07-03", "memory_type": "event"},
-    {"role": "target",  "summary": "watched the season finale of the detective show", "daily_ref": "2026-07-03", "memory_type": "event"},
+    {"role": "target",  "content": "fixed the leaky kitchen tap after dinner", "daily_ref": "2026-07-03", "memory_type": "event"},
+    {"role": "filler",  "content": "a slow afternoon of code review on the payments branch", "daily_ref": "2026-07-03", "memory_type": "event"},
+    {"role": "target",  "content": "watched the season finale of the detective show", "daily_ref": "2026-07-03", "memory_type": "event"},
 
-    {"role": "target",  "summary": "dentist appointment booked for 9am", "daily_ref": "2026-07-05", "memory_type": "event"},
-    {"role": "filler",  "summary": "meaning to repot the balcony tomatoes", "daily_ref": "2026-07-05", "memory_type": "event"},
+    {"role": "target",  "content": "dentist appointment booked for 9am", "daily_ref": "2026-07-05", "memory_type": "event"},
+    {"role": "filler",  "content": "meaning to repot the balcony tomatoes", "daily_ref": "2026-07-05", "memory_type": "event"},
 
-    {"role": "target",  "summary": "drove up to the lake with Marco and the dog", "daily_ref": "2026-06-28", "memory_type": "event", "entities": [{"name": "Marco", "type": "Person"}]},
-    {"role": "filler",  "summary": "grilled corn and swam until the sun went down", "daily_ref": "2026-06-27", "memory_type": "event"},
+    {"role": "target",  "content": "drove up to the lake with Marco and the dog", "daily_ref": "2026-06-28", "memory_type": "event", "entities": [{"name": "Marco", "type": "Person"}]},
+    {"role": "filler",  "content": "grilled corn and swam until the sun went down", "daily_ref": "2026-06-27", "memory_type": "event"},
 
-    {"role": "target",  "summary": "started the couch-to-5k plan and got through the first session", "daily_ref": "2026-07-01", "memory_type": "event"},
+    {"role": "target",  "content": "started the couch-to-5k plan and got through the first session", "daily_ref": "2026-07-01", "memory_type": "event"},
 
-    {"role": "target",  "summary": "long phone call with mum about selling the Surrey house", "daily_ref": "2026-07-02", "memory_type": "event", "entities": [{"name": "mum", "type": "Person"}]},
+    {"role": "target",  "content": "long phone call with mum about selling the Surrey house", "daily_ref": "2026-07-02", "memory_type": "event", "entities": [{"name": "mum", "type": "Person"}]},
 
-    {"role": "target",  "summary": "the sprint retro overran and got heated", "daily_ref": "2026-06-29", "memory_type": "event"},
+    {"role": "target",  "content": "the sprint retro overran and got heated", "daily_ref": "2026-06-29", "memory_type": "event"},
 
-    {"role": "decoy",   "summary": "the tiny ramen counter downtown where Trish and I first met years ago", "daily_ref": "2026-05-02", "memory_type": "event", "entities": [{"name": "Trish", "type": "Person"}]},
-    {"role": "decoy",   "summary": "spent an entire weekend re-plumbing the upstairs bathroom", "daily_ref": "2026-06-13", "memory_type": "event"},
-    {"role": "decoy",   "summary": "binged the whole detective series back to back over a long weekend", "daily_ref": "2026-04-05", "memory_type": "event"},
-    {"role": "decoy",   "summary": "the dentist visit where I finally got the two fillings sorted", "daily_ref": "2026-04-20", "memory_type": "event"},
-    {"role": "decoy",   "summary": "the lake-house cabin we rent for a week every single summer", "daily_ref": "2026-05-16", "memory_type": "event"},
-    {"role": "decoy",   "summary": "ran the city half marathon and my knees paid for it for days", "daily_ref": "2026-03-30", "memory_type": "event"},
-    {"role": "decoy",   "summary": "mum's house move that dragged on for the better part of a year", "daily_ref": "2026-02-10", "memory_type": "event", "entities": [{"name": "mum", "type": "Person"}]},
-    {"role": "decoy",   "summary": "the big quarterly planning offsite back in January", "daily_ref": "2026-01-15", "memory_type": "event"},
+    {"role": "decoy",   "content": "the tiny ramen counter downtown where Trish and I first met years ago", "daily_ref": "2026-05-02", "memory_type": "event", "entities": [{"name": "Trish", "type": "Person"}]},
+    {"role": "decoy",   "content": "spent an entire weekend re-plumbing the upstairs bathroom", "daily_ref": "2026-06-13", "memory_type": "event"},
+    {"role": "decoy",   "content": "binged the whole detective series back to back over a long weekend", "daily_ref": "2026-04-05", "memory_type": "event"},
+    {"role": "decoy",   "content": "the dentist visit where I finally got the two fillings sorted", "daily_ref": "2026-04-20", "memory_type": "event"},
+    {"role": "decoy",   "content": "the lake-house cabin we rent for a week every single summer", "daily_ref": "2026-05-16", "memory_type": "event"},
+    {"role": "decoy",   "content": "ran the city half marathon and my knees paid for it for days", "daily_ref": "2026-03-30", "memory_type": "event"},
+    {"role": "decoy",   "content": "mum's house move that dragged on for the better part of a year", "daily_ref": "2026-02-10", "memory_type": "event", "entities": [{"name": "mum", "type": "Person"}]},
+    {"role": "decoy",   "content": "the big quarterly planning offsite back in January", "daily_ref": "2026-01-15", "memory_type": "event"},
 
-    {"role": "noise",   "summary": "renewed the car insurance online before the deadline", "daily_ref": "2026-06-20", "memory_type": "event"},
-    {"role": "noise",   "summary": "coffee with Sandra down by the waterfront", "daily_ref": "2026-06-05", "memory_type": "event", "entities": [{"name": "Sandra", "type": "Person"}]},
-    {"role": "noise",   "summary": "laptop battery finally gave out, ordered a replacement", "daily_ref": "2026-05-28", "memory_type": "event"},
-    {"role": "noise",   "summary": "threw Trish a birthday dinner at the Thai place", "daily_ref": "2026-05-30", "memory_type": "event", "entities": [{"name": "Trish", "type": "Person"}]},
-    {"role": "noise",   "summary": "signed the lease on the new apartment", "daily_ref": "2026-04-01", "memory_type": "event"}
+    {"role": "noise",   "content": "renewed the car insurance online before the deadline", "daily_ref": "2026-06-20", "memory_type": "event"},
+    {"role": "noise",   "content": "coffee with Sandra down by the waterfront", "daily_ref": "2026-06-05", "memory_type": "event", "entities": [{"name": "Sandra", "type": "Person"}]},
+    {"role": "noise",   "content": "laptop battery finally gave out, ordered a replacement", "daily_ref": "2026-05-28", "memory_type": "event"},
+    {"role": "noise",   "content": "threw Trish a birthday dinner at the Thai place", "daily_ref": "2026-05-30", "memory_type": "event", "entities": [{"name": "Trish", "type": "Person"}]},
+    {"role": "noise",   "content": "signed the lease on the new apartment", "daily_ref": "2026-04-01", "memory_type": "event"}
   ]
 }

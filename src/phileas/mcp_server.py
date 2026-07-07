@@ -41,8 +41,8 @@ _capture_instructions = (
     "re-walking; a command or recipe that worked. A thing you discovered counts on its own; it "
     "does not need the user to have endorsed it. The bar is usefulness: will this still be useful "
     "once the code shows only the result and git shows only the diff? Skip what's obvious from the "
-    "code or the diff, and anything the user waves off. memorize(summary, source_text, "
-    "memory_type='decision', entities=[...]): the choice in summary, the reasoning and the "
+    "code or the diff, and anything the user waves off. memorize(content, source_text, "
+    "memory_type='decision', entities=[...]): the choice in content, the reasoning and the "
     "alternatives passed over in source_text, and tag entities with the repo, file, and concept it "
     "governs so a later about(file, memory_type='decision') surfaces it."
 )
@@ -54,7 +54,7 @@ mcp = FastMCP(
         "Phileas is a long-term memory companion.\n"
         "\n"
         "POINTERS, NOT BODIES: recall-family tools return cheap POINTERS — "
-        "`[id8] [type] date · summary · entity tags`. Long summaries are clipped with an "
+        "`[id8] [type] date · content · entity tags`. Long content is clipped with an "
         "ellipsis (hydrate(id8) returns the full body); the metadata tail is trimmed and "
         "results are bounded by count AND output size. Treat pointers as your working "
         "context. Only drill in when you genuinely need more, via the hydrate ladder "
@@ -140,7 +140,7 @@ def _call(name: str, params: dict):
 
 @mcp.tool()
 def memorize(
-    summary: str,
+    content: str,
     source_text: str | None = None,
     memory_type: str = "decision",
     entities: list | str | None = None,
@@ -151,14 +151,14 @@ def memorize(
     """Write one memory directly, on the user's command — the human-initiated capture surface.
 
     `memorize` records a memory the user has already judged worth keeping. No
-    extraction model runs: you phrase the `summary` and it is stored as-is. Reach
+    extraction model runs: you phrase the `content` and it is stored as-is. Reach
     for this when the user explicitly says to remember or record something, above
     all a *decision* — a choice and the reasoning behind it.
 
-    Pointer/body split: `summary` is the one-line pointer recall surfaces;
+    Pointer/body split: `content` is the one-line pointer recall surfaces;
     `source_text` is the full body (the reasoning, the alternatives passed over,
     what it changes) that `hydrate` → `thread` drills into. Put the decision in
-    `summary`, the "why" in `source_text`.
+    `content`, the "why" in `source_text`.
 
     Tag `entities` with what the memory governs so it is findable later. For a
     code decision that means the repo, the file(s) or dir it applies to, and the
@@ -171,7 +171,7 @@ def memorize(
     decision supersedes the one it replaces.
 
     Args:
-        summary: The memory itself, phrased as a durable one-liner (the pointer).
+        content: The memory itself, phrased as a durable one-liner (the pointer).
         source_text: Optional verbatim body — rationale, rejected alternatives,
             surrounding context. Stored as the memory's source turn; omit for a
             bare fact with no body.
@@ -197,7 +197,7 @@ def memorize(
     return _call(
         "memorize",
         {
-            "summary": summary,
+            "content": content,
             "source_text": source_text,
             "memory_type": memory_type,
             "entities": entities,
@@ -219,7 +219,7 @@ def recall(
 
     Hybrid retrieval: keyword (FTS5 OR-match across tokens, ranked by BM25) + semantic + graph
     entity lookup + raw-text + event-thread fanout. Returns up to top_k POINTER
-    lines (`[id8] [type] date · summary · entity tags`) — long summaries are
+    lines (`[id8] [type] date · content · entity tags`) — long content is
     clipped, metadata is trimmed. Call hydrate(id8) for a memory's full detail.
 
     Query shape (important):
@@ -263,7 +263,7 @@ def thread(thread_id: str) -> str:
 def hydrate(memory_id: str) -> str:
     """Inspect ONE memory in full — the drill-in for a cheap pointer.
 
-    Recall-family tools return *pointers* (`[id8] [type] date · summary · entities`)
+    Recall-family tools return *pointers* (`[id8] [type] date · content · entities`)
     to keep the main context cheap. When you need what a pointer trims off —
     exact timestamps, status/access counts, the full source_event_id
     (then call `thread` on it for the originating conversation), and linked
@@ -278,24 +278,24 @@ def hydrate(memory_id: str) -> str:
 @mcp.tool()
 def update(
     memory_id: str,
-    summary: str | None = None,
+    content: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
 ) -> str:
-    """Update a memory: change its summary and/or add entities to the knowledge graph.
+    """Update a memory: change its content and/or add entities to the knowledge graph.
 
-    If summary is provided, snapshots the old version and updates the text.
+    If content is provided, snapshots the old version and updates the text.
     If entities/relationships are provided, links them in the graph (additive, won't remove existing links).
 
     Args:
         memory_id: The UUID of the memory to update.
-        summary: New summary text (optional — omit to keep existing summary).
+        content: New content text (optional — omit to keep existing content).
         entities: List or JSON string of {"name": str, "type": str} to link in the graph.
         relationships: List or JSON string of {"from_name", "from_type", "edge", "to_name", "to_type"}.
     """
     return _call(
         "update",
-        {"memory_id": memory_id, "summary": summary, "entities": entities, "relationships": relationships},
+        {"memory_id": memory_id, "content": content, "entities": entities, "relationships": relationships},
     )
 
 
@@ -458,7 +458,7 @@ def expand(memory_id: str) -> str:
     """Drill from a reflection down to the episodes that roll up into it.
 
     The inverse of `roll_up`: given a gist memory, list the concrete memories
-    rolling up into it, newest first. Use it to unpack a summary recall surfaced
+    rolling up into it, newest first. Use it to unpack a gist recall surfaced
     when you need the specifics behind it.
 
     Args:
@@ -624,7 +624,7 @@ def consolidate(dismiss: str | None = None) -> str:
     Recall detects when a theme carries more un-gisted memories than it surfaces
     and queues that cluster here. This returns each queued cluster with its member
     ids, for you to judge and roll up: per coherent cluster,
-    `memorize(memory_type="reflection", summary="<the gist>", child_ids=[<the ids>])`
+    `memorize(memory_type="reflection", content="<the gist>", child_ids=[<the ids>])`
     (or `survey` the theme first to re-split, then one reflection per sub-thread).
     Skip an incoherent cluster and it resurfaces later; members already rolled up
     or archived drop out on their own.

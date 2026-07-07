@@ -46,7 +46,7 @@ def main() -> None:
 
         for m in mems:
             res = eng.memorize(
-                summary=m["summary"],
+                content=m["content"],
                 memory_type=m.get("memory_type", "knowledge"),
                 daily_ref=m.get("daily_ref", date),
                 entities=m.get("entities") or None,
@@ -56,7 +56,7 @@ def main() -> None:
             )
             applied += 1
             if res.get("contradiction"):
-                contradictions.append((m["summary"][:70], res["contradiction"]))
+                contradictions.append((m["content"][:70], res["contradiction"]))
 
         print(f"  {stem}: +{len(mems)} memories")
 

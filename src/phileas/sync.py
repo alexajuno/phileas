@@ -12,7 +12,7 @@ Design:
   with the larger ``updated_at`` wins (covers edits and soft-deletes — `forget`
   archives + bumps ``updated_at``, so an archive propagates and never resurrects).
 - **Events are append-only**, keyed by uuid — pure id-union, no conflict.
-- **Derived backends are rebuilt on import**, never copied: re-embed the summary
+- **Derived backends are rebuilt on import**, never copied: re-embed the content
   (+ raw text) into Chroma and re-link the memory's entities by *name* into Kuzu
   (``link_memory`` resolves/dedupes entities by normalized name, so two machines'
   independently-minted entity uuids converge). v1 carries memory→entity ABOUT
@@ -42,7 +42,7 @@ BUNDLE_VERSION = 1
 # Every column we round-trip for a memory_items row.
 _MEM_FIELDS = (
     "id",
-    "summary",
+    "content",
     "memory_type",
     "status",
     "access_count",
@@ -64,7 +64,7 @@ def _dt(value: str | None) -> datetime | None:
 def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
     return MemoryItem(
         id=d["id"],
-        summary=d["summary"],
+        content=d["content"],
         memory_type=d["memory_type"],
         status=d["status"],
         access_count=d.get("access_count", 0),
@@ -98,7 +98,7 @@ def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, A
     skew between machines; re-sends are idempotent.
     """
     cols = (
-        "SELECT id, summary, memory_type, status, access_count, "
+        "SELECT id, content, memory_type, status, access_count, "
         "last_accessed, daily_ref, storage_strength, reinforcement_count, last_reinforced, "
         "source_event_id, created_at, updated_at FROM memory_items"
     )
@@ -211,7 +211,7 @@ def import_bundle(engine: MemoryEngine, bundle: dict[str, Any]) -> dict[str, int
     for d in bundle.get("memories", []):
         item = _item_from_dict(d)
         engine.db.save_item(item)
-        engine.vector.add(item.id, item.summary, metadata={"memory_type": item.memory_type})
+        engine.vector.add(item.id, item.content, metadata={"memory_type": item.memory_type})
         for ent in links.get(item.id, []):
             name, etype = ent.get("name"), ent.get("type")
             if name and etype:

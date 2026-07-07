@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "During her Lagos visit (2026-07-23) Mara spent a slow, restorative week with family now that her mother was strong enough that they could just live normally.",
+      "content": "During her Lagos visit (2026-07-23) Mara spent a slow, restorative week with family now that her mother was strong enough that they could just live normally.",
       "memory_type": "event",
       "daily_ref": "2026-07-23",
       "entities": [
@@ -12,7 +12,7 @@
       ]
     },
     {
-      "summary": "Mara's niece Zainab, Chidi's four-year-old daughter, attached herself to Mara during the Lagos visit.",
+      "content": "Mara's niece Zainab, Chidi's four-year-old daughter, attached herself to Mara during the Lagos visit.",
       "memory_type": "profile",
       "daily_ref": "2026-07-23",
       "entities": [
@@ -44,7 +44,7 @@
       ]
     },
     {
-      "summary": "Uncle Tunde Bakare took Mara to his favourite suya spot in Yaba during her Lagos visit; he keeps a goat at his compound that he named 'December' after its intended slaughter date.",
+      "content": "Uncle Tunde Bakare took Mara to his favourite suya spot in Yaba during her Lagos visit; he keeps a goat at his compound that he named 'December' after its intended slaughter date.",
       "memory_type": "event",
       "daily_ref": "2026-07-23",
       "entities": [
@@ -61,13 +61,13 @@
       ]
     },
     {
-      "summary": "Mara watched the old Nollywood film 'Thunderbolt,' her mother's favourite, with her during the Lagos visit.",
+      "content": "Mara watched the old Nollywood film 'Thunderbolt,' her mother's favourite, with her during the Lagos visit.",
       "memory_type": "event",
       "daily_ref": "2026-07-23",
       "entities": []
     },
     {
-      "summary": "Mara reflected (2026-07-23) that the calm she had needed was the Lagos trip itself, not a quieter unit, and that she does not want the calm step-down ward after all.",
+      "content": "Mara reflected (2026-07-23) that the calm she had needed was the Lagos trip itself, not a quieter unit, and that she does not want the calm step-down ward after all.",
       "memory_type": "reflection",
       "daily_ref": "2026-07-23",
       "entities": [
@@ -78,7 +78,7 @@
       ]
     },
     {
-      "summary": "By 2026-07-23 Mara had clarified she wants to stay in the ICU and keep the work that matters, wanting only that it stop chewing through staff, rather than transfer to the calmer step-down ward.",
+      "content": "By 2026-07-23 Mara had clarified she wants to stay in the ICU and keep the work that matters, wanting only that it stop chewing through staff, rather than transfer to the calmer step-down ward.",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-23",
       "entities": [
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "summary": "Mara's mother made jollof rice during the Lagos visit and Mara admitted it is far better than her own; the dish is unrelated to Mara's cat, also named Jollof.",
+      "content": "Mara's mother made jollof rice during the Lagos visit and Mara admitted it is far better than her own; the dish is unrelated to Mara's cat, also named Jollof.",
       "memory_type": "event",
       "daily_ref": "2026-07-23",
       "entities": [
@@ -100,7 +100,7 @@
       ]
     },
     {
-      "summary": "During the Lagos visit Mara felt she had forgotten what unhurried family life feels like, having not thought about Epic or rotas in days (2026-07-23).",
+      "content": "During the Lagos visit Mara felt she had forgotten what unhurried family life feels like, having not thought about Epic or rotas in days (2026-07-23).",
       "memory_type": "reflection",
       "daily_ref": "2026-07-23",
       "entities": [

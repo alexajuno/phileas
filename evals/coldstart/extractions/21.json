@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "On 2026-07-16 Mara took her mother to a cardiology appointment at Reddington Hospital on Lagos Island and, reading the charts as a nurse, found the care excellent.",
+      "content": "On 2026-07-16 Mara took her mother to a cardiology appointment at Reddington Hospital on Lagos Island and, reading the charts as a nurse, found the care excellent.",
       "memory_type": "event",
       "daily_ref": "2026-07-16",
       "entities": [
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "summary": "Mara judged (2026-07-16) that she had been wrong to assume Canadian healthcare is simply better than Nigerian healthcare; basis: watching Reddington's cardiologist manage her mother's afib cleanly and unhurried in a way she never gets at the General.",
+      "content": "Mara judged (2026-07-16) that she had been wrong to assume Canadian healthcare is simply better than Nigerian healthcare; basis: watching Reddington's cardiologist manage her mother's afib cleanly and unhurried in a way she never gets at the General.",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-16",
       "entities": [
@@ -28,7 +28,7 @@
       ]
     },
     {
-      "summary": "Dr. Tunde Adeyemi, the family-friend doctor, joined the 2026-07-16 appointment and walked the cardiologist's plan through with Mara's mother in Yoruba so she understood it; Mara called it care you can't bill for.",
+      "content": "Dr. Tunde Adeyemi, the family-friend doctor, joined the 2026-07-16 appointment and walked the cardiologist's plan through with Mara's mother in Yoruba so she understood it; Mara called it care you can't bill for.",
       "memory_type": "event",
       "daily_ref": "2026-07-16",
       "entities": [
@@ -40,7 +40,7 @@
       ]
     },
     {
-      "summary": "Chidi holds the view (relayed 2026-07-16) that their mother should move in with him permanently and not live alone; their mother refuses on principle, an old recurring family argument.",
+      "content": "Chidi holds the view (relayed 2026-07-16) that their mother should move in with him permanently and not live alone; their mother refuses on principle, an old recurring family argument.",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-16",
       "entities": [
@@ -55,7 +55,7 @@
       ]
     },
     {
-      "summary": "Mara reflected (2026-07-16) that she wished she could bring the gentleness she saw in her mother's Lagos care back to her own ICU work.",
+      "content": "Mara reflected (2026-07-16) that she wished she could bring the gentleness she saw in her mother's Lagos care back to her own ICU work.",
       "memory_type": "reflection",
       "daily_ref": "2026-07-16",
       "entities": [
@@ -66,7 +66,7 @@
       ]
     },
     {
-      "summary": "On 2026-07-16 Mara could not switch off her nurse instincts at her mother's appointment, reading every chart over the cardiologist's shoulder and asking many questions.",
+      "content": "On 2026-07-16 Mara could not switch off her nurse instincts at her mother's appointment, reading every chart over the cardiologist's shoulder and asking many questions.",
       "memory_type": "behavior",
       "daily_ref": "2026-07-16",
       "entities": [
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "summary": "Mara judged (2026-07-16) the Reddington cardiologist to be sharp and unhurried in a way she never experiences at the General; basis: observing him manage her mother's afib in person.",
+      "content": "Mara judged (2026-07-16) the Reddington cardiologist to be sharp and unhurried in a way she never experiences at the General; basis: observing him manage her mother's afib in person.",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-16",
       "entities": [

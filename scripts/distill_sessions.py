@@ -61,8 +61,8 @@ Apply Phileas capture rules. Memory tracks what Giao endorses, not what the assi
 - Forward-prescriptive conventions ("always use snake_case") are not memory; the decision behind one is.
 
 For each item worth keeping, call `memorize` once:
-  memorize(summary=<the conclusion, one line>, source_text=<the why: reasoning, alternatives passed over, what it changes>, memory_type=<"decision" for a choice-and-why, else "knowledge">, entities=[<repo, file(s) or dir, concept this governs>])
-Put the conclusion in `summary`, the reasoning in `source_text`, and tag `entities` so the memory is findable. If nothing in the session is worth keeping, memorize nothing.
+  memorize(content=<the conclusion, one line>, source_text=<the why: reasoning, alternatives passed over, what it changes>, memory_type=<"decision" for a choice-and-why, else "knowledge">, entities=[<repo, file(s) or dir, concept this governs>])
+Put the conclusion in `content`, the reasoning in `source_text`, and tag `entities` so the memory is findable. If nothing in the session is worth keeping, memorize nothing.
 
 When done, reply with exactly one line: MEMORIZED: <count>.
 

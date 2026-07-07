@@ -1,6 +1,6 @@
 {
   "ref_date": "2026-07-04",
-  "_note": "Labeled deictic queries for the temporal-deixis eval. relevant/excluded are distinctive summary SUBSTRINGS resolved to one memory id against the seeded store (a re-seed mints fresh ids but never rots the gold set). 'phrase'/'dates' are the deictic span and the ISO days it must resolve to against ref_date — a resolver-level check independent of retrieval. Under PHILEAS_DEIXIS=scope, every relevant memory should surface and no excluded (off-day) decoy should; under =off the decoy, being the stronger topical match, is expected to win. 'control' queries carry no deixis: dates must be empty and scope must behave identically to off.",
+  "_note": "Labeled deictic queries for the temporal-deixis eval. relevant/excluded are distinctive content SUBSTRINGS resolved to one memory id against the seeded store (a re-seed mints fresh ids but never rots the gold set). 'phrase'/'dates' are the deictic span and the ISO days it must resolve to against ref_date — a resolver-level check independent of retrieval. Under PHILEAS_DEIXIS=scope, every relevant memory should surface and no excluded (off-day) decoy should; under =off the decoy, being the stronger topical match, is expected to win. 'control' queries carry no deixis: dates must be empty and scope must behave identically to off.",
   "queries": [
     {
       "qid": "today-ramen",

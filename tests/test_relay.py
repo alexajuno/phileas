@@ -35,7 +35,7 @@ def _seed(eng: MemoryEngine) -> dict:
     tool_runner.memorize(
         eng,
         ef,
-        summary="User loves sailing on weekends",
+        content="User loves sailing on weekends",
         source_event_id=ev["event_id"],
         entities=[{"name": "sailing", "type": "Activity"}],
     )

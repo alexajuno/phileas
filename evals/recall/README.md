@@ -12,7 +12,7 @@ code it relies on is the recall trace seam (`phileas.recall_trace`, exercised by
 ## Pieces
 
 - `seed.py` — seeds the grown Mara corpus (the sibling `coldstart` eval's sessions + extractions) into the isolated `mara-eval` profile at `~/.phileas-mara-eval`. Run once, and again whenever the corpus changes (`--reset` rebuilds).
-- `goldset.json` — hand-curated labeled queries across the query taxonomy (entity, entity_nonmerge, event, temporal, opinion, stance_evolution, decay_noise). Each relevant/excluded memory is a distinctive **summary substring**; the runner resolves it to one id, so a re-seed (which mints fresh ids) never rots the gold set.
+- `goldset.json` — hand-curated labeled queries across the query taxonomy (entity, entity_nonmerge, event, temporal, opinion, stance_evolution, decay_noise). Each relevant/excluded memory is a distinctive **content substring**; the runner resolves it to one id, so a re-seed (which mints fresh ids) never rots the gold set.
 - `configs.json` — named recall configs = the `PHILEAS_*` knobs `recall()` reads per call. `baseline` is the production default (rrf / rank / ratio / index).
 - `metrics.py` — recall@k, MRR, nDCG@k (graded), hit@k, intrusion@1, and cost summaries (mean / p50 / p90). Surface-agnostic: every function takes `(results, gold...)`.
 - `ab.py` — the runner. Loads the fixture and gold set, asserts the real reranker, freezes the store, runs every query through config A and B reading each trace via `recall_trace.record()`, and prints a per-query table, a per-`query_type` scorecard, and an A/B diff.
@@ -39,6 +39,6 @@ env bled across configs — treat the comparison as confounded.
 
 ## Extending
 
-- New query: add an entry to `goldset.json` (relevant/excluded as summary substrings); the runner validates uniqueness.
+- New query: add an entry to `goldset.json` (relevant/excluded as content substrings); the runner validates uniqueness.
 - New config: add a named block to `configs.json`.
 - Re-curate after corpus changes: `fixture_version` in `goldset.json` is the corpus fingerprint; the runner warns if it drifts.

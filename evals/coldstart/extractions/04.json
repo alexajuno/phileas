@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in.",
+      "content": "Mara signed up for a pottery class at a nearby studio called Clay & Co on 2026-04-12, after walking past it for weeks before finally going in.",
       "memory_type": "event",
       "daily_ref": "2026-04-12",
       "entities": [
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "summary": "Mara took up pottery as a deliberate non-screen, non-patient distraction to cope with the stress of her mother and night shifts, valuing that for two hours she didn't think about afib, Epic, or work.",
+      "content": "Mara took up pottery as a deliberate non-screen, non-patient distraction to cope with the stress of her mother and night shifts, valuing that for two hours she didn't think about afib, Epic, or work.",
       "memory_type": "behavior",
       "daily_ref": "2026-04-12",
       "entities": [
@@ -42,13 +42,13 @@
       ]
     },
     {
-      "summary": "Mara bought matcha on 2026-04-12 to cut down on coffee, though she was skeptical the habit would last.",
+      "content": "Mara bought matcha on 2026-04-12 to cut down on coffee, though she was skeptical the habit would last.",
       "memory_type": "event",
       "daily_ref": "2026-04-12",
       "entities": []
     },
     {
-      "summary": "Mara tends to frame her own coping efforts as 'silly' or doomed to not stick (pottery, matcha), downplaying things she does for herself.",
+      "content": "Mara tends to frame her own coping efforts as 'silly' or doomed to not stick (pottery, matcha), downplaying things she does for herself.",
       "memory_type": "behavior",
       "daily_ref": "2026-04-12",
       "entities": [
@@ -59,7 +59,7 @@
       ]
     },
     {
-      "summary": "Mara noted her pottery teacher Wen said she grips the clay too hard, and reflected that it was 'probably a metaphor' for how she holds tension.",
+      "content": "Mara noted her pottery teacher Wen said she grips the clay too hard, and reflected that it was 'probably a metaphor' for how she holds tension.",
       "memory_type": "reflection",
       "daily_ref": "2026-04-12",
       "entities": [

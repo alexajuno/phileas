@@ -4,7 +4,7 @@ Reads corpus.json and memorizes each entry with its explicit ``daily_ref`` so th
 memory links to a known Day node (engine._link_day_entity) — the node the
 deixis-scope path later restricts to. Contradiction detection is off: these are
 independent facts, not a stance thread. Memories are referenced from the gold set
-by summary text, so a re-seed (fresh ids) never rots it.
+by content text, so a re-seed (fresh ids) never rots it.
 
 Run once via the project venv python (again whenever corpus.json changes); pass
 ``--reset`` to rebuild from scratch. See the eval README for invocation.
@@ -35,7 +35,7 @@ def main() -> None:
 
     for m in memories:
         eng.memorize(
-            summary=m["summary"],
+            content=m["content"],
             memory_type=m.get("memory_type", "event"),
             daily_ref=m["daily_ref"],
             entities=m.get("entities") or None,

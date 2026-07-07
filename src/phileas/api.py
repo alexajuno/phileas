@@ -47,7 +47,7 @@ _SYNC_THREAD_LIMIT = 4
 
 class MemoryItem(BaseModel):
     id: str
-    summary: str
+    content: str
     memory_type: str
     status: str
     access_count: int

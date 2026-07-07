@@ -42,7 +42,7 @@ class MemoryItem:
     """A structured memory. The core unit of Phileas."""
 
     id: str = field(default_factory=_uuid)
-    summary: str = ""
+    content: str = ""
     memory_type: MemoryType = "knowledge"
     status: MemoryStatus = "active"
     access_count: int = 0

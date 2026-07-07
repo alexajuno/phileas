@@ -444,7 +444,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
             item = _reinforce_queue.popleft()
             try:
                 # Similarity floor/ceiling are find_similar's own defaults.
-                similar = vector.find_similar(item["summary"])
+                similar = vector.find_similar(item["content"])
                 if similar:
                     similar_id, sim_score = similar
                     existing = db.get_item(similar_id)
@@ -676,7 +676,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "resolve_contradiction":
         return engine.resolve_contradiction(**params)
     elif method == "update":
-        # Ensure backward compat: old callers pass only memory_id + summary
+        # Ensure backward compat: old callers pass only memory_id + content
         return engine.update(**params)
     elif method == "status":
         return engine.status()
@@ -687,14 +687,14 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             items = engine.db.get_items_by_type(memory_type)[:limit]
         else:
             items = engine.db.get_active_items()[:limit]
-        return [{"id": i.id, "summary": i.summary, "type": i.memory_type, "score": 0} for i in items]
+        return [{"id": i.id, "content": i.content, "type": i.memory_type, "score": 0} for i in items]
     elif method == "show":
         item = engine.db.get_item(params["memory_id"])
         if not item:
             raise ValueError(f"Memory {params['memory_id']} not found")
         return {
             "id": item.id,
-            "summary": item.summary,
+            "content": item.content,
             "memory_type": item.memory_type,
             "status": item.status,
             "access_count": item.access_count,
@@ -707,7 +707,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return [
             {
                 "id": i.id,
-                "summary": i.summary,
+                "content": i.content,
                 "memory_type": i.memory_type,
                 "status": i.status,
                 "access_count": i.access_count,

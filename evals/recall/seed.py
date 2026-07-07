@@ -4,7 +4,7 @@ Reuses the cold-start corpus (evals/coldstart/sessions + extractions) as the
 fixture: chronological by session so entity-linking resolves against the graph
 as it accumulates, one Event/thread per session, entity names fed raw so the
 linker is exercised. The recall eval (gold set + A/B runner) reads the resulting
-~/.phileas-mara-eval store; memories are referenced by summary text, so a re-seed
+~/.phileas-mara-eval store; memories are referenced by content text, so a re-seed
 (which mints fresh ids) does not rot the gold set.
 
 Run once via the project venv python (and again whenever the corpus changes);
@@ -55,7 +55,7 @@ def main() -> None:
 
         for m in mems:
             res = eng.memorize(
-                summary=m["summary"],
+                content=m["content"],
                 memory_type=m.get("memory_type", "knowledge"),
                 daily_ref=m.get("daily_ref", date),
                 entities=m.get("entities") or None,

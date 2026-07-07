@@ -155,7 +155,7 @@ def test_show_from_transcript_renders_recall_store_reply(_isolate_home):
                             "type": "tool_use",
                             "id": "tu2",
                             "name": "mcp__phileas__memorize",
-                            "input": {"summary": "Giao planned cycling"},
+                            "input": {"content": "Giao planned cycling"},
                         }
                     ]
                 },

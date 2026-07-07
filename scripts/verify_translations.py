@@ -3,7 +3,7 @@
 
 For each translated memory, compare the multiset of cross-reference tokens —
 [[wiki-links]] and bare parenthetical id refs like (04f68411) — between the
-original Vietnamese summary and its English translation. Any token dropped,
+original Vietnamese content and its English translation. Any token dropped,
 added, or mistyped is a corrupted graph pointer and gets reported. Also flags
 translations that look suspiciously short relative to the original (possible
 truncation) and any residual run of Vietnamese-distinctive letters outside the
@@ -26,7 +26,7 @@ PAREN_ID_RE = re.compile(r"\(([0-9a-f]{8})\)")
 
 
 def refs(srt_text: str) -> dict:
-    """Multiset of reference tokens in a summary."""
+    """Multiset of reference tokens in content."""
     srt_links = LINK_RE.findall(srt_text)
     srt_parens = PAREN_ID_RE.findall(srt_text)
     out: dict = {}
@@ -61,7 +61,7 @@ def main() -> int:
             print(f"!! translation for unknown id {mid}")
             srt_problems += 1
             continue
-        orig = unicodedata.normalize("NFC", src["summary"])
+        orig = unicodedata.normalize("NFC", src["content"])
         r_orig, r_eng = refs(orig), refs(eng)
         if r_orig != r_eng:
             srt_problems += 1

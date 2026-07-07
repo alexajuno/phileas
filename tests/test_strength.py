@@ -30,8 +30,8 @@ def _save(db: Database, **kw) -> MemoryItem:
 
 def test_recall_growth_is_difficulty_weighted(sqlite_path):
     db = Database(path=sqlite_path)
-    decayed = _save(db, summary="a", storage_strength=0.5)
-    fresh = _save(db, summary="b", storage_strength=0.5)
+    decayed = _save(db, content="a", storage_strength=0.5)
+    fresh = _save(db, content="b", storage_strength=0.5)
 
     db.record_retrieval(decayed.id, retrieval_before=0.0, relevance=1.0)
     db.record_retrieval(fresh.id, retrieval_before=1.0, relevance=1.0)
@@ -42,8 +42,8 @@ def test_recall_growth_is_difficulty_weighted(sqlite_path):
 
 def test_recall_growth_is_relevance_gated(sqlite_path):
     db = Database(path=sqlite_path)
-    relevant = _save(db, summary="a", storage_strength=0.5)
-    marginal = _save(db, summary="b", storage_strength=0.5)
+    relevant = _save(db, content="a", storage_strength=0.5)
+    marginal = _save(db, content="b", storage_strength=0.5)
 
     db.record_retrieval(relevant.id, retrieval_before=0.0, relevance=1.0)
     db.record_retrieval(marginal.id, retrieval_before=0.0, relevance=0.1)
@@ -54,7 +54,7 @@ def test_recall_growth_is_relevance_gated(sqlite_path):
 def test_recall_bumps_access_refreshes_and_is_monotonic(sqlite_path):
     db = Database(path=sqlite_path)
     old = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
-    item = _save(db, summary="a", storage_strength=0.5, last_accessed=old)
+    item = _save(db, content="a", storage_strength=0.5, last_accessed=old)
 
     db.record_retrieval(item.id, retrieval_before=0.1, relevance=1.0)
     after_one = db.get_item(item.id)
@@ -74,7 +74,7 @@ def test_recall_bumps_access_refreshes_and_is_monotonic(sqlite_path):
 def test_restudy_grows_storage_less_than_recall(sqlite_path):
     db = Database(path=sqlite_path)
     old = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)  # fully decayed → max difficulty
-    item = _save(db, summary="a", storage_strength=0.5, last_accessed=old)
+    item = _save(db, content="a", storage_strength=0.5, last_accessed=old)
 
     db.reinforce_item(item.id)
     after = db.get_item(item.id)
@@ -113,9 +113,9 @@ def test_recall_grows_storage_of_aged_memory(tmp_dir: Path):
     eng = _engine(tmp_dir)
     # Background corpus so the query term is discriminative (see test_recall_context).
     for i in range(8):
-        eng.db.save_item(MemoryItem(summary=f"background note {i} on gardening and weather"))
+        eng.db.save_item(MemoryItem(content=f"background note {i} on gardening and weather"))
     old = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
-    aged = MemoryItem(summary="the user plays the xylophone", storage_strength=0.5, last_accessed=old)
+    aged = MemoryItem(content="the user plays the xylophone", storage_strength=0.5, last_accessed=old)
     eng.db.save_item(aged)
 
     before = eng.db.get_item(aged.id).storage_strength

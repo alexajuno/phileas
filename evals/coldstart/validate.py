@@ -88,7 +88,7 @@ def main() -> None:
         print(f"  q={q!r}:")
         if isinstance(hits, list):
             for h in hits[:3]:
-                s = h.get("summary", "") if isinstance(h, dict) else str(h)
+                s = h.get("content", "") if isinstance(h, dict) else str(h)
                 print(f"      - {s[:90]}")
 
 

@@ -29,7 +29,7 @@ DISTILLED_TYPE = "reflection"
 DEFAULT_MAX_THREADS = 12
 DEFAULT_MAX_CHARS = 3000
 
-# Per-line overhead beyond the clipped summary (id8, type, counts, span, tags),
+# Per-line overhead beyond the clipped content (id8, type, counts, span, tags),
 # charged against the char budget so a wide thread costs roughly what it renders.
 _LINE_OVERHEAD = 70
 
@@ -69,7 +69,7 @@ def group_recent_threads(
 ) -> dict:
     """Group items by thread, rank threads by recency, keep newest within budget.
 
-    ``items`` are gathered recent memory dicts (id, summary, type, created_at,
+    ``items`` are gathered recent memory dicts (id, content, type, created_at,
     source_event_id). ``event_thread`` maps each item's source_event_id to its
     thread id. The budget is the load-bearing bound: threads are added newest
     first until either ``max_threads`` or ``max_chars`` is reached, so a wide
@@ -102,7 +102,7 @@ def group_recent_threads(
     kept: list[dict] = []
     chars = 0
     for s in snaps:
-        cost = min(len((s["rep"].get("summary") or "").strip()), clip) + _LINE_OVERHEAD
+        cost = min(len((s["rep"].get("content") or "").strip()), clip) + _LINE_OVERHEAD
         # Always keep at least one thread; otherwise stop at the first bound hit.
         if kept and (len(kept) >= max_threads or chars + cost > max_chars):
             break
@@ -115,12 +115,12 @@ def group_recent_threads(
 def render_thread_line(snap: dict, entities_by_id: dict[str, list[dict]] | None, *, clip: int) -> str:
     """One snapshot line: the representative pointer plus the thread's badge.
 
-    Reuses ``pointer_line`` for the ``[id8] [type] summary · entities`` head, then
+    Reuses ``pointer_line`` for the ``[id8] [type] content · entities`` head, then
     appends the thread's memory count, time span, and the handle to pass to
     ``get_thread_memories`` for the full session.
     """
     rep = snap["rep"]
-    base = pointer_line(rep, entities_by_id, show_date=False, max_summary_chars=clip)
+    base = pointer_line(rep, entities_by_id, show_date=False, max_content_chars=clip)
     start, end = snap["span"]
     s0 = (start or "")[5:16].replace("T", " ")
     s1 = (end or "")[5:16].replace("T", " ")

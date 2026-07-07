@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara took up pottery/ceramics and has a recurring glazing day with Wen; she finds it the one place her brain goes quiet and the most fun she's had (as of 2026-05-30).",
+      "content": "Mara took up pottery/ceramics and has a recurring glazing day with Wen; she finds it the one place her brain goes quiet and the most fun she's had (as of 2026-05-30).",
       "memory_type": "behavior",
       "daily_ref": "2026-05-30",
       "entities": [
@@ -29,7 +29,7 @@
       ]
     },
     {
-      "summary": "On 2026-05-30 Mara dipped a small bowl in a celadon green glaze and won't know how it fired until the following week.",
+      "content": "On 2026-05-30 Mara dipped a small bowl in a celadon green glaze and won't know how it fired until the following week.",
       "memory_type": "event",
       "daily_ref": "2026-05-30",
       "entities": [
@@ -40,7 +40,7 @@
       ]
     },
     {
-      "summary": "Wen observed (2026-05-30) that Mara has 'stopped strangling the clay,' i.e. has grown more relaxed and skilled at pottery; basis: working alongside her on glazing day.",
+      "content": "Wen observed (2026-05-30) that Mara has 'stopped strangling the clay,' i.e. has grown more relaxed and skilled at pottery; basis: working alongside her on glazing day.",
       "memory_type": "knowledge",
       "daily_ref": "2026-05-30",
       "entities": [
@@ -55,7 +55,7 @@
       ]
     },
     {
-      "summary": "Mara is still floating from Dan's recent visit; he texted that he's 'looking into things' in Toronto, which she reads as vague but is choosing to be hopeful about (2026-05-30).",
+      "content": "Mara is still floating from Dan's recent visit; he texted that he's 'looking into things' in Toronto, which she reads as vague but is choosing to be hopeful about (2026-05-30).",
       "memory_type": "event",
       "daily_ref": "2026-05-30",
       "entities": [
@@ -70,7 +70,7 @@
       ]
     },
     {
-      "summary": "Mara had a good week (2026-05-30) but downplays admitting it, joking she has a reputation to protect, reflecting a habit of guarding against showing she's doing well.",
+      "content": "Mara had a good week (2026-05-30) but downplays admitting it, joking she has a reputation to protect, reflecting a habit of guarding against showing she's doing well.",
       "memory_type": "behavior",
       "daily_ref": "2026-05-30",
       "entities": [

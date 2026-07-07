@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara arrived in Lagos on the night of 2026-07-08 (Toronto departure 2026-07-09 local) and is staying at her mother's house in Surulere; Chidi met her at arrivals.",
+      "content": "Mara arrived in Lagos on the night of 2026-07-08 (Toronto departure 2026-07-09 local) and is staying at her mother's house in Surulere; Chidi met her at arrivals.",
       "memory_type": "event",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "summary": "On 2026-07-11 Mara saw her mother for the first time in person; her mother is thinner but stood and held her face, and is steady on her new atrial-fibrillation medication.",
+      "content": "On 2026-07-11 Mara saw her mother for the first time in person; her mother is thinner but stood and held her face, and is steady on her new atrial-fibrillation medication.",
       "memory_type": "event",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -38,7 +38,7 @@
       ]
     },
     {
-      "summary": "Dr. Tunde Adeyemi is an old family friend and doctor who informally checks in on Mara's mother in Lagos; he has known the family since Chidi was a baby.",
+      "content": "Dr. Tunde Adeyemi is an old family friend and doctor who informally checks in on Mara's mother in Lagos; he has known the family since Chidi was a baby.",
       "memory_type": "profile",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "summary": "On seeing her mother again on 2026-07-11 Mara broke down when her mother held her face and called her 'her stubborn one.'",
+      "content": "On seeing her mother again on 2026-07-11 Mara broke down when her mother held her face and called her 'her stubborn one.'",
       "memory_type": "event",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -74,7 +74,7 @@
       ]
     },
     {
-      "summary": "Chidi met Mara at Lagos arrivals on her 2026-07-09 night landing holding a sign reading 'OYINBO' to tease her.",
+      "content": "Chidi met Mara at Lagos arrivals on her 2026-07-09 night landing holding a sign reading 'OYINBO' to tease her.",
       "memory_type": "event",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "summary": "Tunde Bakare is Mara's uncle, her mother's younger brother in Lagos; he drives a danfo and is around the family constantly. He is a different person from Dr. Tunde Adeyemi the family-friend doctor.",
+      "content": "Tunde Bakare is Mara's uncle, her mother's younger brother in Lagos; he drives a danfo and is around the family constantly. He is a different person from Dr. Tunde Adeyemi the family-friend doctor.",
       "memory_type": "profile",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -113,7 +113,7 @@
       ]
     },
     {
-      "summary": "Mara's mother is being treated for atrial fibrillation in Lagos by both a hospital cardiologist and, informally, the family-friend doctor Dr. Tunde Adeyemi (noted 2026-07-11).",
+      "content": "Mara's mother is being treated for atrial fibrillation in Lagos by both a hospital cardiologist and, informally, the family-friend doctor Dr. Tunde Adeyemi (noted 2026-07-11).",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-11",
       "entities": [
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "summary": "Mara felt 'home in the strange way,' jetlagged and happy, during her first days back in Lagos in July 2026.",
+      "content": "Mara felt 'home in the strange way,' jetlagged and happy, during her first days back in Lagos in July 2026.",
       "memory_type": "reflection",
       "daily_ref": "2026-07-11",
       "entities": [

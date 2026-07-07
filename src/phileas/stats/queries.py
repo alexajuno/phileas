@@ -185,10 +185,10 @@ def tool_calls_summary(metrics_db: Path, since: datetime | None) -> dict:
 
 
 def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
-    """Per-summary clip effectiveness for recall_recent's output.
+    """Per-content clip effectiveness for recall_recent's output.
 
     Reads the bounds counters recall_recent writes into recall_traces.extra:
-    the summary-truncation fire rate, chars saved, and the final output_chars
+    the content-truncation fire rate, chars saved, and the final output_chars
     distribution. This is the "does the clip prove itself?" report: a clip that
     never fires (or fires on every call and forces drill-ins) is a knob to
     retune or turn off. Traces from before the counters existed are reported as

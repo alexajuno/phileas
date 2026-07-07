@@ -176,4 +176,4 @@ def _render_store(st: core.StoreCall) -> None:
         return
     ident = f"{st.memory_id} " if st.memory_id else ""
     mtype = f"{st.memory_type:<9} " if st.memory_type else ""
-    console.print(f" [yellow]store[/yellow]  [dim]{ident}[/dim]{mtype}{escape(_short(st.summary or '', 90))}")
+    console.print(f" [yellow]store[/yellow]  [dim]{ident}[/dim]{mtype}{escape(_short(st.content or '', 90))}")

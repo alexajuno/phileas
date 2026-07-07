@@ -62,7 +62,7 @@ class Candidate:
     """A surfaced conflict candidate for the agent to judge."""
 
     candidate_id: str
-    candidate_summary: str
+    candidate_content: str
     method: str  # "structured" | "semantic" | "band"
     similarity: float | None = None
     nli_prob: float | None = None
@@ -77,12 +77,12 @@ class Candidate:
         return f"Highly similar to active memory [{c8}] (similarity {self.similarity}). {tail}"
 
 
-def detect(db, vector, graph, *, summary, relationships, floor, ceiling) -> Candidate | None:
+def detect(db, vector, graph, *, content, relationships, floor, ceiling) -> Candidate | None:
     """Run the layered probe. Returns the first stage's hit, or None."""
     structured = _structured(db, graph, relationships)
     if structured is not None:
         return structured
-    return _semantic(db, vector, summary, floor, ceiling)
+    return _semantic(db, vector, content, floor, ceiling)
 
 
 def _active(db, memory_id: str):
@@ -110,7 +110,7 @@ def _structured(db, graph, relationships) -> Candidate | None:
                 continue
             cand = _memory_asserting(db, graph, subj_type, subj_name, old_obj, e.get("type"))
             if cand is not None:
-                return Candidate(cand.id, cand.summary, method="structured")
+                return Candidate(cand.id, cand.content, method="structured")
     return None
 
 
@@ -135,9 +135,9 @@ def _memory_asserting(db, graph, subj_type, subj_name, obj_name, obj_type):
     return None
 
 
-def _semantic(db, vector, summary, floor, ceiling) -> Candidate | None:
+def _semantic(db, vector, content, floor, ceiling) -> Candidate | None:
     try:
-        hits = vector.search(summary, top_k=1)
+        hits = vector.search(content, top_k=1)
     except Exception:
         return None
     if not hits:
@@ -151,12 +151,12 @@ def _semantic(db, vector, summary, floor, ceiling) -> Candidate | None:
     try:
         if sim < GATE_FLOOR:
             return None
-        prob = nli.contradiction_prob(summary, item.summary)
+        prob = nli.contradiction_prob(content, item.content)
         if prob >= NLI_THRESHOLD:
-            return Candidate(cand_id, item.summary, method="semantic", similarity=sim, nli_prob=prob)
+            return Candidate(cand_id, item.content, method="semantic", similarity=sim, nli_prob=prob)
         return None
     except nli.NLIUnavailable:
         # No model: fall back to the historical cosine band.
         if floor <= sim < ceiling:
-            return Candidate(cand_id, item.summary, method="band", similarity=sim)
+            return Candidate(cand_id, item.content, method="band", similarity=sim)
         return None

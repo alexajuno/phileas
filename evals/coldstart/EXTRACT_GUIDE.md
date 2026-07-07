@@ -21,7 +21,7 @@ This mirrors a real product. Extract as if these memories must still be useful m
 
 ## How to write each memory
 
-- `summary`: one self-contained sentence, readable with zero conversation context. English. Include the date when it anchors the fact.
+- `content`: one self-contained sentence, readable with zero conversation context. English. Include the date when it anchors the fact.
 - **Attributed claims:** a checkable observation is stored plainly ("Mara booked a July flight to Lagos"). A judgment / opinion / prediction is stored with its **holder + basis**, truth left open ("Mara judged (2026-05-01) the ICU is understaffed; basis: three nurses quit in two months"). If two different people hold an overlapping opinion, record them as separate holders — never collapse into one bare fact.
 - `memory_type`: exactly one of `profile` (who she is), `event` (dated happenings), `knowledge` (facts/preferences/opinions she holds — the default), `behavior` (recurring patterns/habits), `reflection` (higher-level inferences).
 - `daily_ref`: the session's date (in the file header), `YYYY-MM-DD`.
@@ -40,7 +40,7 @@ Return **only** a JSON object, no prose, no markdown fence:
 
 ```
 {"memories": [
-  {"summary": "...", "memory_type": "event", "daily_ref": "2026-04-05",
+  {"content": "...", "memory_type": "event", "daily_ref": "2026-04-05",
    "entities": [{"name": "Adaeze Okonkwo", "type": "Person"}],
    "relationships": [{"from_name":"Adaeze Okonkwo","from_type":"Person","edge":"MOTHER_OF","to_name":"Mara","to_type":"Person"}]}
 ]}

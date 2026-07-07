@@ -71,7 +71,7 @@ def test_parse_transcript_folds_memorize_nudge_into_its_turn():
         _tool_result("tu1", _env("Found 1 memories:\n  [aaaaaaaa] [event] 2026-07-03 · cycling with ngocnb")),
         _assistant_text("You planned cycling."),
         _user("<task-notification>\n<summary>Phileas: memorize check</summary>\n</task-notification>"),
-        _assistant_tool("tu2", "mcp__phileas__memorize", {"summary": "Giao planned cycling"}),
+        _assistant_tool("tu2", "mcp__phileas__memorize", {"content": "Giao planned cycling"}),
         _tool_result("tu2", _env("Stored [bbbbbbbb-1111-2222-3333-444444444444] [event] Giao planned cycling")),
         _assistant_text("Saved."),
     ]
@@ -95,7 +95,7 @@ def test_parse_transcript_folds_memorize_nudge_into_its_turn():
     assert st.ok
     assert st.memory_id == "bbbbbbbb"
     assert st.memory_type == "event"
-    assert st.summary == "Giao planned cycling"
+    assert st.content == "Giao planned cycling"
 
     assert "You planned cycling." in turn.reply
     assert "Saved." in turn.reply
@@ -104,8 +104,8 @@ def test_parse_transcript_folds_memorize_nudge_into_its_turn():
 def test_parse_transcript_records_failed_memorize():
     entries = [
         _user("remember this fact for me please"),
-        _assistant_tool("tu1", "mcp__phileas__memorize", {"content": "no summary field"}),
-        _tool_result("tu1", "Error executing tool memorize: 1 validation error\nsummary\n  Field required"),
+        _assistant_tool("tu1", "mcp__phileas__memorize", {"summary": "no content field"}),
+        _tool_result("tu1", "Error executing tool memorize: 1 validation error\ncontent\n  Field required"),
     ]
 
     turns = core.parse_transcript(entries)

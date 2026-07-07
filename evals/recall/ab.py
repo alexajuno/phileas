@@ -33,7 +33,7 @@ KNOBS = ("PHILEAS_FUSION", "PHILEAS_RERANK", "PHILEAS_STANDOUT", "PHILEAS_PATH3"
 
 
 # --------------------------------------------------------------------------
-# Setup: fixture fingerprint, summary→id resolver, real-model assertion
+# Setup: fixture fingerprint, content→id resolver, real-model assertion
 # --------------------------------------------------------------------------
 
 def corpus_fingerprint() -> str:
@@ -48,12 +48,12 @@ def load_memories(eng) -> dict[str, str]:
     for mt in _MEMORY_TYPES:
         for it in eng.db.get_items_by_type(mt):
             if it.status == "active":
-                items[it.id] = it.summary
+                items[it.id] = it.content
     return items
 
 
 def make_resolver(memories: dict[str, str]):
-    """A distinctive summary substring -> the single memory id it identifies."""
+    """A distinctive content substring -> the single memory id it identifies."""
     def resolve(substr: str) -> str:
         hits = [mid for mid, s in memories.items() if substr in s]
         if len(hits) != 1:

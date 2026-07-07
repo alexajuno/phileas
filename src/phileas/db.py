@@ -54,7 +54,7 @@ def _fts_match_query(query: str) -> str | None:
     """Build a safe FTS5 MATCH expression from free-form query text.
 
     Each whitespace token becomes a quoted prefix term (``"tok"*``) and the
-    terms are OR-ed together, so a summary is a candidate if it contains *any*
+    terms are OR-ed together, so a memory is a candidate if its content contains *any*
     query token (full multi-token overlap then ranks higher under BM25). Quoting
     neutralises FTS5 query operators in user input; the trailing ``*`` outside
     the quote is the prefix operator, so ``swed`` reaches "sweden". unicode61
@@ -98,7 +98,7 @@ def clean_source_event_id(value: str | None) -> str | None:
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_items (
     id TEXT PRIMARY KEY,
-    summary TEXT NOT NULL,
+    content TEXT NOT NULL,
     memory_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
     access_count INTEGER NOT NULL DEFAULT 0,
@@ -176,14 +176,14 @@ CREATE TABLE IF NOT EXISTS consolidation_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_consqueue_status ON consolidation_queue(status);
 
--- Inverted index over memory summaries, powering the keyword (sparse) leg of
+-- Inverted index over memory content, powering the keyword (sparse) leg of
 -- recall via FTS5 + BM25. Standalone (not external-content): it stores mem_id
--- plus a copy of the summary, so it stays decoupled from memory_items' integer
+-- plus a copy of the content, so it stays decoupled from memory_items' integer
 -- rowid and is kept in sync from the write paths in this module. Mirrors the
 -- active set only, so BM25 corpus statistics reflect live memories.
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     mem_id UNINDEXED,
-    summary,
+    content,
     tokenize = 'unicode61'
 );
 
@@ -225,27 +225,41 @@ class Database:
         # The AI's attribution was renamed 'other' -> 'assistant'; carry old rows
         # forward so the value set stays consistent. Idempotent: a no-op once done.
         self.conn.execute("UPDATE events SET attribution = 'assistant' WHERE attribution = 'other'")
+
+        # ``memory_items.summary`` was renamed ``content`` — a memory's text is its
+        # content, not a summary of a longer body. Guarded on the old column so it
+        # runs once. FTS5 has no RENAME COLUMN, so the index is dropped and recreated
+        # with the new column; ``_reconcile_fts`` (next in __init__) repopulates it.
+        item_cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(memory_items)")}
+        if "summary" in item_cols and "content" not in item_cols:
+            self.conn.execute("ALTER TABLE memory_items RENAME COLUMN summary TO content")
+        fts_cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(memory_fts)")}
+        if "content" not in fts_cols:
+            self.conn.execute("DROP TABLE IF EXISTS memory_fts")
+            self.conn.execute(
+                "CREATE VIRTUAL TABLE memory_fts USING fts5(mem_id UNINDEXED, content, tokenize = 'unicode61')"
+            )
         self.conn.commit()
 
     def _reconcile_fts(self) -> None:
         """Seed the FTS index for any active memory it doesn't yet hold.
 
-        Self-healing and idempotent: it inserts only the active summaries missing
+        Self-healing and idempotent: it inserts only the active memories missing
         from ``memory_fts``, so it costs nothing once the index is current and it
         rebuilds an index that drifted out from under the database. Cheap for a
         personal-size corpus, so it runs on every open.
         """
         self.conn.execute(
-            "INSERT INTO memory_fts(mem_id, summary) "
-            "SELECT id, summary FROM memory_items "
+            "INSERT INTO memory_fts(mem_id, content) "
+            "SELECT id, content FROM memory_items "
             "WHERE status = 'active' AND id NOT IN (SELECT mem_id FROM memory_fts)"
         )
         self.conn.commit()
 
-    def _fts_upsert(self, mem_id: str, summary: str) -> None:
+    def _fts_upsert(self, mem_id: str, content: str) -> None:
         """Refresh a memory's row in the FTS index (delete-then-insert)."""
         self.conn.execute("DELETE FROM memory_fts WHERE mem_id = ?", (mem_id,))
-        self.conn.execute("INSERT INTO memory_fts(mem_id, summary) VALUES (?, ?)", (mem_id, summary))
+        self.conn.execute("INSERT INTO memory_fts(mem_id, content) VALUES (?, ?)", (mem_id, content))
 
     def _fts_delete(self, mem_id: str) -> None:
         """Drop a memory from the FTS index (archive / soft delete)."""
@@ -260,14 +274,14 @@ class Database:
     def save_item(self, item: MemoryItem) -> None:
         self.conn.execute(
             """INSERT OR REPLACE INTO memory_items
-               (id, summary, memory_type, status,
+               (id, content, memory_type, status,
                 access_count, last_accessed, daily_ref,
                 storage_strength, reinforcement_count, last_reinforced,
                 source_event_id, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
-                item.summary,
+                item.content,
                 item.memory_type,
                 item.status,
                 item.access_count,
@@ -281,7 +295,7 @@ class Database:
                 item.updated_at.isoformat(),
             ),
         )
-        self._fts_upsert(item.id, item.summary)
+        self._fts_upsert(item.id, item.content)
         self.conn.commit()
 
     @_locked
@@ -341,9 +355,9 @@ class Database:
         """Keyword search over the FTS5 index, ranked by BM25.
 
         Each whitespace token becomes a prefix term and the terms are OR-ed
-        together (see ``_fts_match_query``): a summary is a candidate if it
-        contains *any* query token, and BM25 ranks the candidates — a summary
-        covering more of the query, or matching rarer terms, scores higher, so a
+        together (see ``_fts_match_query``): a memory is a candidate if its
+        content contains *any* query token, and BM25 ranks the candidates — a
+        memory covering more of the query, or matching rarer terms, scores higher, so a
         focused query whose tokens co-occur lands on top while a clumsy query
         whose tokens are spread across memories still surfaces each contributor
         instead of collapsing to nothing. BM25 supplies term weighting (rarity,
@@ -388,17 +402,17 @@ class Database:
         self.conn.commit()
 
     @_locked
-    def update_item(self, item_id: str, summary: str) -> MemoryItem | None:
-        """Update a memory's summary in place, preserving created_at and daily_ref."""
+    def update_item(self, item_id: str, content: str) -> MemoryItem | None:
+        """Update a memory's content in place, preserving created_at and daily_ref."""
         item = self.get_item(item_id)
         if not item:
             return None
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
-            "UPDATE memory_items SET summary = ?, updated_at = ? WHERE id = ?",
-            (summary, now, item_id),
+            "UPDATE memory_items SET content = ?, updated_at = ? WHERE id = ?",
+            (content, now, item_id),
         )
-        self._fts_upsert(item_id, summary)
+        self._fts_upsert(item_id, content)
         self.conn.commit()
         return self.get_item(item_id)
 
@@ -406,7 +420,7 @@ class Database:
     def snapshot_item(self, item: MemoryItem) -> str:
         """Create an archived copy of a memory, returning the snapshot's ID."""
         snapshot = MemoryItem(
-            summary=item.summary,
+            content=item.content,
             memory_type=item.memory_type,
             status="archived",
             access_count=item.access_count,
@@ -472,7 +486,7 @@ class Database:
     # here would raise `no such column` on a rebuilt store.
 
     _WEB_COLS = (
-        "id, summary, memory_type, status, "
+        "id, content, memory_type, status, "
         "access_count, storage_strength, reinforcement_count, last_reinforced, "
         "daily_ref, created_at, updated_at"
     )
@@ -481,7 +495,7 @@ class Database:
     def _row_to_web_dict(row: sqlite3.Row) -> dict:
         return {
             "id": row["id"],
-            "summary": row["summary"],
+            "content": row["content"],
             "memory_type": row["memory_type"],
             "status": row["status"],
             "access_count": row["access_count"],
@@ -512,7 +526,7 @@ class Database:
 
     @_locked
     def web_search(self, query: str, limit: int = 100) -> list[dict]:
-        """Keyword search over summary — up to 8 whitespace terms, LIKE-AND,
+        """Keyword search over content — up to 8 whitespace terms, LIKE-AND,
         backslash-escaped."""
         terms = (query or "").split()[:8]
         if not terms:
@@ -520,7 +534,7 @@ class Database:
         clauses: list[str] = []
         params: list[str | int] = []
         for term in terms:
-            clauses.append("summary LIKE ? ESCAPE '\\'")
+            clauses.append("content LIKE ? ESCAPE '\\'")
             like = "%" + re.sub(r"([\\%_])", r"\\\1", term) + "%"
             params.append(like)
         params.append(limit)
@@ -601,14 +615,14 @@ class Database:
             return []
         placeholders = ",".join("?" for _ in ids)
         rows = self.conn.execute(
-            f"""SELECT id, summary, memory_type, created_at
+            f"""SELECT id, content, memory_type, created_at
                 FROM memory_items WHERE id IN ({placeholders})""",
             ids,
         ).fetchall()
         return [
             {
                 "id": r["id"],
-                "summary": r["summary"],
+                "content": r["content"],
                 "memory_type": r["memory_type"],
                 "created_at": r["created_at"],
             }
@@ -659,7 +673,7 @@ class Database:
         if not ev:
             return None
         mems = self.conn.execute(
-            """SELECT id, summary, memory_type, created_at
+            """SELECT id, content, memory_type, created_at
                FROM memory_items
                WHERE source_event_id = ? AND status = 'active'
                ORDER BY created_at ASC""",
@@ -670,7 +684,7 @@ class Database:
             "memories": [
                 {
                     "id": m["id"],
-                    "summary": m["summary"],
+                    "content": m["content"],
                     "memory_type": m["memory_type"],
                     "created_at": m["created_at"],
                 }
@@ -793,7 +807,7 @@ class Database:
             last_reinforced = datetime.fromisoformat(row["last_reinforced"])
         return MemoryItem(
             id=row["id"],
-            summary=row["summary"],
+            content=row["content"],
             memory_type=row["memory_type"],
             status=row["status"],
             access_count=row["access_count"],

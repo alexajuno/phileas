@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
+      "content": "Mara's mother was diagnosed with atrial fibrillation around 2026-04-05 after experiencing palpitations and feeling faint; Chidi took her to a hospital in Lagos and she was started on medication.",
       "memory_type": "event",
       "daily_ref": "2026-04-05",
       "entities": [
@@ -26,7 +26,7 @@
       ]
     },
     {
-      "summary": "Mara is an ICU nurse living an ocean away from her family in Lagos, Nigeria.",
+      "content": "Mara is an ICU nurse living an ocean away from her family in Lagos, Nigeria.",
       "memory_type": "profile",
       "daily_ref": "2026-04-05",
       "entities": [
@@ -42,7 +42,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara's mother raised three children largely alone after Mara's father was gone.",
+      "content": "Mara's mother raised three children largely alone after Mara's father was gone.",
       "memory_type": "profile",
       "daily_ref": "2026-04-05",
       "entities": [
@@ -54,7 +54,7 @@
       "relationships": []
     },
     {
-      "summary": "On 2026-04-05 Mara felt helpless and guilty over her mother's diagnosis, judging herself useless for being far away and 'the one who left'; she considered flying to Lagos and planned to call her mother that night.",
+      "content": "On 2026-04-05 Mara felt helpless and guilty over her mother's diagnosis, judging herself useless for being far away and 'the one who left'; she considered flying to Lagos and planned to call her mother that night.",
       "memory_type": "reflection",
       "daily_ref": "2026-04-05",
       "entities": [

@@ -44,7 +44,7 @@ def _seed():
     db = Database(path=cfg.db_path)
     db.save_item(
         MemoryItem(
-            summary="alpha recent sourced",
+            content="alpha recent sourced",
             memory_type="event",
             status="active",
             source_event_id="evt-real-1",
@@ -53,7 +53,7 @@ def _seed():
     )
     db.save_item(
         MemoryItem(
-            summary="bravo recent unsourced",
+            content="bravo recent unsourced",
             memory_type="profile",
             status="active",
             source_event_id=None,
@@ -62,7 +62,7 @@ def _seed():
     )
     db.save_item(
         MemoryItem(
-            summary="charlie old sourced",
+            content="charlie old sourced",
             memory_type="knowledge",
             status="active",
             source_event_id="evt-real-2",
@@ -71,7 +71,7 @@ def _seed():
     )
     db.save_item(
         MemoryItem(
-            summary="delta archived",
+            content="delta archived",
             memory_type="reflection",
             status="archived",
             source_event_id=None,
@@ -148,9 +148,9 @@ def test_json_output_shape():
     result = _run(["list", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    by_summary = {row["summary"]: row for row in payload}
-    assert by_summary["alpha recent sourced"]["source"] == "sourced"
-    assert by_summary["bravo recent unsourced"]["source"] == "unsourced"
+    by_content = {row["content"]: row for row in payload}
+    assert by_content["alpha recent sourced"]["source"] == "sourced"
+    assert by_content["bravo recent unsourced"]["source"] == "unsourced"
     assert set(payload[0]) == {
         "id",
         "type",
@@ -158,7 +158,7 @@ def test_json_output_shape():
         "source",
         "source_event_id",
         "created_at",
-        "summary",
+        "content",
     }
 
 

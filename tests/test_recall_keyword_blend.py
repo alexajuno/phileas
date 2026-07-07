@@ -5,8 +5,8 @@ must not collapse to zero hits. Builds a real Database against a temp home and
 seeds via save_item so no embedding model loads.
 
 These tests pin the keyword leg's contract: each whitespace token is a prefix
-term OR-ed with the others, so a summary matching any token is a candidate, and
-BM25 ranks the candidates — a summary covering more of the query, or matching
+term OR-ed with the others, so a memory matching any token is a candidate, and
+BM25 ranks the candidates: a memory covering more of the query, or matching
 rarer terms, ranks higher.
 """
 
@@ -24,14 +24,14 @@ def _db(tmp_path: Path) -> Database:
     return Database(path=cfg.db_path)
 
 
-def _seed(db: Database, summary: str, **kw) -> str:
-    item = MemoryItem(summary=summary, **kw)
+def _seed(db: Database, content: str, **kw) -> str:
+    item = MemoryItem(content=content, **kw)
     db.save_item(item)
     return item.id
 
 
 def test_spread_tokens_survive_instead_of_collapsing(tmp_path: Path):
-    """The triggering case: a 4-word query, no single summary holds all four."""
+    """The triggering case: a 4-word query, no single memory holds all four."""
     db = _db(tmp_path)
     social = _seed(db, "felt social discomfort at the crowded party")
     approach = _seed(db, "strangers kept approaching people on the street")
@@ -43,12 +43,12 @@ def test_spread_tokens_survive_instead_of_collapsing(tmp_path: Path):
     # Both partial matches surface; the AND-match returned [] here.
     assert social in ids
     assert approach in ids
-    # A summary matching none of the tokens stays out.
+    # A memory matching none of the tokens stays out.
     assert unrelated not in ids
 
 
 def test_coverage_ranks_full_overlap_first(tmp_path: Path):
-    """A summary covering more distinct query tokens ranks above a thinner match."""
+    """A memory covering more distinct query tokens ranks above a thinner match."""
     db = _db(tmp_path)
     both = _seed(db, "social discomfort in social settings")  # 2 distinct tokens
     one = _seed(db, "a quiet afternoon with no discomfort")  # 1 distinct token
@@ -71,7 +71,7 @@ def test_focused_single_token_query(tmp_path: Path):
 
 
 def test_focused_multiword_query_still_matches_when_cooccurring(tmp_path: Path):
-    """When all tokens DO co-occur, that summary is still returned (and ranks top)."""
+    """When all tokens DO co-occur, that memory is still returned (and ranks top)."""
     db = _db(tmp_path)
     full = _seed(db, "we played tennis at the lakeside club on sunday")
     partial = _seed(db, "tennis is fun")
@@ -116,7 +116,7 @@ def test_rare_term_outranks_common_term(tmp_path: Path):
     rare = _seed(db, "a status report filed from sweden")
 
     hits = db.search_by_keyword("sweden report")
-    # The summary carrying the discriminative term ranks first.
+    # The memory carrying the discriminative term ranks first.
     assert hits[0].id == rare
 
 
@@ -129,7 +129,7 @@ def test_archive_drops_from_keyword_results(tmp_path: Path):
     assert mid not in {h.id for h in db.search_by_keyword("kangaroo")}
 
 
-def test_update_reflects_new_summary(tmp_path: Path):
+def test_update_reflects_new_content(tmp_path: Path):
     db = _db(tmp_path)
     mid = _seed(db, "memory mentioning kangaroo")
 

@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "On 2026-07-09 Mara flew from Toronto to Lagos to visit her mother, departing Pearson airport before dawn on no sleep.",
+      "content": "On 2026-07-09 Mara flew from Toronto to Lagos to visit her mother, departing Pearson airport before dawn on no sleep.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -16,25 +16,25 @@
       ]
     },
     {
-      "summary": "Mara was running on no sleep and a flat white at Pearson at 5:40am on the 2026-07-09 travel day.",
+      "content": "Mara was running on no sleep and a flat white at Pearson at 5:40am on the 2026-07-09 travel day.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "Mara's bag was two kilos overweight at Pearson on 2026-07-09 and she repacked it on the floor by gate D32.",
+      "content": "Mara's bag was two kilos overweight at Pearson on 2026-07-09 and she repacked it on the floor by gate D32.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "Mara cut a third pair of shoes from her luggage on the 2026-07-09 travel day to make the weight limit.",
+      "content": "Mara cut a third pair of shoes from her luggage on the 2026-07-09 travel day to make the weight limit.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "Mara packed a large supply of Canadian medicine for her mother on the Lagos trip, the good stuff her mother pretends not to want.",
+      "content": "Mara packed a large supply of Canadian medicine for her mother on the Lagos trip, the good stuff her mother pretends not to want.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -55,25 +55,25 @@
       ]
     },
     {
-      "summary": "Mara lost a small gold hoop earring near airport security at Pearson on 2026-07-09.",
+      "content": "Mara lost a small gold hoop earring near airport security at Pearson on 2026-07-09.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "Mara's 2026-07-09 Lagos flight was an Air France routing with a Paris (CDG) layover.",
+      "content": "Mara's 2026-07-09 Lagos flight was an Air France routing with a Paris (CDG) layover.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "Mara was stuck in a middle seat on the 2026-07-09 Lagos flight, which she disliked but accepted because the price was the price.",
+      "content": "Mara was stuck in a middle seat on the 2026-07-09 Lagos flight, which she disliked but accepted because the price was the price.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "Mara felt it was strange to leave the General behind even for two weeks during her Lagos trip.",
+      "content": "Mara felt it was strange to leave the General behind even for two weeks during her Lagos trip.",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -85,7 +85,7 @@
       ]
     },
     {
-      "summary": "Priyanka personally covered Mara's shifts while she was away in Lagos, further changing Mara's read on her.",
+      "content": "Priyanka personally covered Mara's shifts while she was away in Lagos, further changing Mara's read on her.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -97,7 +97,7 @@
       ]
     },
     {
-      "summary": "During the Paris layover on 2026-07-09 Mara texted Chidi her landing time; he confirmed he would pick her up at Murtala Muhammed airport in Lagos.",
+      "content": "During the Paris layover on 2026-07-09 Mara texted Chidi her landing time; he confirmed he would pick her up at Murtala Muhammed airport in Lagos.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -113,7 +113,7 @@
       ]
     },
     {
-      "summary": "On the 2026-07-09 travel day Daniel texted Mara a heart and 'go hug your mum.'",
+      "content": "On the 2026-07-09 travel day Daniel texted Mara a heart and 'go hug your mum.'",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -124,19 +124,19 @@
       ]
     },
     {
-      "summary": "Mara ate a croissant at the Paris CDG layover at 6am Paris time on 2026-07-09, jetlagged with her brain like soup.",
+      "content": "Mara ate a croissant at the Paris CDG layover at 6am Paris time on 2026-07-09, jetlagged with her brain like soup.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "The Lagos-bound leg from Paris was about eleven hours, which Mara planned to try to sleep through on 2026-07-09.",
+      "content": "The Lagos-bound leg from Paris was about eleven hours, which Mara planned to try to sleep through on 2026-07-09.",
       "memory_type": "event",
       "daily_ref": "2026-07-09",
       "entities": []
     },
     {
-      "summary": "On her 2026-07-09 departure for Lagos, Mara felt scared but lighter than she had been all spring, relieved to finally be going to see her mother in person rather than on a screen.",
+      "content": "On her 2026-07-09 departure for Lagos, Mara felt scared but lighter than she had been all spring, relieved to finally be going to see her mother in person rather than on a screen.",
       "memory_type": "reflection",
       "daily_ref": "2026-07-09",
       "entities": [
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "summary": "Mara processed the long 2026-07-09 travel day in fragments between boarding zones, narrating each leg as it happened.",
+      "content": "Mara processed the long 2026-07-09 travel day in fragments between boarding zones, narrating each leg as it happened.",
       "memory_type": "behavior",
       "daily_ref": "2026-07-09",
       "entities": [

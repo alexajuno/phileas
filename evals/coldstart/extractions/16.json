@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "As of 2026-06-18, Mara is torn about whether to stay in the ICU or move to a calmer ward, with her answer changing by the hour; she frames it as not yet resolvable.",
+      "content": "As of 2026-06-18, Mara is torn about whether to stay in the ICU or move to a calmer ward, with her answer changing by the hour; she frames it as not yet resolvable.",
       "memory_type": "knowledge",
       "daily_ref": "2026-06-18",
       "entities": [
@@ -13,7 +13,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara recognizes she can't sustain working on empty indefinitely, even for work she loves, and treats this as a reason her ICU-vs-ward question stays open.",
+      "content": "Mara recognizes she can't sustain working on empty indefinitely, even for work she loves, and treats this as a reason her ICU-vs-ward question stays open.",
       "memory_type": "reflection",
       "daily_ref": "2026-06-18",
       "entities": [
@@ -25,7 +25,7 @@
       "relationships": []
     },
     {
-      "summary": "During the week of 2026-06-18, Halloran (a harsh senior known for brutal debriefs) pulled Mara aside and called her one of the steadiest hands on the unit; she experienced this praise as deeply meaningful coming from her toughest critic.",
+      "content": "During the week of 2026-06-18, Halloran (a harsh senior known for brutal debriefs) pulled Mara aside and called her one of the steadiest hands on the unit; she experienced this praise as deeply meaningful coming from her toughest critic.",
       "memory_type": "event",
       "daily_ref": "2026-06-18",
       "entities": [
@@ -38,7 +38,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara has long been certain that Halloran respects her despite his harshness, reading respect underneath his brutal debriefs.",
+      "content": "Mara has long been certain that Halloran respects her despite his harshness, reading respect underneath his brutal debriefs.",
       "memory_type": "knowledge",
       "daily_ref": "2026-06-18",
       "entities": [
@@ -51,7 +51,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara anchors herself with near-term things to look forward to as 'scaffolding' to keep going: a July trip to Lagos, meals at Priya's, and pottery on Thursdays.",
+      "content": "Mara anchors herself with near-term things to look forward to as 'scaffolding' to keep going: a July trip to Lagos, meals at Priya's, and pottery on Thursdays.",
       "memory_type": "behavior",
       "daily_ref": "2026-06-18",
       "entities": [

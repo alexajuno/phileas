@@ -43,8 +43,8 @@ def print_status(stats: dict) -> None:
 def print_memory_stored(result: dict) -> None:
     """Print confirmation after storing a memory."""
     mem_id = result["id"][:8]
-    summary = result["summary"]
-    console.print(f"[green]Stored[/green] [{mem_id}] {summary}")
+    content = result["content"]
+    console.print(f"[green]Stored[/green] [{mem_id}] {content}")
 
     if result.get("contradiction"):
         contradiction = result["contradiction"]
@@ -60,7 +60,7 @@ def print_memories(items: list[dict], title: str = "Memories") -> None:
     table = Table(title=title)
     table.add_column("ID", style="dim", max_width=8)
     table.add_column("Type", style="cyan")
-    table.add_column("Summary")
+    table.add_column("Content")
     table.add_column("Score", justify="right", style="green")
 
     for item in items:
@@ -68,7 +68,7 @@ def print_memories(items: list[dict], title: str = "Memories") -> None:
         table.add_row(
             item["id"][:8],
             item.get("type", ""),
-            item.get("summary", ""),
+            item.get("content", ""),
             score_str,
         )
 
@@ -76,9 +76,9 @@ def print_memories(items: list[dict], title: str = "Memories") -> None:
 
 
 def print_memory_list(rows: list[dict], title: str = "Memories", show_status: bool = False) -> None:
-    """Render memories for browsing: created date, type, source, and summary.
+    """Render memories for browsing: created date, type, source, and content.
 
-    Each row carries ``id``, ``created``, ``type``, ``status``, ``summary``, and
+    Each row carries ``id``, ``created``, ``type``, ``status``, ``content``, and
     ``source``: ``"sourced"`` for a memory that traces to a captured turn,
     ``"unsourced"`` for one derived from other memories or a legacy row. The
     status column appears only when the listing mixes in archived memories.
@@ -94,7 +94,7 @@ def print_memory_list(rows: list[dict], title: str = "Memories", show_status: bo
     if show_status:
         table.add_column("Status", no_wrap=True)
     table.add_column("Src", no_wrap=True)
-    table.add_column("Summary")
+    table.add_column("Content")
 
     for row in rows:
         src = "[green]turn[/green]" if row.get("source") == "sourced" else "[dim]—[/dim]"
@@ -102,7 +102,7 @@ def print_memory_list(rows: list[dict], title: str = "Memories", show_status: bo
         if show_status:
             status = row.get("status", "")
             cells.append("[yellow]archived[/yellow]" if status == "archived" else status)
-        cells.extend([src, row.get("summary", "")])
+        cells.extend([src, row.get("content", "")])
         table.add_row(*cells)
 
     console.print(table)
@@ -115,7 +115,7 @@ def print_memory_detail(item: dict) -> None:
     table.add_column("Value")
 
     table.add_row("ID", item.get("id", ""))
-    table.add_row("Summary", item.get("summary", ""))
+    table.add_row("Content", item.get("content", ""))
     table.add_row("Type", item.get("memory_type", ""))
     table.add_row("Status", item.get("status", ""))
     table.add_row("Access count", str(item.get("access_count", 0)))

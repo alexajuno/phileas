@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara is in a long-distance relationship with Daniel, who visited her (he flew out the previous Friday and left for the airport on 2026-05-25); his work is more tied to Vancouver, while Mara's is tied to Toronto.",
+      "content": "Mara is in a long-distance relationship with Daniel, who visited her (he flew out the previous Friday and left for the airport on 2026-05-25); his work is more tied to Vancouver, while Mara's is tied to Toronto.",
       "memory_type": "profile",
       "daily_ref": "2026-05-25",
       "entities": [
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "summary": "During his visit, Daniel met Mara's friend Priya, and Mara's cat Jollof tolerated him.",
+      "content": "During his visit, Daniel met Mara's friend Priya, and Mara's cat Jollof tolerated him.",
       "memory_type": "event",
       "daily_ref": "2026-05-25",
       "entities": [
@@ -66,7 +66,7 @@
       ]
     },
     {
-      "summary": "On 2026-05-25 Daniel said out loud for the first time that he might relocate (likely from Vancouver toward Mara in Toronto), without promising; it concerns the long-standing unresolved question of who moves, which Mara had been scared to bring up.",
+      "content": "On 2026-05-25 Daniel said out loud for the first time that he might relocate (likely from Vancouver toward Mara in Toronto), without promising; it concerns the long-standing unresolved question of who moves, which Mara had been scared to bring up.",
       "memory_type": "event",
       "daily_ref": "2026-05-25",
       "entities": [
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "summary": "Mara wants Daniel to only say he'll relocate if he means it; she didn't push the conversation because she needs the commitment to be genuine.",
+      "content": "Mara wants Daniel to only say he'll relocate if he means it; she didn't push the conversation because she needs the commitment to be genuine.",
       "memory_type": "knowledge",
       "daily_ref": "2026-05-25",
       "entities": [
@@ -88,7 +88,7 @@
       ]
     },
     {
-      "summary": "Mara feels acute loneliness and longing after Daniel leaves; the apartment feels too quiet and she missed him within an hour of his departure, a bittersweet pattern she recognizes ('classic') after good visits.",
+      "content": "Mara feels acute loneliness and longing after Daniel leaves; the apartment feels too quiet and she missed him within an hour of his departure, a bittersweet pattern she recognizes ('classic') after good visits.",
       "memory_type": "behavior",
       "daily_ref": "2026-05-25",
       "entities": [

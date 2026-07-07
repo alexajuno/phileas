@@ -238,7 +238,7 @@ def stats_tools(since: str, bucket: str, as_json: bool):
 @stats.command("bounds")
 @_shared_flags
 def stats_bounds(since: str, bucket: str, as_json: bool):
-    """recall_recent output: summary-clip fire rate + savings."""
+    """recall_recent output: content-clip fire rate + savings."""
     cfg = load_config()
     since_dt, _, _ = _resolve_window(since)
     metrics_db = cfg.home / "metrics.db"
@@ -260,7 +260,7 @@ def stats_bounds(since: str, bucket: str, as_json: bool):
             ],
         )
     )
-    t = Table(title="Summary clip (POINTER_SUMMARY_CHARS in recall_format.py; 0 = off)")
+    t = Table(title="Content clip (POINTER_CONTENT_CHARS in recall_format.py; 0 = off)")
     for col in ("Fired", "Fire rate", "Effect"):
         t.add_column(col)
     trunc = data["truncation"]

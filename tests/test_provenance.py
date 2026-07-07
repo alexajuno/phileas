@@ -49,8 +49,8 @@ def srv(tmp_dir, monkeypatch):
         ingest_text=lambda text, thread_id=None, source_kind="agent": tool_runner.ingest_text(
             eng, ef, text=text, thread_id=thread_id, source_kind=source_kind
         ),
-        memorize=lambda summary, source_event_id=None, **kw: tool_runner.memorize(
-            eng, ef, summary=summary, source_event_id=source_event_id, **kw
+        memorize=lambda content, source_event_id=None, **kw: tool_runner.memorize(
+            eng, ef, content=content, source_event_id=source_event_id, **kw
         ),
         memorize_batch=lambda memories, source_event_id=None: tool_runner.memorize_batch(
             eng, ef, memories=memories, source_event_id=source_event_id
@@ -79,31 +79,31 @@ def test_ingest_text_rejects_empty(srv):
 
 def test_memorize_rejects_fabricated_event(srv):
     with pytest.raises(ValueError):
-        srv.memorize(summary="memory citing a fabricated id", source_event_id="does-not-exist")
+        srv.memorize(content="memory citing a fabricated id", source_event_id="does-not-exist")
 
 
 def test_memorize_allows_missing_source(srv):
     # A derived memory (no single source turn) is stored NULL-sourced, not refused.
-    out = srv.memorize(summary="a reflection drawn across several memories")
+    out = srv.memorize(content="a reflection drawn across several memories")
     assert out.startswith("Stored")
 
 
 def test_memorize_unknown_sentinel_stored_as_null(srv):
     # The legacy 'unknown' string is not a real source; it collapses to NULL.
-    srv.memorize(summary="legacy-style write", source_event_id="unknown")
-    item = next(i for i in srv.db.get_active_items() if i.summary == "legacy-style write")
+    srv.memorize(content="legacy-style write", source_event_id="unknown")
+    item = next(i for i in srv.db.get_active_items() if i.content == "legacy-style write")
     assert item.source_event_id is None
 
 
 def test_memorize_happy_path_threads_back(srv):
     event_id = srv.ingest_text("verbatim: user prefers minimal diffs")["event_id"]
-    out = srv.memorize(summary="User prefers minimal diffs", source_event_id=event_id)
+    out = srv.memorize(content="User prefers minimal diffs", source_event_id=event_id)
     assert out.startswith("Stored")
 
     thread = srv.engine.thread(event_id)
     assert thread is not None
     memories = [m for turn in thread["turns"] for m in turn["memories"]]
-    assert any("minimal diffs" in m["summary"] for m in memories)
+    assert any("minimal diffs" in m["content"] for m in memories)
 
 
 # -- memorize source_text: the pointer/body split ----------------------------
@@ -111,11 +111,11 @@ def test_memorize_happy_path_threads_back(srv):
 
 def test_memorize_source_text_mints_body_event(srv):
     # A human-initiated write hands over the verbatim body; memorize captures it
-    # as the memory's source event so the summary stays a pointer and the body is
+    # as the memory's source event so the content stays a pointer and the body is
     # reachable via the thread. The minted event is born "extracted" — the
     # observer worker has nothing to re-distill, so no duplicate appears.
     out = srv.memorize(
-        summary="Decision: provenance is NULL, not a sentinel",
+        content="Decision: provenance is NULL, not a sentinel",
         source_text="Why: a sentinel conflates with a real value. Rejected: the 'unknown' string.",
         memory_type="decision",
     )
@@ -130,8 +130,8 @@ def test_memorize_source_text_mints_body_event(srv):
 
 
 def test_memorize_decision_type_isolated_by_recall(srv):
-    srv.memorize(summary="Decision: use kuzu for the graph store", memory_type="decision")
-    srv.memorize(summary="The user enjoys hiking on weekends", memory_type="knowledge")
+    srv.memorize(content="Decision: use kuzu for the graph store", memory_type="decision")
+    srv.memorize(content="The user enjoys hiking on weekends", memory_type="knowledge")
 
     decisions = tool_runner.recall(srv.engine, tool_runner.no_entities, query="kuzu graph", memory_type="decision")
     assert "kuzu" in decisions
@@ -144,7 +144,7 @@ def test_memorize_decision_type_isolated_by_recall(srv):
 def test_memorize_batch_shares_one_source(srv):
     event_id = srv.ingest_text("a passage covering two facts")["event_id"]
     out = srv.memorize_batch(
-        memories=[{"summary": "fact one"}, {"summary": "fact two"}],
+        memories=[{"content": "fact one"}, {"content": "fact two"}],
         source_event_id=event_id,
     )
     assert "Batch complete (2 items)" in out
@@ -153,7 +153,7 @@ def test_memorize_batch_shares_one_source(srv):
 
 def test_memorize_batch_allows_missing_source(srv):
     # No batch-level source and no per-item source → all items are NULL-sourced.
-    out = srv.memorize_batch(memories=[{"summary": "derived one"}, {"summary": "derived two"}])
+    out = srv.memorize_batch(memories=[{"content": "derived one"}, {"content": "derived two"}])
     assert "Batch complete (2 items)" in out
 
 
@@ -170,9 +170,9 @@ def test_clean_source_event_id_collapses_sentinel_and_empty():
 
 def test_save_item_stores_null_for_sourceless(tmp_dir):
     db = Database(path=tmp_dir / "s.db")
-    db.save_item(MemoryItem(id="a", summary="no source", source_event_id=None))
-    db.save_item(MemoryItem(id="b", summary="sentinel", source_event_id="unknown"))
-    db.save_item(MemoryItem(id="c", summary="real", source_event_id="evt-9"))
+    db.save_item(MemoryItem(id="a", content="no source", source_event_id=None))
+    db.save_item(MemoryItem(id="b", content="sentinel", source_event_id="unknown"))
+    db.save_item(MemoryItem(id="c", content="real", source_event_id="evt-9"))
     assert db.get_item("a").source_event_id is None
     assert db.get_item("b").source_event_id is None
     assert db.get_item("c").source_event_id == "evt-9"

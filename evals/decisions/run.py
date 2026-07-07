@@ -99,7 +99,7 @@ def main() -> int:
         out = tool_runner.memorize(
             eng,
             ef,
-            summary=d["summary"],
+            content=d["content"],
             source_text=d.get("source_text"),
             memory_type="decision",
             entities=d["entities"],

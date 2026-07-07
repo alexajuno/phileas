@@ -15,7 +15,7 @@ Recall when the prompt references past work, decisions, people, dates, named pro
 
 ### Query shape — focused terms, not sentences
 
-Phileas reads `recall(query=...)` best as a *focused term phrase* — one concept, 1–4 words. The keyword path OR-matches each token against memory summaries and ranks by coverage: a summary surfaces if it holds *any* token, and ranks higher the more of the query's tokens co-occur in it. A focused phrase floats the memory whose summary carries all its tokens to the top; a verbatim user sentence ("what did the user say about Alex and the Q3 budget") instead drags in filler tokens ("what", "did", "the") that match unrelated memories and dilute the coverage signal — and long natural-language queries score poorly on the semantic path too. So **extract the named entities and concepts from the prompt first**, then issue one tool call per concept and merge the results by `id`: coverage rewards tokens that co-occur, so concepts living in *separate* memories surface far better as separate queries. For *"did Alex bring up the Q3 budget at the planning offsite"*: call `about("Alex")`, `recall("Q3 budget")`, and `recall("planning offsite")` in parallel — not one sentence-shaped `recall()`.
+Phileas reads `recall(query=...)` best as a *focused term phrase* — one concept, 1–4 words. The keyword path OR-matches each token against memory content and ranks by coverage: a memory surfaces if its content holds *any* token, and ranks higher the more of the query's tokens co-occur in it. A focused phrase floats the memory whose content carries all its tokens to the top; a verbatim user sentence ("what did the user say about Alex and the Q3 budget") instead drags in filler tokens ("what", "did", "the") that match unrelated memories and dilute the coverage signal — and long natural-language queries score poorly on the semantic path too. So **extract the named entities and concepts from the prompt first**, then issue one tool call per concept and merge the results by `id`: coverage rewards tokens that co-occur, so concepts living in *separate* memories surface far better as separate queries. For *"did Alex bring up the Q3 budget at the planning offsite"*: call `about("Alex")`, `recall("Q3 budget")`, and `recall("planning offsite")` in parallel — not one sentence-shaped `recall()`.
 
 ### Pick the tool by query shape
 
@@ -36,7 +36,7 @@ Recall-family tools (`recall`, `recall_recent`, `about`, `timeline`) return chea
 [a1b2c3d4] [event] 2026-06-07 · Mara bought a cake in Lisbon last night · Mara, Lisbon
 ```
 
-That line is `[id8] [type] date · summary · entity tags`. The summary is the whole fact — for most prompts the pointers already answer the question, so **don't fan out `recall()` a dozen times hoping for depth**, and don't dump everything. `recall_recent` and `about` are bounded (a heavy day or hub entity shows a cap / `+N more` note) so they can't overflow the context.
+That line is `[id8] [type] date · content · entity tags`. The content is the whole fact — for most prompts the pointers already answer the question, so **don't fan out `recall()` a dozen times hoping for depth**, and don't dump everything. `recall_recent` and `about` are bounded (a heavy day or hub entity shows a cap / `+N more` note) so they can't overflow the context.
 
 When you genuinely need more than a pointer, drill in — cheapest to most expensive:
 
@@ -65,8 +65,8 @@ Save what would be useful to recall later, whether it came from the user or from
 
 The bar is usefulness, not authorship: the archaeology test. Will this still be useful once the code shows only the result and git shows only the diff? If it survives that, memorize it; if it is obvious from reading the code or the diff, let it go. Never memorize what the user waves off, argues down, or passes over. A path considered and rejected is not a memory; the choice landed on is.
 
-- `memorize(summary=<the conclusion, one line>, source_text=<the why: the reasoning, the alternatives passed over, what it changes>, memory_type=<"decision" for a choice-and-why, else "knowledge">, entities=[...])`.
-- `summary` is the pointer recall surfaces; `source_text` is the body `hydrate` then `thread` drills into. Put the conclusion in `summary`, the reasoning in `source_text`.
+- `memorize(content=<the conclusion, one line>, source_text=<the why: the reasoning, the alternatives passed over, what it changes>, memory_type=<"decision" for a choice-and-why, else "knowledge">, entities=[...])`.
+- `content` is the pointer recall surfaces; `source_text` is the body `hydrate` then `thread` drills into. Put the conclusion in `content`, the reasoning in `source_text`.
 - Tag `entities` with what the memory governs, for a decision the repo, the file(s) or dir, and the concept, so a later `about(<file>, memory_type="decision")` surfaces it. With no entities it is findable only by full-text search.
 - Pick each entity's `type` from exactly this vocabulary, closest bucket wins: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept. The type is a collision-resistant bucket, not a rich label; an invented synonym (Company, Topic, Repo) splits the same referent across separate graph nodes. Put richness in the entity's `description` (a brief, stable phrase saying which one this is), which also helps the linker keep same-name entities apart.
 - When the user explicitly says to remember or record something, that is a `memorize` you make directly; you have already judged it worth keeping.

@@ -36,11 +36,11 @@ class _FakeClient:
 
 
 def test_extracts_from_tool_use_and_fills_defaults():
-    resp = _tool_msg({"memories": [{"summary": "The user plays tennis", "memory_type": "behavior"}]})
+    resp = _tool_msg({"memories": [{"content": "The user plays tennis", "memory_type": "behavior"}]})
     out = extract_memories(_FakeClient(resp), "self: I play tennis")
     assert out == [
         {
-            "summary": "The user plays tennis",
+            "content": "The user plays tennis",
             "memory_type": "behavior",
             "entities": [],
             "relationships": [],
@@ -49,16 +49,16 @@ def test_extracts_from_tool_use_and_fills_defaults():
 
 
 def test_memory_type_defaults_when_omitted():
-    resp = _tool_msg({"memories": [{"summary": "The user moved to Bangkok"}]})
+    resp = _tool_msg({"memories": [{"content": "The user moved to Bangkok"}]})
     out = extract_memories(_FakeClient(resp), "self: I moved to Bangkok")
     assert out[0]["memory_type"] == "knowledge"
     assert out[0]["entities"] == []
 
 
 def test_falls_back_to_fenced_json_without_tool_use():
-    resp = _text_msg('```json\n{"memories": [{"summary": "y", "memory_type": "event"}]}\n```')
+    resp = _text_msg('```json\n{"memories": [{"content": "y", "memory_type": "event"}]}\n```')
     out = extract_memories(_FakeClient(resp), "self: y")
-    assert out[0]["summary"] == "y"
+    assert out[0]["content"] == "y"
     assert out[0]["memory_type"] == "event"
 
 

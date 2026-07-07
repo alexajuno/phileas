@@ -56,9 +56,9 @@ _NOISE_MARKERS = (
 )
 
 # The leading ``[abcd1234]`` id on a recall pointer line. Anchored to the line
-# start so it never picks up an ``[[id]]`` wiki-link embedded in a summary.
+# start so it never picks up an ``[[id]]`` wiki-link embedded in a memory's content.
 _POINTER_ID = re.compile(r"^\s*\[([0-9a-f]{8})\]")
-# ``Stored [uuid] [type] summary…`` — a memorize result.
+# ``Stored [uuid] [type] content…`` — a memorize result.
 _STORED = re.compile(r"\[([0-9a-f]{8})[0-9a-f-]*\]\s*\[(\w+)\]")
 
 
@@ -82,7 +82,7 @@ class StoreCall:
     tool: str
     memory_id: str | None
     memory_type: str | None
-    summary: str | None
+    content: str | None
     ok: bool
     error: str | None = None
 
@@ -267,7 +267,7 @@ def _make_store(tool: str, tool_input: dict, result: str) -> StoreCall:
         tool=tool,
         memory_id=mem_id,
         memory_type=mem_type,
-        summary=tool_input.get("summary") or tool_input.get("content"),
+        content=tool_input.get("content"),
         ok=ok,
         error=None if ok else result.strip()[:200],
     )

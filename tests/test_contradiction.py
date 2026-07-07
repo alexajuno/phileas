@@ -39,9 +39,9 @@ def _engine(path: Path) -> MemoryEngine:
     return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
-def _seed(eng: MemoryEngine, summary: str, **kw) -> str:
+def _seed(eng: MemoryEngine, content: str, **kw) -> str:
     """Persist a memory to SQLite only (graph nodes are MERGEd by edge writes)."""
-    item = MemoryItem(summary=summary, **kw)
+    item = MemoryItem(content=content, **kw)
     eng.db.save_item(item)
     return item.id
 
@@ -89,7 +89,7 @@ def test_memorize_flags_topical_conflict(tmp_dir: Path):
     assert conflict["candidate_id"] == first["id"]
     assert conflict["new_id"] == second["id"]
     assert conflict["options"] == ["supersede", "scope", "coexist"]
-    assert conflict["candidate_summary"] == "The user prefers dark mode in the editor"
+    assert conflict["candidate_content"] == "The user prefers dark mode in the editor"
     assert 0.75 <= conflict["similarity"] < 0.98
 
 

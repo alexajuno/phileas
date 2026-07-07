@@ -1,6 +1,6 @@
 {
   "fixture_version": "mara-eval@27ac3b512e58",
-  "_note": "relevant/excluded entries are distinctive summary SUBSTRINGS; the runner resolves each to exactly one memory id against the seeded store and errors on a non-unique match. Authored by hand from coldstart/persona.md — the trustworthy ground truth.",
+  "_note": "relevant/excluded entries are distinctive content SUBSTRINGS; the runner resolves each to exactly one memory id against the seeded store and errors on a non-unique match. Authored by hand from coldstart/persona.md — the trustworthy ground truth.",
   "queries": [
     {
       "qid": "daniel-relocates",

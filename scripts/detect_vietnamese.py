@@ -3,7 +3,7 @@
 
 The detection half of the English-only corpus migration — it never writes. It
 opens the SQLite store read-only (safe to run alongside the live daemon),
-scores every active memory's summary for Vietnamese, and emits both a human
+scores every active memory's content for Vietnamese, and emits both a human
 report and a JSON manifest the translation pass consumes.
 
 Detection approach, tuned for short strings where generic language detectors
@@ -17,7 +17,7 @@ are unreliable:
   * Vietnamese function words — a closed-class stopword set (là, của, và,
     một, người, không, được, …). Two or more is decisive prose evidence.
 
-A summary is flagged Vietnamese when its share of Vietnamese-bearing words
+A memory's content is flagged Vietnamese when its share of Vietnamese-bearing words
 clears a ratio threshold, or it carries enough stopwords/diacritic letters to
 be unmistakable. The ratio guard keeps an English memory that merely mentions
 a Vietnamese proper noun ("their friend Tú in Hà Nội") from being flagged —
@@ -111,9 +111,9 @@ def _has_vn_letter(srt_word: str) -> bool:
     return False
 
 
-def score(summary: str) -> dict:
-    """Score a summary for Vietnamese-ness. Returns the evidence, not a verdict."""
-    srt_words = [w.strip(".,;:!?()[]\"'…") for w in summary.split()]
+def score(content: str) -> dict:
+    """Score content for Vietnamese-ness. Returns the evidence, not a verdict."""
+    srt_words = [w.strip(".,;:!?()[]\"'…") for w in content.split()]
     srt_words = [w for w in srt_words if w]
     srt_total = len(srt_words) or 1
 
@@ -138,7 +138,7 @@ def is_vietnamese(ev: dict) -> bool:
         return True
     if ev["ratio"] >= 0.25 and ev["vn_words"] >= 2:
         return True
-    # A short summary that is mostly VN letters (e.g. a 3-4 word VN fragment).
+    # Short content that is mostly VN letters (e.g. a 3-4 word VN fragment).
     if ev["ratio"] >= 0.5 and ev["letter_hits"] >= 1:
         return True
     return False
@@ -154,21 +154,21 @@ def main() -> int:
     srt_conn = sqlite3.connect(srt_uri, uri=True)
     srt_conn.row_factory = sqlite3.Row
     srt_rows = srt_conn.execute(
-        "SELECT id, summary, memory_type, importance, created_at, daily_ref "
+        "SELECT id, content, memory_type, importance, created_at, daily_ref "
         "FROM memory_items WHERE status = 'active' ORDER BY created_at"
     ).fetchall()
     srt_conn.close()
 
     flagged = []
     for srt_row in srt_rows:
-        srt_summary = srt_row["summary"] or ""
-        srt_norm = unicodedata.normalize("NFC", srt_summary)
+        srt_content = srt_row["content"] or ""
+        srt_norm = unicodedata.normalize("NFC", srt_content)
         ev = score(srt_norm)
         if is_vietnamese(ev):
             flagged.append(
                 {
                     "id": srt_row["id"],
-                    "summary": srt_norm,
+                    "content": srt_norm,
                     "memory_type": srt_row["memory_type"],
                     "importance": srt_row["importance"],
                     "created_at": srt_row["created_at"],
@@ -183,13 +183,13 @@ def main() -> int:
     print(f"Flagged as Vietnamese   : {len(flagged)}")
     print(f"Manifest written        : {OUT_PATH}")
     print()
-    print("=== flagged memories (id · type · ratio · summary) ===")
+    print("=== flagged memories (id · type · ratio · content) ===")
     for srt_m in flagged:
         srt_ev = srt_m["evidence"]
         print(
             f"{srt_m['id'][:8]}  {srt_m['memory_type']:9}  "
             f"r={srt_ev['ratio']:.2f} stop={srt_ev['stop_hits']}  "
-            f"{srt_m['summary']}"
+            f"{srt_m['content']}"
         )
     return 0
 

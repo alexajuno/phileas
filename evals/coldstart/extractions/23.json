@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara flew back to Toronto from Lagos and arrived home on 2026-07-26, feeling reset and saying the trip was more than worth it.",
+      "content": "Mara flew back to Toronto from Lagos and arrived home on 2026-07-26, feeling reset and saying the trip was more than worth it.",
       "memory_type": "event",
       "daily_ref": "2026-07-26",
       "entities": [
@@ -16,7 +16,7 @@
       ]
     },
     {
-      "summary": "As of 2026-07-26 there was still no word from Nautilus on Daniel's Toronto transfer, though he remained hopeful; the waiting weighed on them.",
+      "content": "As of 2026-07-26 there was still no word from Nautilus on Daniel's Toronto transfer, though he remained hopeful; the waiting weighed on them.",
       "memory_type": "event",
       "daily_ref": "2026-07-26",
       "entities": [
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "summary": "Mara realized on returning (2026-07-26) that she had missed her friend Priya more than she expected; Priya told her the ICU had been feral without her.",
+      "content": "Mara realized on returning (2026-07-26) that she had missed her friend Priya more than she expected; Priya told her the ICU had been feral without her.",
       "memory_type": "knowledge",
       "daily_ref": "2026-07-26",
       "entities": [
@@ -43,7 +43,7 @@
       ]
     },
     {
-      "summary": "On 2026-07-26 Mara decided to apply for the permanent ICU position rather than the calmer step-down ward, saying the Lagos trip sorted her head out and she wants the real work with better backup.",
+      "content": "On 2026-07-26 Mara decided to apply for the permanent ICU position rather than the calmer step-down ward, saying the Lagos trip sorted her head out and she wants the real work with better backup.",
       "memory_type": "event",
       "daily_ref": "2026-07-26",
       "entities": [
@@ -55,7 +55,7 @@
       ]
     },
     {
-      "summary": "Saying goodbye to her mother at the end of the Lagos trip, Mara cried at the door; her mother pressed a wrap of dried fish into her bag (around 2026-07-26).",
+      "content": "Saying goodbye to her mother at the end of the Lagos trip, Mara cried at the door; her mother pressed a wrap of dried fish into her bag (around 2026-07-26).",
       "memory_type": "event",
       "daily_ref": "2026-07-26",
       "entities": [
@@ -66,7 +66,7 @@
       ]
     },
     {
-      "summary": "Mara felt the Lagos trip was worth it because she needed to see her mother with her own eyes and now has that 'banked,' returning feeling reset (2026-07-26).",
+      "content": "Mara felt the Lagos trip was worth it because she needed to see her mother with her own eyes and now has that 'banked,' returning feeling reset (2026-07-26).",
       "memory_type": "reflection",
       "daily_ref": "2026-07-26",
       "entities": [
@@ -77,7 +77,7 @@
       ]
     },
     {
-      "summary": "Back from Lagos, Mara found her cat Jollof acting betrayed by her two-week absence (2026-07-26).",
+      "content": "Back from Lagos, Mara found her cat Jollof acting betrayed by her two-week absence (2026-07-26).",
       "memory_type": "event",
       "daily_ref": "2026-07-26",
       "entities": []

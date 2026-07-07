@@ -4,7 +4,7 @@
   "decisions": [
     {
       "key": "sessions-opaque",
-      "summary": "Decision: auth uses server-side opaque session tokens, not JWTs.",
+      "content": "Decision: auth uses server-side opaque session tokens, not JWTs.",
       "source_text": "Why: we need instant revocation on logout and breach response. A JWT cannot be revoked before expiry without a denylist that defeats its statelessness. Rejected: stateless JWTs. Chose opaque tokens backed by a sessions table.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -25,7 +25,7 @@
     },
     {
       "key": "money-cents",
-      "summary": "Decision: monetary amounts are stored as integer minor units (cents), never floats.",
+      "content": "Decision: monetary amounts are stored as integer minor units (cents), never floats.",
       "source_text": "Why: float arithmetic introduces rounding drift that corrupts ledgers over time. Rejected: Decimal columns, which still risk app-layer float coercion. Chose integer cents alongside a currency-code column.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -46,7 +46,7 @@
     },
     {
       "key": "payment-idempotency",
-      "summary": "Decision: every payment-mutating endpoint requires a client idempotency key.",
+      "content": "Decision: every payment-mutating endpoint requires a client idempotency key.",
       "source_text": "Why: provider webhooks and client retries double-charge without it. Rejected: a dedupe heuristic on (user, amount, minute), which is fragile. Chose mandatory idempotency keys persisted with the charge.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -66,7 +66,7 @@
     },
     {
       "key": "search-read-model",
-      "summary": "Decision: search queries hit a denormalized read model, never the OLTP tables directly.",
+      "content": "Decision: search queries hit a denormalized read model, never the OLTP tables directly.",
       "source_text": "Why: full-text scans on transactional tables lock rows and degrade writes. Rejected: querying live tables with GIN indexes. Chose a projected search document rebuilt from change events.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -86,7 +86,7 @@
     },
     {
       "key": "uploads-content-addressed",
-      "summary": "Decision: uploads are content-addressed by sha256; client filenames are never trusted for storage paths.",
+      "content": "Decision: uploads are content-addressed by sha256; client filenames are never trusted for storage paths.",
       "source_text": "Why: trusting filenames enables path traversal and collisions. Rejected: sanitizing user filenames. Chose hashing content to derive the storage key, keeping the original name only as display metadata.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -106,7 +106,7 @@
     },
     {
       "key": "errors-envelope",
-      "summary": "Decision: the API returns errors in a typed envelope {code, message, details}, never raw exceptions.",
+      "content": "Decision: the API returns errors in a typed envelope {code, message, details}, never raw exceptions.",
       "source_text": "Why: leaking stack traces is a security and DX problem, and clients need stable machine-readable codes. Rejected: HTTP status alone. Chose a typed error envelope with a documented code registry.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -126,7 +126,7 @@
     },
     {
       "key": "tenant-row-level",
-      "summary": "Decision: tenant isolation is enforced in the database with row-level security, not application-layer filters.",
+      "content": "Decision: tenant isolation is enforced in the database with row-level security, not application-layer filters.",
       "source_text": "Why: a forgotten tenant_id clause leaks data across tenants; app-layer enforcement is one bug from a breach. Rejected: a shared base-query helper. Chose Postgres RLS policies keyed on a per-session tenant setting.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -146,7 +146,7 @@
     },
     {
       "key": "config-env",
-      "summary": "Decision: configuration comes only from environment variables validated at boot; no config files in the image.",
+      "content": "Decision: configuration comes only from environment variables validated at boot; no config files in the image.",
       "source_text": "Why: baking config into images causes drift between environments and leaks secrets into the registry. Rejected: per-environment TOML files. Chose env vars with a fail-fast schema check on startup.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -166,7 +166,7 @@
     },
     {
       "key": "migrations-forward-only",
-      "summary": "Decision: database migrations are forward-only; there are no down-migrations in production.",
+      "content": "Decision: database migrations are forward-only; there are no down-migrations in production.",
       "source_text": "Why: down-migrations are rarely tested and dangerous under load; rollbacks happen by deploying a new forward migration. Rejected: reversible up/down pairs. Chose forward-only with expand-contract for breaking changes.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -186,7 +186,7 @@
     },
     {
       "key": "api-versioning-url",
-      "summary": "Decision: API versioning lives in the URL path (/v1/), not in a header.",
+      "content": "Decision: API versioning lives in the URL path (/v1/), not in a header.",
       "source_text": "Why: path versions are cacheable, visible in logs, and trivial to route; header versioning hides the contract. Rejected: Accept-header content negotiation. Chose /vN/ path prefixes.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -206,7 +206,7 @@
     },
     {
       "key": "queue-listen-notify",
-      "summary": "Decision: background jobs are dispatched via Postgres LISTEN/NOTIFY.",
+      "content": "Decision: background jobs are dispatched via Postgres LISTEN/NOTIFY.",
       "source_text": "Why: avoids running a separate broker since we already run Postgres. Trade-off accepted: no persistence of notifications missed while no worker is listening.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},
@@ -219,7 +219,7 @@
     },
     {
       "key": "queue-skip-locked",
-      "summary": "Decision: background jobs use a durable jobs table polled with SELECT ... FOR UPDATE SKIP LOCKED.",
+      "content": "Decision: background jobs use a durable jobs table polled with SELECT ... FOR UPDATE SKIP LOCKED.",
       "source_text": "Why: LISTEN/NOTIFY silently dropped jobs whenever no worker was connected (deploys, crashes), with no recovery. This reverses the earlier LISTEN/NOTIFY choice. Chose a persisted jobs table so missed work is retried, with SKIP LOCKED for safe concurrent workers.",
       "entities": [
         {"name": "Harborbase", "type": "repo"},

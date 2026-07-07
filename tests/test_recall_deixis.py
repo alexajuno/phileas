@@ -66,8 +66,8 @@ def _engine(tmp_path: Path, semantic, day_map) -> MemoryEngine:
     )
 
 
-def _seed(eng: MemoryEngine, summary: str) -> str:
-    item = MemoryItem(summary=summary)
+def _seed(eng: MemoryEngine, content: str) -> str:
+    item = MemoryItem(content=content)
     eng.db.save_item(item)
     return item.id
 

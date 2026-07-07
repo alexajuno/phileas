@@ -1,7 +1,7 @@
 {
   "memories": [
     {
-      "summary": "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
+      "content": "Mara recently moved to Toronto from Halifax, where she had a close friend group and a regular pub crew.",
       "memory_type": "profile",
       "daily_ref": "2026-04-15",
       "entities": [
@@ -36,7 +36,7 @@
       ]
     },
     {
-      "summary": "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing.",
+      "content": "On 2026-04-15, Sandra texted Mara a photo of the old Halifax friend group at their former pub, which left Mara briefly happy and then deeply gutted with longing.",
       "memory_type": "event",
       "daily_ref": "2026-04-15",
       "entities": [
@@ -60,7 +60,7 @@
       ]
     },
     {
-      "summary": "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous.",
+      "content": "Mara struggles with recurring sleepless nights and a flat, grey loneliness, feeling like she knows no one in Toronto and that the city feels enormous.",
       "memory_type": "behavior",
       "daily_ref": "2026-04-15",
       "entities": [
@@ -76,7 +76,7 @@
       "relationships": []
     },
     {
-      "summary": "Mara works in healthcare and routinely comforts her patients' families, and noted (2026-04-15) it feels strange to be on the receiving side of that same reassurance about loss and hard choices.",
+      "content": "Mara works in healthcare and routinely comforts her patients' families, and noted (2026-04-15) it feels strange to be on the receiving side of that same reassurance about loss and hard choices.",
       "memory_type": "reflection",
       "daily_ref": "2026-04-15",
       "entities": [

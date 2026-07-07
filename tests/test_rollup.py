@@ -33,9 +33,9 @@ def _engine(path: Path) -> MemoryEngine:
     return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
-def _seed(eng: MemoryEngine, summary: str, **kw) -> str:
+def _seed(eng: MemoryEngine, content: str, **kw) -> str:
     """Persist a memory to SQLite only (graph Memory nodes are MERGEd by edges)."""
-    item = MemoryItem(summary=summary, **kw)
+    item = MemoryItem(content=content, **kw)
     eng.db.save_item(item)
     return item.id
 
@@ -106,7 +106,7 @@ def test_memorize_with_child_ids_mints_gist_and_links(tmp_dir: Path):
     b = _seed(eng, "episode b")
 
     result = eng.memorize(
-        summary="themes of the week",
+        content="themes of the week",
         memory_type="reflection",
         child_ids=[a, b],
         detect_conflict=False,
@@ -119,7 +119,7 @@ def test_memorize_with_child_ids_mints_gist_and_links(tmp_dir: Path):
 
 def test_memorize_without_child_ids_links_nothing(tmp_dir: Path):
     eng = _engine(tmp_dir)
-    result = eng.memorize(summary="a plain memory", detect_conflict=False)
+    result = eng.memorize(content="a plain memory", detect_conflict=False)
     assert "rolled_up" not in result
     assert eng.graph.get_rollup_indegree([result["id"]]) == {}
 
@@ -128,7 +128,7 @@ def test_memorize_child_ids_skips_unknown(tmp_dir: Path):
     eng = _engine(tmp_dir)
     a = _seed(eng, "episode a")
     result = eng.memorize(
-        summary="gist over one real episode",
+        content="gist over one real episode",
         memory_type="reflection",
         child_ids=[a, "ffffffff"],
         detect_conflict=False,
@@ -144,9 +144,9 @@ def test_memorize_child_ids_matches_followup_roll_up(tmp_dir: Path):
     a = _seed(eng, "episode a")
     b = _seed(eng, "episode b")
 
-    combined = eng.memorize(summary="gist one call", child_ids=[a, b], detect_conflict=False)["id"]
+    combined = eng.memorize(content="gist one call", child_ids=[a, b], detect_conflict=False)["id"]
 
-    two_step = eng.memorize(summary="gist two step", detect_conflict=False)["id"]
+    two_step = eng.memorize(content="gist two step", detect_conflict=False)["id"]
     eng.roll_up(two_step, [a, b])
 
     assert eng.graph.get_rollup_children(combined) == eng.graph.get_rollup_children(two_step)

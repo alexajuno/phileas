@@ -98,8 +98,8 @@ def _engine(path: Path) -> MemoryEngine:
     return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
-def _mem(eng: MemoryEngine, summary: str, name: str, etype: str = "Person") -> str:
-    return eng.memorize(summary, entities=[{"name": name, "type": etype}], detect_conflict=False)["id"]
+def _mem(eng: MemoryEngine, content: str, name: str, etype: str = "Person") -> str:
+    return eng.memorize(content, entities=[{"name": name, "type": etype}], detect_conflict=False)["id"]
 
 
 def test_reconcile_surfaces_split_with_samples(tmp_dir: Path):

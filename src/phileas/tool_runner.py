@@ -27,7 +27,7 @@ from phileas import recent
 from phileas.db import clean_source_event_id
 from phileas.recall_format import (
     ABOUT_MAX,
-    POINTER_SUMMARY_CHARS,
+    POINTER_CONTENT_CHARS,
     id8,
     render_pointers,
 )
@@ -46,7 +46,7 @@ def no_entities(items: list[dict]) -> dict[str, list[dict]]:
     return {}
 
 
-# A memory summary can only contain tool-call markup if the calling client's
+# A memory's content can only contain tool-call markup if the calling client's
 # tool invocation was malformed and its parameter block leaked in as literal
 # text — a real fact never includes these tags. Rejecting at the boundary
 # keeps a mangled call from polluting the store (and its FTS/embedding
@@ -98,7 +98,7 @@ def recall_recent(
         return {"items": [], "text": f"No memories found in the last {days} day(s)."}
 
     event_thread = engine.db.get_thread_ids_for_events([it.get("source_event_id") for it in items])
-    clip = POINTER_SUMMARY_CHARS
+    clip = POINTER_CONTENT_CHARS
     res = recent.group_recent_threads(items, event_thread, max_threads=max_threads, max_chars=max_chars, clip=clip)
     threads = res["threads"]
 
@@ -126,9 +126,9 @@ def get_thread_memories(engine, entities_fn: EntitiesFn, *, thread_id: str) -> T
     items = engine.get_thread_memories(thread_id)
     if not items:
         return {"items": [], "text": f"No memories found for thread {id8(thread_id)}."}
-    clip = POINTER_SUMMARY_CHARS
+    clip = POINTER_CONTENT_CHARS
     lines = [f"{len(items)} memory(ies) in thread {id8(thread_id)} (newest first):"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=clip))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
     return {"items": items, "text": "\n".join(lines)}
 
 
@@ -147,10 +147,10 @@ def timeline(
             return {"items": [], "text": f"No memories found between {start_date} and {end_date}."}
         return {"items": [], "text": f"No memories found for {start_date}."}
 
-    clip = POINTER_SUMMARY_CHARS
+    clip = POINTER_CONTENT_CHARS
     range_str = f"{start_date} to {end_date}" if end_date else start_date
     lines = [f"Memories for {range_str} ({len(items)} found):"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=clip))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
     return {"items": items, "text": "\n".join(lines)}
 
 
@@ -167,11 +167,11 @@ def about(
     if not items:
         return {"items": [], "text": f"No memories found for '{name}'."}
 
-    clip = POINTER_SUMMARY_CHARS
+    clip = POINTER_CONTENT_CHARS
     cap = ABOUT_MAX
     shown = items[:cap]
     lines = [f"Memories about '{name}' ({len(items)} found):"]
-    lines.extend(render_pointers(shown, entities_fn(shown), show_date=True, max_summary_chars=clip))
+    lines.extend(render_pointers(shown, entities_fn(shown), show_date=True, max_content_chars=clip))
     if len(items) > cap:
         lines.append(f"  … +{len(items) - cap} more (narrow with memory_type, or use timeline / hydrate to drill in)")
     return {"items": shown, "text": "\n".join(lines)}
@@ -188,9 +188,9 @@ def serendipity(
     items = engine.serendipity(n=n, exclude_ids=parsed)
     if not items:
         return {"items": [], "text": "No memories available for serendipity."}
-    clip = POINTER_SUMMARY_CHARS
+    clip = POINTER_CONTENT_CHARS
     lines = [f"Serendipity — {len(items)} high-signal memories (NOT query-matched):"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=clip))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
     return {"items": items, "text": "\n".join(lines)}
 
 
@@ -202,13 +202,13 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
         candidates = result.get("candidates", [])
         lines = [result["error"] + " — disambiguate:"]
         for c in candidates:
-            lines.append(f"  [{id8(c['id'])}] {c['summary']}")
+            lines.append(f"  [{id8(c['id'])}] {c['content']}")
         return {"items": candidates, "text": "\n".join(lines)}
 
     ent_names = ", ".join(dict.fromkeys(e.get("name", "") for e in (result.get("entities") or []) if e.get("name")))
     lines = [
         f"[{result['id']}] [{result['type']}]",
-        f"  {result['summary']}",
+        f"  {result['content']}",
         f"  status={result['status']}  "
         f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
         f"  created={result['created_at']}  updated={result['updated_at']}",
@@ -272,7 +272,7 @@ def thread(engine, entities_fn: EntitiesFn, *, thread_id: str) -> ToolResult:
         lines.append(f"── turn {n} · [{id8(turn['event_id'])}] · {when} ──")
         lines.append(turn["text"])
         for m in turn["memories"]:
-            lines.append(f"    → [{id8(m['id'])}] [{m['type']}] {m['summary']}")
+            lines.append(f"    → [{id8(m['id'])}] [{m['type']}] {m['content']}")
             items.append(m)
     return {"items": items, "text": "\n".join(lines)}
 
@@ -289,18 +289,18 @@ def scopes(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
         return {"items": [], "text": f"No memory found for id '{memory_id}'."}
     if len(matches) > 1:
         lines = [f"Ambiguous id prefix '{clean}' matched {len(matches)} memories — disambiguate:"]
-        lines.extend(f"  [{id8(m.id)}] {m.summary}" for m in matches)
-        return {"items": [{"id": m.id, "summary": m.summary} for m in matches], "text": "\n".join(lines)}
+        lines.extend(f"  [{id8(m.id)}] {m.content}" for m in matches)
+        return {"items": [{"id": m.id, "content": m.content} for m in matches], "text": "\n".join(lines)}
     item = matches[0]
 
     rows = engine.graph.get_scopes_for_memory(item.id)
     if not rows:
         return {
             "items": [],
-            "text": f"[{id8(item.id)}] has no SCOPED_TO contexts — globally valid.\n  {item.summary}",
+            "text": f"[{id8(item.id)}] has no SCOPED_TO contexts — globally valid.\n  {item.content}",
         }
 
-    lines = [f"[{id8(item.id)}] {item.summary}", f"Scoped to {len(rows)} context(s):"]
+    lines = [f"[{id8(item.id)}] {item.content}", f"Scoped to {len(rows)} context(s):"]
     for r in rows:
         quals = [r.get("polarity") or "holds"]
         if r.get("valid_from"):
@@ -424,7 +424,7 @@ def _contradiction_menu(contradiction: dict | None) -> str:
         basis = "likely conflict"
     return "\n".join(
         [
-            f'⚠ Possible conflict with [{cand8}] "{contradiction["candidate_summary"]}" '
+            f'⚠ Possible conflict with [{cand8}] "{contradiction["candidate_content"]}" '
             f"({basis}). If they genuinely conflict, resolve:",
             f'  • supersede — new fact is right, old is wrong: resolve_contradiction("{new8}", "{cand8}", "supersede")',
             f"  • scope     — each true in its own context: "
@@ -450,7 +450,7 @@ def recall(
         return "No relevant memories found."
 
     lines = [f"Found {len(items)} memories:"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_summary_chars=POINTER_SUMMARY_CHARS))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=POINTER_CONTENT_CHARS))
     return "\n".join(lines)
 
 
@@ -458,7 +458,7 @@ def memorize(
     engine,
     entities_fn: EntitiesFn,
     *,
-    summary: str,
+    content: str,
     source_event_id: str | None = None,
     source_text: str | None = None,
     memory_type: str = "knowledge",
@@ -468,15 +468,15 @@ def memorize(
     contexts: list | str | None = None,
     child_ids: list | str | None = None,
 ) -> str:
-    # A summary is the pointer recall surfaces — it can never legitimately
+    # A memory's content is the pointer recall surfaces — it can never legitimately
     # contain tool-call markup (source_text can, when a conversation is
-    # *about* tool calls, so only the summary is guarded).
-    _reject_tool_markup(summary=summary)
+    # *about* tool calls, so only the content is guarded).
+    _reject_tool_markup(content=content)
     # The pointer/body split for a human-initiated write: when the caller hands
     # over verbatim source (a decision's reasoning, the alternatives passed over),
     # capture it as its own event and hang the memory off it. The event is born
     # "extracted", so the observer worker never re-distills it into a duplicate.
-    # `summary` is the pointer recall surfaces; this event is the body hydrate →
+    # `content` is the pointer recall surfaces; this event is the body hydrate →
     # thread drills into.
     if source_text and source_event_id is None:
         source_event_id = ingest_text(engine, entities_fn, text=source_text)["event_id"]
@@ -487,7 +487,7 @@ def memorize(
     parsed_children = json.loads(child_ids) if isinstance(child_ids, str) else child_ids
 
     result = engine.memorize(
-        summary=summary,
+        content=content,
         memory_type=memory_type,
         daily_ref=daily_ref,
         entities=parsed_entities,
@@ -497,7 +497,7 @@ def memorize(
         child_ids=parsed_children,
     )
 
-    stored = f"Stored [{result['id']}] [{memory_type}] {result['summary']}"
+    stored = f"Stored [{result['id']}] [{memory_type}] {result['content']}"
     if "rolled_up" in result:
         stored += f"; rolled up {result['rolled_up']} memory(ies) into it"
         if result.get("rollup_skipped"):
@@ -522,15 +522,15 @@ def memorize_batch(
     # leaving half its memories stored.
     validated: dict[int, str] = {}
     for i, mem in enumerate(items):
-        if mem.get("summary"):
-            _reject_tool_markup(summary=mem.get("summary"))
+        if mem.get("content"):
+            _reject_tool_markup(content=mem.get("content"))
             validated[i] = _resolve_event_id(engine, mem.get("source_event_id") or source_event_id)
 
     results = []
     for i, mem in enumerate(items):
-        summary = mem.get("summary")
-        if not summary:
-            results.append("Skipped — no summary provided")
+        content = mem.get("content")
+        if not content:
+            results.append("Skipped — no content provided")
             continue
 
         parsed_entities = mem.get("entities")
@@ -544,7 +544,7 @@ def memorize_batch(
             parsed_contexts = json.loads(parsed_contexts)
 
         result = engine.memorize(
-            summary=summary,
+            content=content,
             memory_type=mem.get("memory_type", "knowledge"),
             daily_ref=mem.get("daily_ref"),
             entities=parsed_entities,
@@ -555,7 +555,7 @@ def memorize_batch(
             detect_conflict=False,
         )
 
-        results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['summary']}")
+        results.append(f"Stored [{result['id']}] [{mem.get('memory_type', 'knowledge')}] {result['content']}")
 
     return f"Batch complete ({len(results)} items):\n" + "\n".join(f"  {r}" for r in results)
 
@@ -634,24 +634,24 @@ def update(
     entities_fn: EntitiesFn,
     *,
     memory_id: str,
-    summary: str | None = None,
+    content: str | None = None,
     entities: list | str | None = None,
     relationships: list | str | None = None,
 ) -> str:
-    _reject_tool_markup(summary=summary)
+    _reject_tool_markup(content=content)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
 
     result = engine.update(
         memory_id,
-        summary=summary,
+        content=content,
         entities=parsed_entities,
         relationships=parsed_relationships,
     )
     if "error" in result:
         return result["error"]
 
-    parts = [f"Updated [{result['id']}] {result['summary']}"]
+    parts = [f"Updated [{result['id']}] {result['content']}"]
     if result.get("snapshot_id"):
         parts.append(f"Old version archived as [{result['snapshot_id']}]")
     if parsed_entities:
@@ -670,7 +670,7 @@ def expand(engine, entities_fn: EntitiesFn, *, memory_id: str) -> str:
         return f"Nothing rolls up into [{memory_id[:8]}] (or no such memory)."
     lines = [f"{len(items)} memory(ies) roll up into [{memory_id[:8]}]:"]
     for it in items:
-        lines.append(f"  [{it['id'][:8]}] [{it.get('type', '?')}] {it.get('summary', '')}")
+        lines.append(f"  [{it['id'][:8]}] [{it.get('type', '?')}] {it.get('content', '')}")
     return "\n".join(lines)
 
 
@@ -688,7 +688,7 @@ def survey(engine, entities_fn: EntitiesFn, *, theme: str) -> str:
     if data["existing_gists"]:
         lines.append("\nGists already on this theme; roll a matching sub-thread into one of these, don't duplicate:")
         for g in data["existing_gists"]:
-            lines.append(f"  [{g['id'][:8]}] {g['summary']}")
+            lines.append(f"  [{g['id'][:8]}] {g['content']}")
     if data["groups"]:
         lines.append("\nSub-threads (one focused reflection each, with its members as child_ids):")
         for grp in data["groups"]:
@@ -845,7 +845,7 @@ def ingest_text(
 
 def _trace_recent(engine, items: list[dict], days: int, latency_ms: float, bounds: dict | None = None) -> None:
     """Best-effort trace write for the recall_recent MCP tool (mirrors the old
-    stdio-side trace). ``bounds`` carries the per-summary clip counters."""
+    stdio-side trace). ``bounds`` carries the per-memory clip counters."""
     try:
         from phileas.engine import _trace_recall
 
@@ -874,7 +874,7 @@ def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) 
         return f"Dismissed consolidation cluster {dismiss[:8]}."
 
     def _clip(s: str) -> str:
-        return s if len(s) <= POINTER_SUMMARY_CHARS else s[:POINTER_SUMMARY_CHARS] + "…"
+        return s if len(s) <= POINTER_CONTENT_CHARS else s[:POINTER_CONTENT_CHARS] + "…"
 
     blocks: list[str] = []
     shown_ids: list[str] = []
@@ -893,7 +893,7 @@ def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) 
         span = row["span"]
         when = f" ({span[0]} → {span[1]})" if span and span[0] else ""
         head = f"[{row['id'][:8]}] {label} · {len(items)} memories{when}"
-        body = [f"    · [{it.id[:8]}] {_clip(it.summary)}" for it in items[:CONSOLIDATE_SAMPLE]]
+        body = [f"    · [{it.id[:8]}] {_clip(it.content)}" for it in items[:CONSOLIDATE_SAMPLE]]
         if len(items) > CONSOLIDATE_SAMPLE:
             body.append(f"    · (+{len(items) - CONSOLIDATE_SAMPLE} more — survey this theme to split and roll up)")
         blocks.append(head + "\n" + "\n".join(body))
@@ -904,7 +904,7 @@ def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) 
         f"{len(blocks)} memory cluster(s) queued for consolidation.\n\n"
         "For each cluster, judge whether its members form one coherent theme.\n"
         "If so, roll them up into a gist:\n"
-        '  memorize(memory_type="reflection", summary="<the gist>", child_ids=[<the id8s>])\n'
+        '  memorize(memory_type="reflection", content="<the gist>", child_ids=[<the id8s>])\n'
         '  (or survey("<theme>") first to re-split, then one reflection per sub-thread).\n'
         "Skip an incoherent cluster; it resurfaces later. Retire one without rolling "
         'up via consolidate(dismiss="<cluster id>").\n'

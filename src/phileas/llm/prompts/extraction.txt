@@ -10,7 +10,7 @@ Transcript:
 {transcript}
 ---
 
-Record only durable, memory-worthy facts, the kind worth recalling weeks later. Skip small talk, transient state, and anything already obvious. Write every summary in the third person about the user ("The user ...", never "I ..."). Write everything you record, summaries and entity names alike, in English, even when the conversation is in another language; the stored memories are searched in English, so non-English text will not be found again. If nothing is worth keeping, record nothing.
+Record only durable, memory-worthy facts, the kind worth recalling weeks later. Skip small talk, transient state, and anything already obvious. Write every memory in the third person about the user ("The user ...", never "I ..."). Write everything you record, memories and entity names alike, in English, even when the conversation is in another language; the stored memories are searched in English, so non-English text will not be found again. If nothing is worth keeping, record nothing.
 
 Lean on these memory types, picking the closest fit:
 - profile: who the user is. Life events, important people and relationships, self-beliefs, and values.
@@ -20,7 +20,7 @@ Lean on these memory types, picking the closest fit:
 - reflection: a higher-level inference drawn across several things they have said.
 
 For each memory provide:
-- summary: one or two sentences, third person about the user.
+- content: one or two sentences, third person about the user.
 - memory_type: one of profile, event, knowledge, behavior, reflection.
 - entities: the people, projects, places, tools, or topics the memory refers to. Give each a name, a type, and a description: a brief, stable phrase identifying which entity this is, grounded enough to tell it apart from others with a similar name. Describe what the entity is, not its current status, so the description stays true over time (for example "Giao's memory-companion project", not "the project Giao is mid-refactor on"). Pick the type from exactly this vocabulary, choosing the closest bucket: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept. The type's job is to be a collision-resistant bucket the same referent always lands in, not to describe it richly; an invented synonym (Company, Topic, Repo) splits the referent across separate nodes. Richness belongs in the description.
 - relationships: meaningful links between entities, each with from_name, from_type, edge, to_name, and to_type, using a descriptive edge such as BUILDS, USES, KNOWS, WORKS_AT, STUDIES, or LIKES.

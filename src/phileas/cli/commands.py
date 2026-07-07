@@ -447,9 +447,9 @@ def resolve_cmd(
 
 @click.command("update")
 @click.argument("memory_id")
-@click.argument("summary")
-def update_cmd(memory_id: str, summary: str):
-    """Update a memory's summary in place.
+@click.argument("content")
+def update_cmd(memory_id: str, content: str):
+    """Update a memory's content in place.
 
     The old version is archived as a snapshot and linked via a SUPERSEDES
     edge in the knowledge graph, preserving the correction trail.
@@ -461,11 +461,11 @@ def update_cmd(memory_id: str, summary: str):
         if not resolved:
             print_error(f"Memory {memory_id} not found.")
             raise SystemExit(1)
-        result = engine.update(resolved, summary)
+        result = engine.update(resolved, content)
         if "error" in result:
             print_error(result["error"])
             raise SystemExit(1)
-        print_success(f"Updated [{result['id'][:8]}] {result['summary']}")
+        print_success(f"Updated [{result['id'][:8]}] {result['content']}")
         console.print(f"[dim]Old version archived as [{result['snapshot_id'][:8]}][/dim]")
     except SystemExit:
         raise
@@ -548,7 +548,7 @@ def list_cmd(
                     "source": "sourced" if _is_sourced(item) else "unsourced",
                     "source_event_id": item.source_event_id,
                     "created_at": item.created_at.isoformat() if item.created_at else None,
-                    "summary": item.summary,
+                    "content": item.content,
                 }
                 for item in items
             ]
@@ -562,7 +562,7 @@ def list_cmd(
                 "type": item.memory_type,
                 "status": item.status,
                 "source": "sourced" if _is_sourced(item) else "unsourced",
-                "summary": item.summary,
+                "content": item.content,
             }
             for item in items
         ]
@@ -591,7 +591,7 @@ def list_cmd(
 def show(memory_id: str):
     """Show full detail of a memory.
 
-    Displays ID, summary, type, status, access count, daily
+    Displays ID, content, type, status, access count, daily
     reference, and timestamps.
     """
     try:
@@ -608,7 +608,7 @@ def show(memory_id: str):
         print_memory_detail(
             {
                 "id": item.id,
-                "summary": item.summary,
+                "content": item.content,
                 "memory_type": item.memory_type,
                 "status": item.status,
                 "access_count": item.access_count,
@@ -699,7 +699,7 @@ def export_cmd(fmt: str, output: str | None):
         data = [
             {
                 "id": item.id,
-                "summary": item.summary,
+                "content": item.content,
                 "memory_type": item.memory_type,
                 "status": item.status,
                 "access_count": item.access_count,

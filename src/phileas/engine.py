@@ -187,7 +187,7 @@ def _trace_recall(
 def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
     return {
         "id": item.id,
-        "summary": item.summary,
+        "content": item.content,
         "type": item.memory_type,
         "score": score,
         "created_at": item.created_at.isoformat() if item.created_at else None,
@@ -445,7 +445,7 @@ class MemoryEngine:
         if len(matches) > 1:
             return {
                 "error": f"ambiguous id prefix '{clean}' matched {len(matches)} memories",
-                "candidates": [{"id": m.id, "summary": m.summary} for m in matches],
+                "candidates": [{"id": m.id, "content": m.content} for m in matches],
             }
         item = matches[0]
         entities: list[dict] = []
@@ -488,7 +488,7 @@ class MemoryEngine:
                 }
         return {
             "id": item.id,
-            "summary": item.summary,
+            "content": item.content,
             "type": item.memory_type,
             "status": item.status,
             "access_count": item.access_count,
@@ -561,7 +561,7 @@ class MemoryEngine:
     @timed_op("memorize")
     def memorize(
         self,
-        summary: str,
+        content: str,
         memory_type: str = "knowledge",
         daily_ref: str | None = None,
         entities: list[dict] | None = None,
@@ -573,7 +573,7 @@ class MemoryEngine:
     ) -> dict:
         """Store a memory across all three backends.
 
-        `summary` is the canonical, AI-written fact. The raw source turn lives in
+        `content` is the canonical, AI-written fact. The raw source turn lives in
         the `events` table; pass `source_event_id` to reference it. Memories
         must not contain raw verbatim text — that's what events are for.
 
@@ -592,7 +592,7 @@ class MemoryEngine:
         ``contradiction`` payload — the resolve menu for the caller to act on.
         Disable for bulk/non-interactive writes that won't read the menu.
 
-        Returns a dict with keys: id, summary (plus contradiction when found, and
+        Returns a dict with keys: id, content (plus contradiction when found, and
         rolled_up / rollup_skipped when child_ids were given).
         """
         op_extra(
@@ -618,11 +618,11 @@ class MemoryEngine:
         if daily_ref is None:
             daily_ref = date.today().isoformat()
 
-        # 2. Create and persist MemoryItem (summary only — raw lives in events)
+        # 2. Create and persist MemoryItem (content only — raw lives in events)
         # `memory_type` is `str` at the public boundary (MCP/CLI/daemon callers
         # pass arbitrary strings); narrow to `MemoryType` for the dataclass.
         item = MemoryItem(
-            summary=summary,
+            content=content,
             memory_type=cast(MemoryType, memory_type),
             # Seed durable storage strength from the memory type; recall and
             # reinforcement grow it from here.
@@ -644,7 +644,7 @@ class MemoryEngine:
                     self.db,
                     self.vector,
                     self.graph,
-                    summary=summary,
+                    content=content,
                     relationships=relationships,
                     floor=CONTRADICTION_SIM_FLOOR,
                     ceiling=CONTRADICTION_SIM_CEILING,
@@ -653,7 +653,7 @@ class MemoryEngine:
                 log.debug("contradiction probe failed", extra={"op": "memorize", "data": {"error": str(e)}})
 
         # 5. Add to ChromaDB (with type metadata for future filtering)
-        self.vector.add(item.id, summary, metadata={"memory_type": memory_type})
+        self.vector.add(item.id, content, metadata={"memory_type": memory_type})
 
         # 6. Link entities and relationships in KuzuDB. Entities resolved so
         # far in this memory are passed as context_neighbors to the next
@@ -720,9 +720,9 @@ class MemoryEngine:
         op_extra(id=item.id)
 
         # 8. Queue reinforcement check to daemon (async)
-        self._queue_reinforcement(item.id, summary)
+        self._queue_reinforcement(item.id, content)
 
-        result: dict = {"id": item.id, "summary": item.summary}
+        result: dict = {"id": item.id, "content": item.content}
         if child_ids:
             result["rolled_up"] = rolled_up
             if rollup_skipped:
@@ -737,7 +737,7 @@ class MemoryEngine:
             result["contradiction"] = {
                 "new_id": item.id,
                 "candidate_id": conflict.candidate_id,
-                "candidate_summary": conflict.candidate_summary,
+                "candidate_content": conflict.candidate_content,
                 "similarity": round(conflict.similarity, 3) if conflict.similarity is not None else None,
                 "method": conflict.method,
                 "options": ["supersede", "scope", "coexist"],
@@ -756,14 +756,14 @@ class MemoryEngine:
 
         return result
 
-    def _queue_reinforcement(self, memory_id: str, summary: str) -> None:
+    def _queue_reinforcement(self, memory_id: str, content: str) -> None:
         """Fire-and-forget: notify daemon to check reinforcement asynchronously."""
 
         def _notify():
             try:
                 from phileas.daemon import call
 
-                call("reinforce", {"memory_id": memory_id, "summary": summary})
+                call("reinforce", {"memory_id": memory_id, "content": content})
             except Exception:
                 pass  # Best-effort; daemon may not be running
 
@@ -804,7 +804,7 @@ class MemoryEngine:
         excluded, or expired-validity ones in stage 2. When omitted, no scope
         edges are read and the result is byte-identical to the pre-context path.
 
-        Returns list of dicts with id, summary, type, score.
+        Returns list of dicts with id, content, type, score.
         """
         from time import perf_counter
 
@@ -1407,7 +1407,7 @@ class MemoryEngine:
 
                 pool_ids = sorted(filtered, key=lambda m: relevance_map[m], reverse=True)[:rr_pool]
                 try:
-                    order = rerank(query, [(m, filtered[m].summary) for m in pool_ids])
+                    order = rerank(query, [(m, filtered[m].content) for m in pool_ids])
                 except RerankerUnavailable:
                     # No reranker: keep the fused relevance untouched.
                     order = None
@@ -1435,7 +1435,7 @@ class MemoryEngine:
             # Cross-encoder for candidates not already validated by
             # keyword match or graph traversal
             ce_candidates = [
-                (mem_id, item.summary) for mem_id, item in filtered.items() if mem_id not in structurally_matched
+                (mem_id, item.content) for mem_id, item in filtered.items() if mem_id not in structurally_matched
             ]
             if ce_candidates:
                 try:
@@ -1844,13 +1844,13 @@ class MemoryEngine:
     def update(
         self,
         memory_id: str,
-        summary: str | None = None,
+        content: str | None = None,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
     ) -> dict:
-        """Update a memory in place: optionally change summary, add entities/relationships.
+        """Update a memory in place: optionally change content, add entities/relationships.
 
-        If summary is provided, snapshots the old version and updates text + embedding.
+        If content is provided, snapshots the old version and updates text + embedding.
         If entities/relationships are provided, links them in the graph.
         Preserves created_at and daily_ref.
         """
@@ -1867,12 +1867,12 @@ class MemoryEngine:
             return {"error": f"Memory {memory_id} is not active (status={item.status})."}
 
         snapshot_id = None
-        if summary and summary != item.summary:
+        if content and content != item.content:
             # 1. Snapshot old version as archived copy
             snapshot_id = self.db.snapshot_item(item)
 
             # 2. Update active memory in place
-            self.db.update_item(memory_id, summary)
+            self.db.update_item(memory_id, content)
 
             # 3. Re-embed in ChromaDB
             try:
@@ -1882,7 +1882,7 @@ class MemoryEngine:
                     "vector delete failed during update",
                     extra={"op": "update", "data": {"id": memory_id, "error": str(e)}},
                 )
-            self.vector.add(memory_id, summary)
+            self.vector.add(memory_id, content)
 
             # 4. Link active → snapshot via SUPERSEDES in graph
             try:
@@ -1926,7 +1926,7 @@ class MemoryEngine:
         return {
             "id": memory_id,
             "snapshot_id": snapshot_id,
-            "summary": (summary or item.summary),
+            "content": (content or item.content),
         }
 
     # ------------------------------------------------------------------
@@ -2013,7 +2013,7 @@ class MemoryEngine:
         if isinstance(parent, str):
             return parent
         linked, skipped = self._link_rollup_children(parent, child_ids or [])
-        msg = f"Rolled up {linked} memory(ies) into [{parent.id[:8]}] {parent.summary}."
+        msg = f"Rolled up {linked} memory(ies) into [{parent.id[:8]}] {parent.content}."
         if skipped:
             msg += " Skipped: " + "; ".join(skipped)
         return msg
@@ -2057,7 +2057,7 @@ class MemoryEngine:
         wants the whole cluster, not a query-answering head.
 
         Returns ``{"theme", "loose_total", "gisted_on_theme", "span",
-        "existing_gists": [{"id", "summary"}],
+        "existing_gists": [{"id", "content"}],
         "groups": [{"label", "ids", "count", "span", "overflow"}]}``.
         """
         op_extra(theme=theme)
@@ -2106,7 +2106,7 @@ class MemoryEngine:
         for gid in gist_ids:
             gi = self.db.get_item(gid)
             if gi and gi.status == "active":
-                existing_gists.append({"id": gid, "summary": gi.summary})
+                existing_gists.append({"id": gid, "content": gi.content})
 
         if not loose:
             return {
@@ -2236,8 +2236,8 @@ class MemoryEngine:
             out: list[str] = []
             for mid in row.get("sample_memory_ids", []):
                 item = self.db.get_item(mid)
-                if item and item.summary:
-                    out.append(item.summary)
+                if item and item.content:
+                    out.append(item.content)
             return out
 
         sample_cache: dict[str, list[str]] = {}
@@ -2364,7 +2364,7 @@ class MemoryEngine:
             return f"No memory found for id '{clean}'."
         if len(matches) > 1:
             lines = [f"Ambiguous id prefix '{clean}' matched {len(matches)} memories — disambiguate:"]
-            lines.extend(f"  [{m.id[:8]}] {m.summary}" for m in matches)
+            lines.extend(f"  [{m.id[:8]}] {m.content}" for m in matches)
             return "\n".join(lines)
         item = matches[0]
 
@@ -2403,7 +2403,7 @@ class MemoryEngine:
             return f"No memory found for id '{clean}'."
         if len(matches) > 1:
             lines = [f"Ambiguous id prefix '{clean}' matched {len(matches)} memories — disambiguate:"]
-            lines.extend(f"  [{m.id[:8]}] {m.summary}" for m in matches)
+            lines.extend(f"  [{m.id[:8]}] {m.content}" for m in matches)
             return "\n".join(lines)
         return matches[0]
 

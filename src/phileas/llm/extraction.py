@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extraction.txt"
 
 # Defaults filled in when the model omits an optional field. ``memory_type`` is
-# the only output field with a sensible default; ``summary`` has none, so a
+# the only output field with a sensible default; ``content`` has none, so a
 # memory missing it is a shape failure the caller surfaces.
 _DEFAULTS: dict = {
     "memory_type": "knowledge",
@@ -44,7 +44,7 @@ _RECORD_MEMORIES_TOOL: dict = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "summary": {
+                        "content": {
                             "type": "string",
                             "description": "One or two sentences, third person about the user.",
                         },
@@ -83,7 +83,7 @@ _RECORD_MEMORIES_TOOL: dict = {
                             },
                         },
                     },
-                    "required": ["summary", "memory_type"],
+                    "required": ["content", "memory_type"],
                 },
             },
         },
@@ -99,7 +99,7 @@ class ExtractionUnavailable(RuntimeError):
 def extract_memories(client: LLMClient, transcript: str) -> list[dict]:
     """Extract durable third-person memories from an attribution-tagged transcript.
 
-    Returns a list of memory dicts, each with at least ``summary``,
+    Returns a list of memory dicts, each with at least ``content``,
     ``memory_type``, ``entities``, ``relationships``. Forced tool use makes the
     model return structured output; ``parse_json_response`` over the message
     text is the fallback when no tool call comes back.

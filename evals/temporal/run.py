@@ -48,7 +48,7 @@ CONFIGS = {
 
 
 # --------------------------------------------------------------------------
-# Setup: frozen clock, summary->id resolver, real-model assertion
+# Setup: frozen clock, content->id resolver, real-model assertion
 # --------------------------------------------------------------------------
 
 
@@ -70,13 +70,13 @@ def frozen_today(ref: date):
 
 
 def load_store(eng) -> tuple[dict[str, str], dict[str, str]]:
-    """Return (id -> summary, id -> daily_ref) over the active seeded memories."""
+    """Return (id -> content, id -> daily_ref) over the active seeded memories."""
     summaries: dict[str, str] = {}
     days: dict[str, str] = {}
     for mt in _MEMORY_TYPES:
         for it in eng.db.get_items_by_type(mt):
             if it.status == "active":
-                summaries[it.id] = it.summary
+                summaries[it.id] = it.content
                 days[it.id] = it.daily_ref
     return summaries, days
 
