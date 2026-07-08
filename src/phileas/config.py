@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -464,3 +464,117 @@ def update_user_config(home: Path, section: str, values: dict[str, Any]) -> Path
     with open(path, "wb") as f:
         tomli_w.dump(data, f)
     return path
+
+
+# ------------------------------------------------------------------
+# Settings-UI surface: a validated view/write of the editable config
+# ------------------------------------------------------------------
+
+# The sections a settings UI may read and write, each mapped to the dataclass
+# that owns its fields. Secrets (the LLM key, the sync token) are deliberately
+# NOT here: they live in the environment, never in config.toml, so there is
+# nothing secret to read or write through this surface.
+_EDITABLE_SECTIONS: dict[str, type] = {
+    "sync": SyncConfig,
+    "health": HealthConfig,
+    "llm": LLMConfig,
+}
+
+
+def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
+    """A JSON-serializable view of the editable config for a settings UI.
+
+    Reports the effective values (what a freshly loaded config resolves to),
+    the user ``config.toml`` path they write to, and secret *presence* — whether
+    the LLM key and sync token are reachable in the environment, never their
+    values. Secrets stay in the environment by design, so the UI shows a
+    reachable/unreachable status rather than an editable field.
+    """
+    return {
+        "profile": cfg.profile,
+        "config_path": str(cfg.config_path),
+        "sections": {name: asdict(getattr(cfg, name)) for name in _EDITABLE_SECTIONS},
+        "secrets": {
+            "llm_api_key_env": cfg.llm.api_key_env,
+            "llm_api_key_set": bool(os.environ.get(cfg.llm.api_key_env)),
+            "sync_token_set": bool(os.environ.get("PHILEAS_SYNC_TOKEN")),
+        },
+        "llm_available": cfg.llm.available,
+    }
+
+
+def _coerce_config_value(label: str, default: Any, value: Any) -> Any:
+    """Validate and coerce one incoming ``value`` against a field's ``default``.
+
+    The field's default fixes the expected type (a ``None`` default marks an
+    optional string, such as a shell command or peer URL). Raises ``ValueError``
+    with a UI-friendly message on a type mismatch or a negative number.
+    """
+    # Optional-string fields (shell commands, peer URL) default to None; an empty
+    # string clears them back to None.
+    if default is None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value.strip() or None
+        raise ValueError(f"{label} must be text or empty")
+    # bool must precede int: bool is a subclass of int.
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        raise ValueError(f"{label} must be true or false")
+    if isinstance(default, int):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{label} must be a whole number")
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"{label} must be a whole number")
+        n = int(value)
+        if n < 0:
+            raise ValueError(f"{label} must be zero or greater")
+        return n
+    if isinstance(default, float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{label} must be a number")
+        f = float(value)
+        if f < 0:
+            raise ValueError(f"{label} must be zero or greater")
+        return f
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            raise ValueError(f"{label} must be text")
+        return value
+    raise ValueError(f"{label} is not editable")
+
+
+def validate_config_update(section: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Validate a settings-UI edit, returning cleaned values ready to write.
+
+    Rejects an unknown section, an unknown key within a section, and a value
+    whose type doesn't match the field. This is the guard that ``load_config``'s
+    silent drop-unknown-keys behavior lacks: a UI needs a clear error instead of
+    a write that vanishes. Raises ``ValueError`` on the first problem.
+    """
+    if section not in _EDITABLE_SECTIONS:
+        allowed = ", ".join(sorted(_EDITABLE_SECTIONS))
+        raise ValueError(f"unknown config section {section!r}: choose one of {allowed}")
+    defaults = _EDITABLE_SECTIONS[section]()
+    known = {f.name for f in fields(defaults)}
+    cleaned: dict[str, Any] = {}
+    for key, value in values.items():
+        if key not in known:
+            raise ValueError(f"unknown key {section}.{key}")
+        cleaned[key] = _coerce_config_value(f"{section}.{key}", getattr(defaults, key), value)
+    return cleaned
+
+
+def apply_config_update(home: Path, section: str, values: dict[str, Any]) -> Path:
+    """Validate ``values`` for ``section`` and merge them into the user config.
+
+    A thin validating wrapper over :func:`update_user_config`: it rejects an
+    unknown section/key or a type-mismatched value (see
+    :func:`validate_config_update`) so a settings UI fails loudly instead of
+    writing junk that :func:`load_config` would later drop. The running daemon
+    still needs a restart to pick up the change.
+    """
+    cleaned = validate_config_update(section, values)
+    return update_user_config(home, section, cleaned)

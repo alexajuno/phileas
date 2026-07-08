@@ -15,12 +15,15 @@ from phileas.config import (
     LLMConfig,
     _find_project_config,
     active_profile_path,
+    apply_config_update,
     cli_default_profile,
+    config_snapshot,
     discover_profiles,
     load_config,
     read_active_profile,
     resolve_home,
     resolve_profile,
+    validate_config_update,
     write_active_profile,
 )
 
@@ -486,3 +489,86 @@ class TestDiscoverProfiles:
         xdg_dev = _xdg_home(_isolate_home, "dev")
         xdg_dev.mkdir(parents=True)
         assert dict(discover_profiles())["dev"] == xdg_dev
+
+
+# ------------------------------------------------------------------
+# Settings-UI surface: snapshot + validated write
+# ------------------------------------------------------------------
+
+
+class TestConfigSnapshot:
+    """``config_snapshot`` — the JSON view a settings UI reads."""
+
+    def test_reports_sections_path_and_secret_presence(self, _isolate_home, monkeypatch):
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("PHILEAS_SYNC_TOKEN", raising=False)
+        cfg = load_config()
+        snap = config_snapshot(cfg)
+        assert set(snap["sections"]) == {"sync", "health", "llm"}
+        assert snap["config_path"] == str(cfg.config_path)
+        assert snap["sections"]["llm"]["model"] == cfg.llm.model
+        assert snap["secrets"]["llm_api_key_set"] is False
+        assert snap["secrets"]["sync_token_set"] is False
+        assert snap["llm_available"] is False
+
+    def test_secret_presence_tracks_env(self, _isolate_home, monkeypatch):
+        key_canary = "LEAKCANARY-KEY-9f3a"
+        token_canary = "LEAKCANARY-SYNC-9f3a"
+        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", key_canary)
+        monkeypatch.setenv("PHILEAS_SYNC_TOKEN", token_canary)
+        snap = config_snapshot(load_config())
+        assert snap["secrets"]["llm_api_key_set"] is True
+        assert snap["secrets"]["sync_token_set"] is True
+        # The presence booleans never carry the secret value itself.
+        assert key_canary not in str(snap) and token_canary not in str(snap)
+
+
+class TestValidateConfigUpdate:
+    """``validate_config_update`` — the guard ``load_config`` lacks."""
+
+    def test_unknown_section_rejected(self):
+        with pytest.raises(ValueError, match="unknown config section"):
+            validate_config_update("recall", {"k": 1})
+
+    def test_unknown_key_rejected(self):
+        with pytest.raises(ValueError, match="unknown key llm.nope"):
+            validate_config_update("llm", {"nope": 1})
+
+    def test_bool_field_type_checked(self):
+        assert validate_config_update("llm", {"enabled": True}) == {"enabled": True}
+        with pytest.raises(ValueError, match="true or false"):
+            validate_config_update("llm", {"enabled": "yes"})
+
+    def test_int_field_coerces_and_guards(self):
+        assert validate_config_update("llm", {"max_tokens": 1024}) == {"max_tokens": 1024}
+        with pytest.raises(ValueError, match="whole number"):
+            validate_config_update("llm", {"max_tokens": 1.5})
+        with pytest.raises(ValueError, match="zero or greater"):
+            validate_config_update("health", {"rss_alert_mb": -1})
+
+    def test_float_field_accepts_int(self):
+        assert validate_config_update("sync", {"debounce_seconds": 5}) == {"debounce_seconds": 5.0}
+
+    def test_optional_string_clears_on_empty(self):
+        assert validate_config_update("sync", {"push_command": "  "}) == {"push_command": None}
+        assert validate_config_update("sync", {"push_command": None}) == {"push_command": None}
+        assert validate_config_update("sync", {"push_command": "rsync x"}) == {"push_command": "rsync x"}
+
+
+class TestApplyConfigUpdate:
+    """``apply_config_update`` writes a validated edit that ``load_config`` reads back."""
+
+    def test_round_trips_through_load(self, _isolate_home):
+        home = _xdg_home(_isolate_home)
+        home.mkdir(parents=True)
+        apply_config_update(home, "llm", {"enabled": True, "model": "claude-sonnet-4-6"})
+        cfg = load_config(home=home)
+        assert cfg.llm.enabled is True
+        assert cfg.llm.model == "claude-sonnet-4-6"
+
+    def test_invalid_edit_writes_nothing(self, _isolate_home):
+        home = _xdg_home(_isolate_home)
+        home.mkdir(parents=True)
+        with pytest.raises(ValueError):
+            apply_config_update(home, "llm", {"max_tokens": "lots"})
+        assert not (home / "config.toml").exists()

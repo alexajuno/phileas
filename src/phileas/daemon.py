@@ -680,6 +680,24 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return engine.update(**params)
     elif method == "status":
         return engine.status()
+    elif method == "config_get":
+        from phileas.config import config_snapshot
+
+        # Read from disk, not engine.config: engine.config is the startup snapshot
+        # the daemon's live loops run on, but a settings editor should show the
+        # saved config.toml (edits made here, by the CLI, or by hand). The gap
+        # between "saved" and "running" is what the restart-to-apply notice covers.
+        fresh = load_config(home=engine.config.home, profile=engine.config.profile)
+        return config_snapshot(fresh)
+    elif method == "config_update":
+        from phileas.config import apply_config_update, config_snapshot
+
+        apply_config_update(engine.config.home, params["section"], params.get("values") or {})
+        # The write lands in config.toml but doesn't reconfigure the running
+        # loops. Re-read from disk so the response echoes the saved values, and
+        # flag that a restart is what actually applies them.
+        fresh = load_config(home=engine.config.home, profile=engine.config.profile)
+        return {"config": config_snapshot(fresh), "restart_required": True}
     elif method == "list":
         memory_type = params.get("memory_type")
         limit = params.get("limit", 20)
