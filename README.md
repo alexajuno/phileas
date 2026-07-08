@@ -66,6 +66,19 @@ Use the absolute path to the `phileas` executable (run `command -v phileas` to f
 
 The tools work in any client, and the server ships usage guidance that every MCP client receives on connect. The extra layer that makes memory feel automatic (recall before answering, memorize when something worth keeping comes up, the query shapes that retrieve well) lives in a skill file. `phileas init` installs it for Claude Code at `~/.claude/skills/phileas/SKILL.md`; its text uses bare tool names so it carries to any client. If your client has a rules or skills mechanism, put that file's content into it.
 
+## Monitor with the web dashboard
+
+Phileas also has an optional local web dashboard for browsing your memory, read-only.
+
+The dashboard is a small web app, so it needs [Node.js](https://nodejs.org) 20 or newer (which bundles the `pnpm` package manager through `corepack`). With that in place:
+
+```bash
+phileas web install   # one-time: fetches and builds the dashboard
+phileas web           # serves it at http://127.0.0.1:3000 and opens your browser
+```
+
+`phileas web install` clones the dashboard into `~/.local/share/phileas/web` and builds it. `phileas web` then starts the server; press Ctrl-C to stop. To watch a named profile, pass it through the top-level flag: `phileas --profile work web`. Use `phileas web update` to pull a newer dashboard, `phileas web status` to see where it lives and whether it's ready, and `phileas web --help` for the rest.
+
 ## Principles
 
 - **Local-first:** memories stay on your machine.

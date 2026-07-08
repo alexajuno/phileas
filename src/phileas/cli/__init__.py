@@ -50,6 +50,7 @@ from phileas.cli.hooks_admin import hooks_group
 from phileas.cli.memory import memory_group
 from phileas.cli.profile import profile_group
 from phileas.cli.sessions import sessions
+from phileas.cli.web import web_group
 from phileas.config import cli_default_profile, resolve_profile
 from phileas.stats.cli import stats
 
@@ -125,3 +126,4 @@ app.add_command(sync_plan_cmd)
 app.add_command(sync_import_cmd)
 app.add_command(stats)
 app.add_command(sessions)
+app.add_command(web_group)
