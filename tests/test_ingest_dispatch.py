@@ -23,7 +23,7 @@ from phileas.vector import VectorStore
 def engine(tmp_dir, monkeypatch):
     monkeypatch.setenv("PHILEAS_HOME", str(tmp_dir))
     cfg = load_config(home=tmp_dir)
-    cfg.llm.enabled = True  # extraction on, so ingest marks turns pending
+    cfg.extraction.mode = "api"  # worker path, so ingest marks turns pending
     return MemoryEngine(
         db=Database(path=tmp_dir / "test.db"),
         vector=VectorStore(path=tmp_dir / "chroma"),
@@ -71,8 +71,8 @@ def test_ingest_resolves_client_key_to_one_thread(engine, monkeypatch):
     assert engine.db.get_thread_by_client_key("claude_code:s1").id == first["thread_id"]
 
 
-def test_ingest_stays_extracted_when_extraction_disabled(engine, monkeypatch):
-    engine.config.llm.enabled = False  # truly dark: no queue grows
+def test_ingest_stays_extracted_in_client_mode(engine, monkeypatch):
+    engine.config.extraction.mode = "client"  # no worker queue grows
     monkeypatch.setattr(daemon, "_extraction_worker", None)
     result = daemon._dispatch(engine, "ingest", {"text": "hi"})
     assert engine.db.get_event(result["event_id"]).extraction_status == "extracted"

@@ -196,6 +196,19 @@ def test_stop_skips_nudge_when_memorize_already_called(tmp_path, monkeypatch, ca
     assert calls[0][0] == "ingest"
 
 
+def test_stop_no_memorize_ingests_but_never_nudges(tmp_path, monkeypatch, capsys):
+    # The api mode wires the Stop hook as --no-memorize: the turn is still ingested,
+    # but even a substantial turn produces no nudge — the worker distills instead.
+    transcript = _turn_transcript(tmp_path, "x" * 100)
+    calls = _record_calls(monkeypatch)
+
+    exit_code = capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)}, memorize=False)
+
+    assert exit_code == 0
+    assert len(calls) == 1 and calls[0][0] == "ingest"  # the turn is still captured
+    assert "<phileas-memorize-hint>" not in capsys.readouterr().err  # no nudge on stderr
+
+
 def test_stop_loop_guard_skips_everything(tmp_path, monkeypatch, capsys):
     transcript = _turn_transcript(tmp_path, "x" * 100)
     calls = _record_calls(monkeypatch)

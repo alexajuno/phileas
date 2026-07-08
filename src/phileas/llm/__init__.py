@@ -1,9 +1,10 @@
 """Phileas's internal extraction LLM.
 
 This is Phileas's own model call (its own key), distinct from the MCP client's
-model: the daemon uses it to turn ingested turns into memories. The client is
-constructed once at daemon start and is a no-op until ``LLMConfig.available``
-(enabled + key present), so a keyless install never reaches the network.
+model: the daemon uses it to turn ingested turns into memories in the ``api``
+extraction mode. The client is constructed once at daemon start and is a no-op
+until ``LLMConfig.available`` (the key is reachable), so a keyless install never
+reaches the network.
 
 Public surface:
     from phileas.llm import LLMClient, extract_memories, known_models

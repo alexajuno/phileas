@@ -46,7 +46,7 @@ _reinforce_queue: deque[dict] | None = None
 # Push-on-write trigger, initialized by start() when sync.push_on_write is set.
 _sync_pusher: SyncPusher | None = None
 
-# Observer extraction worker, initialized by start() when llm.enabled.
+# Observer extraction worker, initialized by start() when extraction.mode is "api".
 _extraction_worker: ExtractionWorker | None = None
 
 # Dispatch methods that mutate the canonical (synced) store and should arm a
@@ -586,12 +586,12 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     # -- Observer extraction worker (background thread) -------------------
     # Distills ingested turns into memories with Phileas's own key, on a
-    # debounced per-thread window. Started only when extraction is enabled, so a
-    # default install is unaffected; a keyless-but-enabled box leaves turns
+    # debounced per-thread window. Started only in the "api" extraction mode, so a
+    # default (client) install is unaffected; an "api"-but-keyless box leaves turns
     # pending and visible rather than losing them.
     global _extraction_worker
     _extraction_worker = None
-    if config.llm.enabled:
+    if config.extraction.mode == "api":
         from phileas.extraction_worker import ExtractionWorker
         from phileas.llm import LLMClient
 
@@ -603,6 +603,19 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
             "extraction worker started",
             extra={"op": "extraction", "data": {"model": config.llm.model, "available": client.available}},
         )
+        # Warn on drift: the worker will distill, but a Stop hook still wired with
+        # the memorize nudge means the live model also writes — double extraction.
+        try:
+            from phileas.hook_sync import hooks_status
+
+            if hooks_status(config.profile).get("stop_memorize"):
+                log.warning(
+                    "extraction mode is 'api' but the Stop memorize hook is still wired; "
+                    "run `phileas hooks sync` to avoid double extraction",
+                    extra={"op": "extraction"},
+                )
+        except Exception:  # pragma: no cover — drift check must never block start
+            pass
 
     # Run uvicorn on a worker thread; the main thread parks on stop_event so it
     # can tear down safely after SIGTERM/SIGINT. uvicorn skips installing its
@@ -690,6 +703,14 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         # loops. Re-read from disk so the response echoes the saved values, and
         # flag that a restart is what actually applies them.
         fresh = load_config(home=engine.config.home, profile=engine.config.profile)
+        # An extraction-mode change also has a client-side effect: the Claude Code
+        # Stop hook is wired with or without the memorize nudge. Re-wire it here
+        # (best-effort, same user as the wizard's install) so the web settings page
+        # applies the whole change; a no-op where no Claude Code runs (e.g. the box).
+        if params.get("section") == "extraction":
+            from phileas.hook_sync import install_hooks
+
+            install_hooks(fresh.profile, memorize=fresh.extraction.mode == "client")
         return {"config": config_snapshot(fresh), "restart_required": True}
     elif method == "list":
         memory_type = params.get("memory_type")
@@ -742,8 +763,8 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return engine.auto_reconcile()
     elif method == "ingest":
         # Store the raw turn as an event in its conversation thread, then notify the
-        # extraction worker. Marked "pending" only when extraction is enabled, so a
-        # disabled install behaves as before; the worker distills the window later.
+        # extraction worker. Marked "pending" only in the "api" mode, so a client-mode
+        # install behaves as before; the worker distills the window later.
         text = params.get("text", "")
         if not text:
             return {"queued": False, "reason": "empty text"}
@@ -764,7 +785,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             source_kind=params.get("source_kind", "claude_code"),
             thread_id=thread_id,
             attribution=attribution,
-            extraction_status="pending" if engine.config.llm.enabled else "extracted",
+            extraction_status="pending" if engine.config.extraction.mode == "api" else "extracted",
         )
         engine.save_event(event)
         if _extraction_worker is not None:

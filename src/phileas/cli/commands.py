@@ -22,7 +22,7 @@ from phileas.cli.formatter import (
     print_success,
     print_warning,
 )
-from phileas.config import load_config
+from phileas.config import EXTRACTION_MODES, load_config
 from phileas.db import Database, clean_source_event_id
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
@@ -589,7 +589,7 @@ def show(memory_id: str):
 def ingest(text: str, thread_id: str | None, attribution: str):
     """Hand a turn to Phileas to remember.
 
-    Phileas captures the turn and, when extraction is enabled, distills durable
+    Phileas captures the turn and, in the ``api`` extraction mode, distills durable
     memories from it on its own. Read them back with `phileas recall`.
     """
     try:
@@ -1053,8 +1053,8 @@ def usage(ctx, since: str):
 # ------------------------------------------------------------------
 
 
-def _project_llm_override():
-    """Return the project ``.phileas.toml`` path when it carries an ``[llm]`` section.
+def _project_section_override(section: str):
+    """Return the project ``.phileas.toml`` path when it carries a ``[<section>]`` table.
 
     These commands write the *user* config; a project file layered on top by
     ``load_config`` shadows it, so callers warn when one would mask the write.
@@ -1072,27 +1072,25 @@ def _project_llm_override():
             data = tomllib.load(f)
     except (OSError, tomllib.TOMLDecodeError):
         return None
-    return proj if "llm" in data else None
+    return proj if section in data else None
 
 
 @click.group("config")
 def config_cmd():
-    """View and change the internal extraction LLM settings.
+    """View and change how Phileas extracts memories from captured turns.
 
-    These write the ``[llm]`` block of the user ``config.toml``. The daemon reads
-    them at startup to decide whether to run its own extraction worker, which
-    distills memories from the turns the capture hooks store. ``enable``,
-    ``disable``, and ``set-model`` restart the daemon for you so the change takes
-    effect.
+    ``mode`` chooses the strategy — ``client`` (the live Claude Code model, via
+    the Stop-hook nudge) or ``api`` (Phileas's own background worker) — and writes
+    the ``[extraction]`` block of the user ``config.toml``. ``set-model`` writes the
+    ``[llm]`` model the ``api`` path uses. ``mode`` and ``set-model`` re-wire the
+    hooks and restart the daemon for you so the change takes effect.
     """
 
 
-def _apply_llm_config_change(cfg) -> None:
-    """Make a just-written ``[llm]`` change take effect on the running daemon.
+def _apply_config_change(cfg) -> None:
+    """Restart the daemon so a just-written config change takes effect.
 
-    Restart the daemon so it re-reads the config and starts or stops its
-    extraction worker (a no-op message when there is no systemd-managed daemon to
-    restart).
+    A no-op message when there is no systemd-managed daemon to restart.
     """
     from phileas import systemd
     from phileas.daemon import is_running
@@ -1105,18 +1103,54 @@ def _apply_llm_config_change(cfg) -> None:
 
 @config_cmd.command("show")
 def config_show():
-    """Print the effective extraction-LLM settings and where they resolve from."""
+    """Print the effective extraction settings and where they resolve from."""
+    from phileas.hook_sync import hooks_status
+
     cfg = load_config()
     llm = cfg.llm
     key_set = bool(os.environ.get(llm.api_key_env))
-    console.print(f"[bold]Extraction LLM[/bold]  ({cfg.config_path})")
-    console.print(f"  enabled      {llm.enabled}")
+    console.print(f"[bold]Extraction[/bold]  ({cfg.config_path})")
+    console.print(f"  mode         {cfg.extraction.mode}")
     console.print(f"  provider     {llm.provider}")
     console.print(f"  model        {llm.model}")
     console.print(f"  api_key_env  {llm.api_key_env}  ({'set' if key_set else 'unset'} in this shell)")
-    override = _project_llm_override()
-    if override is not None:
-        print_warning(f"{override} has an llm section and overrides the user config shown above.")
+
+    nudge = hooks_status(cfg.profile)["stop_memorize"]
+    nudge_text = "not installed" if nudge is None else ("on" if nudge else "off")
+    console.print(f"  Stop nudge   {nudge_text}")
+
+    for section in ("extraction", "llm"):
+        override = _project_section_override(section)
+        if override is not None:
+            print_warning(f"{override} has a [{section}] section and overrides the user config shown above.")
+    expected = cfg.extraction.mode == "client"
+    if nudge is not None and nudge != expected:
+        print_warning(f"The Stop nudge is {nudge_text} but mode is '{cfg.extraction.mode}'. Run `phileas hooks sync`.")
+
+
+@config_cmd.command("mode")
+@click.argument("mode", type=click.Choice(EXTRACTION_MODES))
+def config_mode(mode: str):
+    """Choose the extraction strategy — writes [extraction].mode and re-wires hooks."""
+    from phileas.config import update_user_config
+    from phileas.hook_sync import install_hooks
+
+    cfg = load_config()
+    update_user_config(cfg.home, "extraction", {"mode": mode})
+    print_success(f"Set extraction.mode = {mode}")
+    # Keep the Stop-hook wiring matched to the mode: client wires the nudge, api
+    # installs capture-only so the background worker distills instead.
+    if install_hooks(cfg.profile, memorize=mode == "client"):
+        console.print("[dim]Re-wired the Claude Code Stop hook to match.[/dim]")
+    else:
+        print_warning("Could not update the Claude Code settings file; run `phileas hooks sync` after fixing it.")
+    if mode == "api" and not os.environ.get(cfg.llm.api_key_env):
+        print_warning(
+            f"{cfg.llm.api_key_env} is unset; the worker leaves turns pending and visible until a key is reachable."
+        )
+    if _project_section_override("extraction") is not None:
+        print_warning("A project .phileas.toml [extraction] section shadows this write.")
+    _apply_config_change(cfg)
 
 
 @config_cmd.command("set-model")
@@ -1132,32 +1166,6 @@ def config_set_model(model: str):
     console.print(f"[dim]{path}[/dim]")
     if model not in known_models():
         print_warning(f"{model!r} has no known pricing, so usage cost records as 0. Known: {', '.join(known_models())}")
-    if _project_llm_override() is not None:
-        print_warning("A project .phileas.toml llm section shadows this write.")
-    _apply_llm_config_change(cfg)
-
-
-@config_cmd.command("enable")
-def config_enable():
-    """Turn the internal extraction LLM on — writes [llm].enabled = true."""
-    from phileas.config import update_user_config
-
-    cfg = load_config()
-    update_user_config(cfg.home, "llm", {"enabled": True})
-    print_success("Enabled the internal extraction LLM (llm.enabled = true).")
-    if not os.environ.get(cfg.llm.api_key_env):
-        print_warning(
-            f"{cfg.llm.api_key_env} is not set in this shell, so the client stays a no-op until a key is reachable."
-        )
-    _apply_llm_config_change(cfg)
-
-
-@config_cmd.command("disable")
-def config_disable():
-    """Turn the internal extraction LLM off — writes [llm].enabled = false."""
-    from phileas.config import update_user_config
-
-    cfg = load_config()
-    update_user_config(cfg.home, "llm", {"enabled": False})
-    print_success("Disabled the internal extraction LLM (llm.enabled = false).")
-    _apply_llm_config_change(cfg)
+    if _project_section_override("llm") is not None:
+        print_warning("A project .phileas.toml [llm] section shadows this write.")
+    _apply_config_change(cfg)

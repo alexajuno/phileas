@@ -1,7 +1,7 @@
 """Background worker that distills pending events into memories.
 
-The daemon constructs one worker after the engine loads and starts it only when
-``llm.enabled``. Capture and distillation are decoupled in time: ingest saves a
+The daemon constructs one worker after the engine loads and starts it only in the
+``api`` extraction mode. Capture and distillation are decoupled in time: ingest saves a
 turn as ``pending`` and notifies the worker, which batches a thread's pending
 turns and flushes them once the thread has been quiet for the debounce window
 (or has buffered past the max-buffer cap). A flush builds an attribution-tagged

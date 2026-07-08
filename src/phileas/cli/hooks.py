@@ -48,6 +48,12 @@ def user_prompt() -> None:
 
 
 @hook_group.command("stop")
-def stop() -> None:
+@click.option(
+    "--memorize/--no-memorize",
+    default=True,
+    help="Emit the end-of-turn memorize nudge (the client extraction mode). "
+    "--no-memorize ingests the turn only, leaving distillation to the worker.",
+)
+def stop(memorize: bool) -> None:
     """Store the assistant's turn verbatim (attribution: assistant)."""
-    raise SystemExit(_run(capture.handle_stop))
+    raise SystemExit(_run(lambda payload: capture.handle_stop(payload, memorize=memorize)))

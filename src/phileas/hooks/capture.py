@@ -1,23 +1,23 @@
-"""The raw floor, plus two llm-less nudges built on top of it.
+"""The raw floor, plus two model-free nudges built on top of it.
 
 Three hooks, one job each. SessionStart opens (or resumes) the session's
 thread; UserPromptSubmit stores the human's prompt and nudges the model to
 recall relevant memories itself before answering; Stop stores the assistant's
-reply and, when the turn looks durable, nudges the same live model to
-consider a `memorize` call. Every turn lands as an event, attributed and
-threaded, before any of that — so memory always has the original to point
-back to.
+reply and, when wired for it, nudges the same live model to consider a
+`memorize` call. Every turn lands as an event, attributed and threaded, before
+any of that — so memory always has the original to point back to.
 
-Both nudges are llm-less from the hook's side: neither one calls a model or
+Both nudges are model-free from the hook's side: neither one calls a model or
 the daemon to decide what to print — each is a fixed string, injected as
 context for a turn the model was already about to run. They differ in
 forcing mechanism: the Stop nudge rides Claude Code's ``asyncRewake``
 contract, so weighing it is a guaranteed extra inference step on the same
 live model; the UserPromptSubmit nudge has no equivalent contract for a
 pre-turn hook — it's just additional context for the upcoming turn,
-best-effort like everything else here, not a forced one. Neither depends on
-``[llm].enabled`` — that flag only gates the *background* ExtractionWorker,
-a separate path.
+best-effort like everything else here, not a forced one. The Stop nudge is
+present only when the hook was wired with it: the ``client`` extraction mode
+wires it in, the ``api`` mode installs the Stop hook as ``--no-memorize`` and
+lets the background worker distill turns instead.
 
 Every handler is best-effort. If the daemon is unreachable it stays silent and
 returns 0; capture never blocks or breaks the session. The handlers take an
@@ -151,9 +151,14 @@ def _memorize_hint(event_id: str | None) -> str:
     )
 
 
-def handle_stop(payload: dict) -> int:
-    """Store the assistant's just-finished turn verbatim, then — Claude session
-    permitting — nudge the same live model to consider a memorize call.
+def handle_stop(payload: dict, *, memorize: bool = True) -> int:
+    """Store the assistant's just-finished turn verbatim, then — when the Stop hook
+    was wired with the nudge — ask the same live model to consider a memorize call.
+
+    The turn is always ingested. The nudge tail runs only when ``memorize``: the
+    ``client`` extraction mode installs this hook with the nudge, the ``api`` mode
+    installs it as ``--no-memorize`` so the background worker distills instead. The
+    hook doesn't read config to decide — the mode is baked into how it was wired.
 
     The nudge rides Claude Code's ``asyncRewake`` Stop-hook contract: a hint on
     stderr plus exit code 2 wakes the model that was already running, so the
@@ -173,6 +178,9 @@ def handle_stop(payload: dict) -> int:
     prompt, entries = _turn_slice(transcript_path)
     text = _assistant_turn_text(entries)
     event_id = _ingest(session_id, text, "assistant") if text else None
+
+    if not memorize:
+        return 0
 
     combined_len = len(f"{prompt}\n\n{text}".strip())
     if combined_len < TRIVIAL_TURN_CHARS or _memorize_called(entries):

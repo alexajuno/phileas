@@ -80,20 +80,42 @@ class SyncConfig:
     pull_command: str | None = None
 
 
+# The two extraction strategies. ``client`` rides the live Claude Code model via
+# the Stop-hook memorize nudge; ``api`` runs the background ExtractionWorker with
+# Phileas's own key. Exactly one is active, so double extraction is unrepresentable.
+EXTRACTION_MODES: tuple[str, ...] = ("client", "api")
+
+
+@dataclass
+class ExtractionConfig:
+    """Which strategy distills ingested turns into memories.
+
+    ``client`` (the default) leaves the memorize decision to the live Claude Code
+    model: the Stop capture hook nudges it at end of turn. ``api`` hands the work
+    to Phileas's own background worker instead, off the turn's critical path, and
+    the Stop hook is re-wired to skip the nudge. The switch has two coordinated
+    effects — the daemon starts (or doesn't start) its worker and marks ingested
+    turns ``pending`` (or ``extracted``), and the Claude Code Stop hook is wired
+    with (or without) the memorize nudge. ``phileas config mode`` applies both.
+    """
+
+    mode: str = "client"
+
+
 @dataclass
 class LLMConfig:
-    """The extraction LLM Phileas runs internally to memorize ingested turns.
+    """How the ``api`` extraction path talks to a model.
 
-    This is Phileas's own model call, not the MCP client's model. It is off by
-    default; turn it on by setting ``enabled`` and making a key reachable. The
-    key itself never lives in config: it is read at call time from the env var
+    This is Phileas's own model call, not the MCP client's model. Phileas uses it
+    to distill ingested turns into memories when ``extraction.mode`` is ``api``.
+    The key itself never lives in config: it is read at call time from the env var
     named by ``api_key_env``, the same way the sync and API bearer secrets stay
     out of a committed ``config.toml``. The default var is namespaced
     (``PHILEAS_ANTHROPIC_API_KEY``), not the generic ``ANTHROPIC_API_KEY``, so it
     never collides with the host Claude Code's own credential, which takes
-    precedence over a Pro/Max subscription. ``available`` is the runtime gate the
-    daemon checks before each call, so a keyless install simply leaves ingested
-    turns unextracted (and visible as pending) rather than failing a write.
+    precedence over a Pro/Max subscription. ``available`` reports whether that key
+    is reachable; the worker checks it before each call, so a keyless box leaves
+    ingested turns pending and visible rather than failing a write.
 
     Only provider/model selection and the key pointer live here. The token cap
     and the extraction debounce/buffer timing are never hand-tuned, so they are
@@ -102,15 +124,14 @@ class LLMConfig:
     ``extraction_worker.py``).
     """
 
-    enabled: bool = False
     provider: str = "anthropic"
     model: str = "claude-haiku-4-5-20251001"
     api_key_env: str = "PHILEAS_ANTHROPIC_API_KEY"
 
     @property
     def available(self) -> bool:
-        """True when extraction is enabled and the key env var is set."""
-        return self.enabled and bool(os.environ.get(self.api_key_env))
+        """True when the key env var is reachable in the process environment."""
+        return bool(os.environ.get(self.api_key_env))
 
 
 # ------------------------------------------------------------------
@@ -153,7 +174,20 @@ class PhileasConfig:
     home: Path = field(default_factory=lambda: resolve_home())
     profile: str = DEFAULT_PROFILE
     sync: SyncConfig = field(default_factory=SyncConfig)
+    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+
+    @property
+    def api_extraction_active(self) -> bool:
+        """True when the background worker is the chosen path and its key is reachable.
+
+        This is the runtime "will the api path actually extract right now" gate:
+        ``extraction.mode`` is ``api`` *and* the LLM key is set. Mode ``api`` with
+        no key still starts the worker (turns pile up ``pending`` and stay visible),
+        so the worker's start gate is ``mode == "api"`` alone; this stricter check
+        is what a settings UI reports as "extraction available".
+        """
+        return self.extraction.mode == "api" and self.llm.available
 
     # -- Derived paths --
 
@@ -194,13 +228,15 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place.
 
-    The ``[sync]`` and ``[llm]`` sections are configurable; every other section
-    (including retired ones like ``[recall]``) is silently ignored. A nested
-    table inside a section (such as a stale ``[llm.operations]``) is an unknown
-    key on the dataclass and is dropped along with it.
+    The ``[sync]``, ``[extraction]``, and ``[llm]`` sections are configurable;
+    every other section (including retired ones like ``[recall]``) is silently
+    ignored. A nested table inside a section (such as a stale ``[llm.operations]``)
+    is an unknown key on the dataclass and is dropped along with it.
     """
     if "sync" in data:
         _apply_toml_section(cfg.sync, data["sync"])
+    if "extraction" in data:
+        _apply_toml_section(cfg.extraction, data["extraction"])
     if "llm" in data:
         _apply_toml_section(cfg.llm, data["llm"])
 
@@ -428,6 +464,7 @@ def update_user_config(home: Path, section: str, values: dict[str, Any]) -> Path
 # NOT here: they live in the environment, never in config.toml, so there is
 # nothing secret to read or write through this surface.
 _EDITABLE_SECTIONS: dict[str, type] = {
+    "extraction": ExtractionConfig,
     "sync": SyncConfig,
     "llm": LLMConfig,
 }
@@ -439,10 +476,12 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
     Reports the effective values (what a freshly loaded config resolves to),
     the user ``config.toml`` path they write to, secret *presence* — whether the
     LLM key and sync token are reachable in the environment, never their values —
-    and the offered ``choices`` (providers, models) so a settings UI can render
-    those fields as pickers driven by core rather than a hardcoded list. Secrets
-    stay in the environment by design, so the UI shows a reachable/unreachable
-    status rather than an editable field.
+    and the offered ``choices`` (extraction modes, providers, models) so a settings
+    UI can render those fields as pickers driven by core rather than a hardcoded
+    list. Secrets stay in the environment by design, so the UI shows a
+    reachable/unreachable status rather than an editable field. ``llm_available``
+    is the "will the api path actually extract" status: the ``api`` mode is chosen
+    *and* the key is reachable.
     """
     from phileas.llm.client import SUPPORTED_PROVIDERS, known_models
 
@@ -451,6 +490,7 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
         "config_path": str(cfg.config_path),
         "sections": {name: asdict(getattr(cfg, name)) for name in _EDITABLE_SECTIONS},
         "choices": {
+            "modes": list(EXTRACTION_MODES),
             "providers": list(SUPPORTED_PROVIDERS),
             "models": known_models(),
         },
@@ -459,7 +499,7 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
             "llm_api_key_set": bool(os.environ.get(cfg.llm.api_key_env)),
             "sync_token_set": bool(os.environ.get("PHILEAS_SYNC_TOKEN")),
         },
-        "llm_available": cfg.llm.available,
+        "llm_available": cfg.api_extraction_active,
     }
 
 
@@ -523,7 +563,10 @@ def validate_config_update(section: str, values: dict[str, Any]) -> dict[str, An
     for key, value in values.items():
         if key not in known:
             raise ValueError(f"unknown key {section}.{key}")
-        cleaned[key] = _coerce_config_value(f"{section}.{key}", getattr(defaults, key), value)
+        clean = _coerce_config_value(f"{section}.{key}", getattr(defaults, key), value)
+        if section == "extraction" and key == "mode" and clean not in EXTRACTION_MODES:
+            raise ValueError(f"extraction.mode must be one of {', '.join(EXTRACTION_MODES)}")
+        cleaned[key] = clean
     return cleaned
 
 

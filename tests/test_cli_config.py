@@ -1,8 +1,9 @@
-"""The ``phileas config`` group reads and writes the ``[llm]`` block.
+"""The ``phileas config`` group reads and writes the extraction settings.
 
-``set-model`` / ``enable`` / ``disable`` write the user ``config.toml`` and
-``show`` reports the effective settings. Each case pins ``HOME`` to a fresh dir
-(via the autouse fixture) so writes land in an isolated XDG home, and passes
+``mode`` writes the ``[extraction]`` block and re-wires the Stop hook; ``set-model``
+writes the ``[llm]`` model; ``show`` reports the effective settings. Each case pins
+``HOME`` to a fresh dir (via the autouse fixture) so writes land in an isolated XDG
+home (and the hook re-wire lands in that home's Claude Code settings file), and passes
 ``project_start`` when reading back so a stray ``.phileas.toml`` on the real
 filesystem can't shadow the assertion.
 """
@@ -32,10 +33,10 @@ def _isolate_home(tmp_path, monkeypatch):
     # (PHILEAS_HOME wins over HOME in resolve_home) can't redirect the reads.
     monkeypatch.delenv("PHILEAS_HOME", raising=False)
     monkeypatch.delenv("PHILEAS_PROFILE", raising=False)
-    # enable/disable/set-model restart the daemon to apply the change. The systemd
-    # unit name keys off the profile, not HOME, so an unpatched restart would reach
-    # the developer's live ``phileas-daemon@default``. Stub it out: these cases
-    # assert on the config write, not on the restart.
+    # mode/set-model restart the daemon to apply the change. The systemd unit name
+    # keys off the profile, not HOME, so an unpatched restart would reach the
+    # developer's live ``phileas-daemon@default``. Stub it out: these cases assert
+    # on the config write and hook wiring, not on the restart.
     import phileas.daemon as daemon_mod
     import phileas.systemd as systemd_mod
 
@@ -65,7 +66,7 @@ def test_update_user_config_preserves_other_keys_and_sections(tmp_path):
     home = tmp_path / "store"
     home.mkdir()
     (home / "config.toml").write_text(
-        '[sync]\npush_on_write = true\n\n[llm]\nenabled = true\nmodel = "claude-haiku-4-5"\n'
+        '[sync]\npush_on_write = true\n\n[llm]\nprovider = "anthropic"\nmodel = "claude-haiku-4-5"\n'
     )
 
     update_user_config(home, "llm", {"model": "claude-opus-4-8"})
@@ -73,7 +74,7 @@ def test_update_user_config_preserves_other_keys_and_sections(tmp_path):
     with open(home / "config.toml", "rb") as f:
         data = tomllib.load(f)
     assert data["llm"]["model"] == "claude-opus-4-8"
-    assert data["llm"]["enabled"] is True  # sibling key kept
+    assert data["llm"]["provider"] == "anthropic"  # sibling key kept
     assert data["sync"]["push_on_write"] is True  # other section kept
 
 
@@ -88,21 +89,44 @@ def test_set_model_is_picked_up_by_load_config(tmp_path):
     assert cfg.llm.model == "claude-sonnet-4-6"
 
 
-def test_set_model_preserves_enabled(tmp_path):
-    assert _run(["config", "enable"]).exit_code == 0
+def test_mode_client_then_api(tmp_path):
+    assert _run(["config", "mode", "api"]).exit_code == 0
+    assert load_config(project_start=tmp_path).extraction.mode == "api"
+
+    assert _run(["config", "mode", "client"]).exit_code == 0
+    assert load_config(project_start=tmp_path).extraction.mode == "client"
+
+
+def test_mode_rejects_unknown_value():
+    # click.Choice guards the value, so a bad mode exits non-zero without writing.
+    result = _run(["config", "mode", "banana"])
+    assert result.exit_code != 0
+
+
+def test_mode_rewires_the_stop_hook(tmp_path):
+    from phileas.hook_sync import hooks_status
+
+    assert _run(["config", "mode", "api"]).exit_code == 0
+    assert hooks_status()["stop_memorize"] is False  # capture-only, no nudge
+
+    assert _run(["config", "mode", "client"]).exit_code == 0
+    assert hooks_status()["stop_memorize"] is True  # nudge wired back in
+
+
+def test_mode_api_warns_when_key_unset(monkeypatch):
+    monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+    result = _run(["config", "mode", "api"])
+    assert result.exit_code == 0
+    assert "PHILEAS_ANTHROPIC_API_KEY" in result.output
+
+
+def test_set_model_preserves_mode(tmp_path):
+    assert _run(["config", "mode", "api"]).exit_code == 0
     assert _run(["config", "set-model", "claude-opus-4-8"]).exit_code == 0
 
     cfg = load_config(project_start=tmp_path)
-    assert cfg.llm.enabled is True
+    assert cfg.extraction.mode == "api"  # untouched by set-model
     assert cfg.llm.model == "claude-opus-4-8"
-
-
-def test_enable_then_disable(tmp_path):
-    assert _run(["config", "enable"]).exit_code == 0
-    assert load_config(project_start=tmp_path).llm.enabled is True
-
-    assert _run(["config", "disable"]).exit_code == 0
-    assert load_config(project_start=tmp_path).llm.enabled is False
 
 
 def test_set_model_warns_on_unknown_model():
@@ -111,25 +135,26 @@ def test_set_model_warns_on_unknown_model():
     assert "no known pricing" in result.output
 
 
-def test_show_reports_current_model(tmp_path):
+def test_show_reports_mode_and_model(tmp_path):
     _run(["config", "set-model", "claude-sonnet-4-6"])
     result = _run(["config", "show"])
     assert result.exit_code == 0
     assert "claude-sonnet-4-6" in result.output
+    assert "mode" in result.output
     assert "api_key_env" in result.output
 
 
 # -- applying the change to the running processes -------------------------
 
 
-def test_enable_restarts_the_daemon_for_the_active_profile(monkeypatch):
-    """enable applies the write by restarting the profile's daemon."""
+def test_mode_restarts_the_daemon_for_the_active_profile(monkeypatch):
+    """mode applies the write by restarting the profile's daemon."""
     import phileas.systemd as systemd_mod
 
     calls = []
     monkeypatch.setattr(systemd_mod, "restart_daemon", lambda profile=None, *a, **k: calls.append(profile) or True)
 
-    result = _run(["config", "enable"])
+    result = _run(["config", "mode", "api"])
     assert result.exit_code == 0
     assert calls == ["default"]
     assert "Restarted" in result.output

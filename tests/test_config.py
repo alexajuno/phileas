@@ -340,28 +340,56 @@ class TestLegacyFallback:
 # ------------------------------------------------------------------
 
 
-class TestLLMConfig:
-    """The ``[llm]`` section configures the internal extraction call."""
+class TestExtractionConfig:
+    """The ``[extraction]`` section selects the memorization strategy."""
 
-    def test_defaults_off(self, tmp_path):
+    def test_default_mode_is_client(self, tmp_path):
         cfg = load_config(home=tmp_path)
-        assert cfg.llm.enabled is False
+        assert cfg.extraction.mode == "client"
+
+    def test_toml_override(self, tmp_path):
+        (tmp_path / "config.toml").write_text(
+            textwrap.dedent("""\
+            [extraction]
+            mode = "api"
+        """)
+        )
+        cfg = load_config(home=tmp_path)
+        assert cfg.extraction.mode == "api"
+
+    def test_api_extraction_active_requires_mode_and_key(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        (tmp_path / "config.toml").write_text('[extraction]\nmode = "api"\n')
+        cfg = load_config(home=tmp_path)
+        assert cfg.api_extraction_active is False  # api mode but no key
+        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
+        assert load_config(home=tmp_path).api_extraction_active is True
+
+    def test_client_mode_is_never_api_active(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
+        cfg = load_config(home=tmp_path)  # default client mode
+        assert cfg.api_extraction_active is False
+
+
+class TestLLMConfig:
+    """The ``[llm]`` section configures the model the ``api`` path uses."""
+
+    def test_defaults(self, tmp_path):
+        cfg = load_config(home=tmp_path)
         assert cfg.llm.provider == "anthropic"
         assert cfg.llm.model == "claude-haiku-4-5-20251001"
         assert cfg.llm.api_key_env == "PHILEAS_ANTHROPIC_API_KEY"
 
-    def test_available_requires_enabled_and_key(self, monkeypatch):
+    def test_available_tracks_key_presence(self, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         cfg = LLMConfig()
         assert cfg.available is False
-        cfg.enabled = True
-        assert cfg.available is False  # enabled but no key
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         assert cfg.available is True
 
     def test_available_honors_custom_key_env(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        cfg = LLMConfig(enabled=True, api_key_env="PHILEAS_ANTHROPIC_API_KEY")
+        cfg = LLMConfig(api_key_env="PHILEAS_ANTHROPIC_API_KEY")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-wrong")
         assert cfg.available is False
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-right")
@@ -371,12 +399,10 @@ class TestLLMConfig:
         (tmp_path / "config.toml").write_text(
             textwrap.dedent("""\
             [llm]
-            enabled = true
             model = "claude-sonnet-4-6"
         """)
         )
         cfg = load_config(home=tmp_path)
-        assert cfg.llm.enabled is True
         assert cfg.llm.model == "claude-sonnet-4-6"
         # Untouched fields stay at defaults.
         assert cfg.llm.provider == "anthropic"
@@ -496,9 +522,11 @@ class TestConfigSnapshot:
         monkeypatch.delenv("PHILEAS_SYNC_TOKEN", raising=False)
         cfg = load_config()
         snap = config_snapshot(cfg)
-        assert set(snap["sections"]) == {"sync", "llm"}
+        assert set(snap["sections"]) == {"extraction", "sync", "llm"}
         assert snap["config_path"] == str(cfg.config_path)
+        assert snap["sections"]["extraction"]["mode"] == cfg.extraction.mode
         assert snap["sections"]["llm"]["model"] == cfg.llm.model
+        assert snap["choices"]["modes"] == ["client", "api"]
         assert "anthropic" in snap["choices"]["providers"]
         assert cfg.llm.model in snap["choices"]["models"]
         assert snap["secrets"]["llm_api_key_set"] is False
@@ -529,9 +557,14 @@ class TestValidateConfigUpdate:
             validate_config_update("llm", {"nope": 1})
 
     def test_bool_field_type_checked(self):
-        assert validate_config_update("llm", {"enabled": True}) == {"enabled": True}
+        assert validate_config_update("sync", {"push_on_write": True}) == {"push_on_write": True}
         with pytest.raises(ValueError, match="true or false"):
-            validate_config_update("llm", {"enabled": "yes"})
+            validate_config_update("sync", {"push_on_write": "yes"})
+
+    def test_extraction_mode_enum_checked(self):
+        assert validate_config_update("extraction", {"mode": "api"}) == {"mode": "api"}
+        with pytest.raises(ValueError, match="extraction.mode must be one of"):
+            validate_config_update("extraction", {"mode": "banana"})
 
     def test_optional_string_clears_on_empty(self):
         assert validate_config_update("sync", {"push_command": "  "}) == {"push_command": None}
@@ -545,14 +578,15 @@ class TestApplyConfigUpdate:
     def test_round_trips_through_load(self, _isolate_home):
         home = _xdg_home(_isolate_home)
         home.mkdir(parents=True)
-        apply_config_update(home, "llm", {"enabled": True, "model": "claude-sonnet-4-6"})
+        apply_config_update(home, "extraction", {"mode": "api"})
+        apply_config_update(home, "llm", {"model": "claude-sonnet-4-6"})
         cfg = load_config(home=home)
-        assert cfg.llm.enabled is True
+        assert cfg.extraction.mode == "api"
         assert cfg.llm.model == "claude-sonnet-4-6"
 
     def test_invalid_edit_writes_nothing(self, _isolate_home):
         home = _xdg_home(_isolate_home)
         home.mkdir(parents=True)
         with pytest.raises(ValueError):
-            apply_config_update(home, "llm", {"enabled": "lots"})
+            apply_config_update(home, "extraction", {"mode": "banana"})
         assert not (home / "config.toml").exists()
