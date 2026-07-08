@@ -1165,7 +1165,6 @@ def config_show():
     console.print(f"  enabled      {llm.enabled}")
     console.print(f"  provider     {llm.provider}")
     console.print(f"  model        {llm.model}")
-    console.print(f"  max_tokens   {llm.max_tokens}")
     console.print(f"  api_key_env  {llm.api_key_env}  ({'set' if key_set else 'unset'} in this shell)")
     override = _project_llm_override()
     if override is not None:

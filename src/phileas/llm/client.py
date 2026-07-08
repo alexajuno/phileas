@@ -23,6 +23,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from phileas.config import LLMConfig
 
+# Output-token cap for an extraction call. Fixed rather than configurable: the
+# extraction prompt returns a small, bounded set of memories, so this is a
+# safety ceiling, not a knob to hand-tune. Callers of ``complete`` may still pass
+# a per-call override.
+DEFAULT_MAX_TOKENS = 2048
+
 # Per-model price in USD per million (input, output) tokens. Anthropic responses
 # carry no cost, so we derive it for the usage ledger; an unrecognized model
 # records its tokens with zero cost rather than a wrong guess. Source: the
@@ -31,8 +37,15 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
     "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-5": (3.0, 15.0),
     "claude-opus-4-8": (5.0, 25.0),
 }
+
+
+# Providers the extraction client can talk to. Anthropic-only today; the tuple
+# is the offered set for a provider picker (and the guard for a future second
+# backend).
+SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic",)
 
 
 def known_models() -> list[str]:
@@ -126,7 +139,7 @@ class LLMClient:
         so the worker can mark the source event failed.
         """
         model = self._config.model
-        max_tokens = max_tokens or self._config.max_tokens
+        max_tokens = max_tokens or DEFAULT_MAX_TOKENS
 
         start = perf_counter()
         success = True

@@ -57,19 +57,16 @@ class SyncConfig:
     trigger from the cross-machine transport, which is being moved to an
     HTTP/SSE path against the box. Disabled by default — opt in once a
     `push_command` is configured.
+
+    Only the transport (commands, peer URL) and the two mode toggles live here;
+    the debounce/throttle/timeout windows are fixed code constants in
+    ``daemon.py`` (never hand-tuned).
     """
 
     push_on_write: bool = False
-    # Coalesce a burst of writes into one push: wait this long after the last
-    # write before pushing.
-    debounce_seconds: float = 3.0
-    # Floor between consecutive pushes so a steady write stream can't hammer the
-    # transport.
-    min_interval_seconds: float = 10.0
     # Shell command the daemon runs to perform a push. None → the trigger fires
     # but no-ops (safe default until transport is wired).
     push_command: str | None = None
-    push_timeout_seconds: float = 300.0
 
     # -- Pull side: the SSE doorbell (box → laptop) --
     # When set, the daemon subscribes to the peer's read-only /sync/stream and
@@ -81,11 +78,6 @@ class SyncConfig:
     subscribe: bool = False
     peer_url: str | None = None  # base URL of the peer hosting /sync/stream
     pull_command: str | None = None
-    pull_timeout_seconds: float = 300.0
-    # Backoff between SSE reconnect attempts.
-    reconnect_seconds: float = 5.0
-    # Treat the stream as dead if no event/keepalive arrives within this window.
-    read_timeout_seconds: float = 30.0
 
 
 @dataclass
@@ -137,19 +129,17 @@ class LLMConfig:
     daemon checks before each call, so a keyless install simply leaves ingested
     turns unextracted (and visible as pending) rather than failing a write.
 
-    Debounce knobs control the per-thread extraction window: turns buffer, and a
-    thread flushes once it has been quiet for ``extract_debounce_seconds`` or has
-    buffered for ``extract_max_buffer_seconds`` (the cap that keeps a long, still
-    active conversation from starving).
+    Only provider/model selection and the key pointer live here. The token cap
+    and the extraction debounce/buffer timing are never hand-tuned, so they are
+    code constants next to the code that uses them (``DEFAULT_MAX_TOKENS`` in
+    ``llm/client.py``; ``DEBOUNCE_SECONDS`` / ``MAX_BUFFER_SECONDS`` in
+    ``extraction_worker.py``).
     """
 
     enabled: bool = False
     provider: str = "anthropic"
     model: str = "claude-haiku-4-5-20251001"
     api_key_env: str = "PHILEAS_ANTHROPIC_API_KEY"
-    max_tokens: int = 2048
-    extract_debounce_seconds: float = 8.0
-    extract_max_buffer_seconds: float = 120.0
 
     @property
     def available(self) -> bool:
@@ -485,15 +475,23 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
     """A JSON-serializable view of the editable config for a settings UI.
 
     Reports the effective values (what a freshly loaded config resolves to),
-    the user ``config.toml`` path they write to, and secret *presence* — whether
-    the LLM key and sync token are reachable in the environment, never their
-    values. Secrets stay in the environment by design, so the UI shows a
-    reachable/unreachable status rather than an editable field.
+    the user ``config.toml`` path they write to, secret *presence* — whether the
+    LLM key and sync token are reachable in the environment, never their values —
+    and the offered ``choices`` (providers, models) so a settings UI can render
+    those fields as pickers driven by core rather than a hardcoded list. Secrets
+    stay in the environment by design, so the UI shows a reachable/unreachable
+    status rather than an editable field.
     """
+    from phileas.llm.client import SUPPORTED_PROVIDERS, known_models
+
     return {
         "profile": cfg.profile,
         "config_path": str(cfg.config_path),
         "sections": {name: asdict(getattr(cfg, name)) for name in _EDITABLE_SECTIONS},
+        "choices": {
+            "providers": list(SUPPORTED_PROVIDERS),
+            "models": known_models(),
+        },
         "secrets": {
             "llm_api_key_env": cfg.llm.api_key_env,
             "llm_api_key_set": bool(os.environ.get(cfg.llm.api_key_env)),

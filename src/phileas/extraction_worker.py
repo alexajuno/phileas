@@ -34,6 +34,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("phileas.extraction")
 
+# Per-thread extraction timing. Fixed rather than configurable: turns buffer and
+# a thread flushes once it has been quiet for DEBOUNCE_SECONDS, with
+# MAX_BUFFER_SECONDS the cap that keeps a long, still-active conversation from
+# starving. These are never hand-tuned, so they live here next to the loop that
+# reads them rather than in config.
+DEBOUNCE_SECONDS = 8.0
+MAX_BUFFER_SECONDS = 120.0
+
 
 def build_transcript(events: list[Event]) -> str:
     """Render a thread's pending turns as an attribution-tagged transcript.
@@ -53,8 +61,8 @@ class ExtractionWorker:
         engine: MemoryEngine,
         client: LLMClient,
         *,
-        debounce_s: float,
-        max_buffer_s: float,
+        debounce_s: float = DEBOUNCE_SECONDS,
+        max_buffer_s: float = MAX_BUFFER_SECONDS,
         max_retries: int = 3,
         poll_s: float = 1.0,
         clock: Callable[[], float] = time.monotonic,

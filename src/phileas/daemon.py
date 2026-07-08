@@ -54,6 +54,16 @@ _extraction_worker: ExtractionWorker | None = None
 # is rebuilt on import, so neither needs its own trigger here.
 _WRITE_METHODS = frozenset({"memorize", "forget", "update", "resolve_contradiction"})
 
+# Cross-machine sync timing. The transport (push/pull commands, peer URL) and the
+# mode toggles are the operator's to set in config; these coalescing and timeout
+# windows are fixed defaults, never hand-tuned.
+_SYNC_DEBOUNCE_SECONDS = 3.0
+_SYNC_MIN_INTERVAL_SECONDS = 10.0
+_SYNC_PUSH_TIMEOUT_SECONDS = 300.0
+_SYNC_PULL_TIMEOUT_SECONDS = 300.0
+_SYNC_RECONNECT_SECONDS = 5.0
+_SYNC_READ_TIMEOUT_SECONDS = 30.0
+
 
 def stop(config: PhileasConfig | None = None) -> bool:
     """Stop the daemon. Returns True if it was running."""
@@ -217,7 +227,7 @@ def _sse_subscriber_loop(config: PhileasConfig, pull_pusher: SyncPusher) -> None
                 url,
                 headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
             )
-            with urllib.request.urlopen(req, timeout=config.sync.read_timeout_seconds) as resp:
+            with urllib.request.urlopen(req, timeout=_SYNC_READ_TIMEOUT_SECONDS) as resp:
                 pull_pusher.notify()  # catch-up on (re)connect
                 for raw in resp:
                     payload = _parse_sse_data(raw.decode("utf-8", "replace").strip())
@@ -225,7 +235,7 @@ def _sse_subscriber_loop(config: PhileasConfig, pull_pusher: SyncPusher) -> None
                         pull_pusher.notify()
         except Exception as e:
             log.debug("sse subscriber disconnected", extra={"op": "sync", "data": {"error": str(e)}})
-        time.sleep(config.sync.reconnect_seconds)
+        time.sleep(_SYNC_RECONNECT_SECONDS)
 
 
 def _spawn_background(config: PhileasConfig) -> int:
@@ -528,10 +538,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     if config.sync.push_on_write:
         _sync_pusher = SyncPusher(
             push_fn=lambda: _run_sync_command(
-                config.sync.push_command, config.sync.push_timeout_seconds, "sync_push", engine._metrics
+                config.sync.push_command, _SYNC_PUSH_TIMEOUT_SECONDS, "sync_push", engine._metrics
             ),
-            debounce_s=config.sync.debounce_seconds,
-            min_interval_s=config.sync.min_interval_seconds,
+            debounce_s=_SYNC_DEBOUNCE_SECONDS,
+            min_interval_s=_SYNC_MIN_INTERVAL_SECONDS,
         )
         _sync_pusher.start(name="phileas-sync-push")
         log.info(
@@ -546,10 +556,10 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     if config.sync.subscribe and config.sync.peer_url and os.environ.get("PHILEAS_SYNC_TOKEN"):
         pull_pusher = SyncPusher(
             push_fn=lambda: _run_sync_command(
-                config.sync.pull_command, config.sync.pull_timeout_seconds, "sync_pull", engine._metrics
+                config.sync.pull_command, _SYNC_PULL_TIMEOUT_SECONDS, "sync_pull", engine._metrics
             ),
-            debounce_s=config.sync.debounce_seconds,
-            min_interval_s=config.sync.min_interval_seconds,
+            debounce_s=_SYNC_DEBOUNCE_SECONDS,
+            min_interval_s=_SYNC_MIN_INTERVAL_SECONDS,
         )
         pull_pusher.start(name="phileas-sync-pull")
         threading.Thread(
@@ -598,12 +608,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         from phileas.llm import LLMClient
 
         client = LLMClient(config.llm, usage_tracker=engine._usage_tracker)
-        _extraction_worker = ExtractionWorker(
-            engine,
-            client,
-            debounce_s=config.llm.extract_debounce_seconds,
-            max_buffer_s=config.llm.extract_max_buffer_seconds,
-        )
+        _extraction_worker = ExtractionWorker(engine, client)
         _extraction_worker.seed()
         _extraction_worker.start()
         log.info(

@@ -156,7 +156,7 @@ class TestComplete:
 
     def test_passes_optional_params_through(self):
         fake = _FakeAnthropic(_message())
-        client = LLMClient(LLMConfig(max_tokens=512), client=fake)
+        client = LLMClient(LLMConfig(), client=fake)
         tools = [{"name": "record", "input_schema": {"type": "object"}}]
         choice = {"type": "tool", "name": "record"}
 
@@ -166,6 +166,7 @@ class TestComplete:
             system="be terse",
             tools=tools,
             tool_choice=choice,
+            max_tokens=512,
         )
 
         sent = fake.messages.calls[0]

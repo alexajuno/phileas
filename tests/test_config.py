@@ -64,8 +64,6 @@ class TestDefaults:
         cfg = load_config(home=tmp_path)
         assert cfg.sync.push_on_write is False
         assert cfg.sync.push_command is None
-        assert cfg.sync.debounce_seconds == 3.0
-        assert cfg.sync.min_interval_seconds == 10.0
         assert cfg.sync.subscribe is False
         assert cfg.sync.peer_url is None
         assert cfg.sync.pull_command is None
@@ -103,8 +101,6 @@ class TestTomlOverrides:
         assert cfg.sync.push_on_write is True
         assert cfg.sync.push_command == "rsync -a ~/.phileas/ box:~/.phileas/"
         # Not overridden — still defaults
-        assert cfg.sync.debounce_seconds == 3.0
-        assert cfg.sync.min_interval_seconds == 10.0
         assert cfg.sync.subscribe is False
 
     def test_unknown_section_ignored(self, tmp_path):
@@ -237,7 +233,7 @@ class TestProjectConfig:
         # User TOML still wins on `push_on_write` (not set in project)
         assert cfg.sync.push_on_write is True
         # Defaults still apply for fields touched by neither
-        assert cfg.sync.debounce_seconds == 3.0
+        assert cfg.sync.push_command is None
 
     def test_project_walk_from_nested_cwd(self, tmp_path):
         user_home = tmp_path / "user"
@@ -377,15 +373,11 @@ class TestLLMConfig:
             [llm]
             enabled = true
             model = "claude-sonnet-4-6"
-            max_tokens = 4096
-            extract_debounce_seconds = 12.0
         """)
         )
         cfg = load_config(home=tmp_path)
         assert cfg.llm.enabled is True
         assert cfg.llm.model == "claude-sonnet-4-6"
-        assert cfg.llm.max_tokens == 4096
-        assert cfg.llm.extract_debounce_seconds == 12.0
         # Untouched fields stay at defaults.
         assert cfg.llm.provider == "anthropic"
 
@@ -507,6 +499,8 @@ class TestConfigSnapshot:
         assert set(snap["sections"]) == {"sync", "health", "llm"}
         assert snap["config_path"] == str(cfg.config_path)
         assert snap["sections"]["llm"]["model"] == cfg.llm.model
+        assert "anthropic" in snap["choices"]["providers"]
+        assert cfg.llm.model in snap["choices"]["models"]
         assert snap["secrets"]["llm_api_key_set"] is False
         assert snap["secrets"]["sync_token_set"] is False
         assert snap["llm_available"] is False
@@ -540,14 +534,14 @@ class TestValidateConfigUpdate:
             validate_config_update("llm", {"enabled": "yes"})
 
     def test_int_field_coerces_and_guards(self):
-        assert validate_config_update("llm", {"max_tokens": 1024}) == {"max_tokens": 1024}
+        assert validate_config_update("health", {"check_interval_minutes": 30}) == {"check_interval_minutes": 30}
         with pytest.raises(ValueError, match="whole number"):
-            validate_config_update("llm", {"max_tokens": 1.5})
+            validate_config_update("health", {"check_interval_minutes": 1.5})
         with pytest.raises(ValueError, match="zero or greater"):
             validate_config_update("health", {"rss_alert_mb": -1})
 
     def test_float_field_accepts_int(self):
-        assert validate_config_update("sync", {"debounce_seconds": 5}) == {"debounce_seconds": 5.0}
+        assert validate_config_update("health", {"ingestion_silence_hours": 5}) == {"ingestion_silence_hours": 5.0}
 
     def test_optional_string_clears_on_empty(self):
         assert validate_config_update("sync", {"push_command": "  "}) == {"push_command": None}
@@ -570,5 +564,5 @@ class TestApplyConfigUpdate:
         home = _xdg_home(_isolate_home)
         home.mkdir(parents=True)
         with pytest.raises(ValueError):
-            apply_config_update(home, "llm", {"max_tokens": "lots"})
+            apply_config_update(home, "health", {"rss_alert_mb": "lots"})
         assert not (home / "config.toml").exists()
