@@ -496,7 +496,7 @@ class TestConfigSnapshot:
         monkeypatch.delenv("PHILEAS_SYNC_TOKEN", raising=False)
         cfg = load_config()
         snap = config_snapshot(cfg)
-        assert set(snap["sections"]) == {"sync", "health", "llm"}
+        assert set(snap["sections"]) == {"sync", "llm"}
         assert snap["config_path"] == str(cfg.config_path)
         assert snap["sections"]["llm"]["model"] == cfg.llm.model
         assert "anthropic" in snap["choices"]["providers"]
@@ -533,16 +533,6 @@ class TestValidateConfigUpdate:
         with pytest.raises(ValueError, match="true or false"):
             validate_config_update("llm", {"enabled": "yes"})
 
-    def test_int_field_coerces_and_guards(self):
-        assert validate_config_update("health", {"check_interval_minutes": 30}) == {"check_interval_minutes": 30}
-        with pytest.raises(ValueError, match="whole number"):
-            validate_config_update("health", {"check_interval_minutes": 1.5})
-        with pytest.raises(ValueError, match="zero or greater"):
-            validate_config_update("health", {"rss_alert_mb": -1})
-
-    def test_float_field_accepts_int(self):
-        assert validate_config_update("health", {"ingestion_silence_hours": 5}) == {"ingestion_silence_hours": 5.0}
-
     def test_optional_string_clears_on_empty(self):
         assert validate_config_update("sync", {"push_command": "  "}) == {"push_command": None}
         assert validate_config_update("sync", {"push_command": None}) == {"push_command": None}
@@ -564,5 +554,5 @@ class TestApplyConfigUpdate:
         home = _xdg_home(_isolate_home)
         home.mkdir(parents=True)
         with pytest.raises(ValueError):
-            apply_config_update(home, "health", {"rss_alert_mb": "lots"})
+            apply_config_update(home, "llm", {"enabled": "lots"})
         assert not (home / "config.toml").exists()

@@ -128,58 +128,6 @@ def status():
         raise SystemExit(1)
 
 
-@click.command("health")
-@click.option(
-    "--notify",
-    is_flag=True,
-    default=False,
-    help="Push an alert for each changed condition via the configured notify_command (used by the systemd timer).",
-)
-@click.option("--json", "as_json", is_flag=True, default=False, help="Emit checks as JSON instead of a table.")
-def health(notify: bool, as_json: bool):
-    """Run health checks (daemon, ingestion, memory) and optionally push alerts.
-
-    Without --notify: prints status and exits non-zero if any check fails, so it
-    composes in scripts. With --notify: sends a one-shot alert for each condition
-    that changed since the last run (no repeats while it persists) and always
-    exits 0 -- the notification is the delivery.
-    """
-    from rich.table import Table
-
-    from phileas import health as health_mod
-
-    cfg = load_config()
-    alerts = health_mod.run_checks(cfg)
-
-    if as_json:
-        console.print_json(data=[{"key": a.key, "ok": a.ok, "title": a.title, "detail": a.detail} for a in alerts])
-    else:
-        table = Table(title="Phileas Health")
-        table.add_column("Check")
-        table.add_column("State")
-        table.add_column("Detail")
-        for a in alerts:
-            state = "[green]OK[/green]" if a.ok else "[red]PROBLEM[/red]"
-            table.add_row(a.title, state, a.detail)
-        console.print(table)
-
-    if notify:
-        if not cfg.health.enabled:
-            console.print(
-                "[dim]Health notifications disabled (set [health] enabled + notify_command in config.toml).[/dim]"
-            )
-            return
-        sent = health_mod.notify_transitions(cfg, alerts)
-        if sent:
-            print_success(f"Sent {len(sent)} alert(s): {', '.join(sent)}")
-        else:
-            console.print("[dim]No changes since last check.[/dim]")
-        return
-
-    if any(not a.ok for a in alerts):
-        raise SystemExit(1)
-
-
 # ------------------------------------------------------------------
 # recall
 # ------------------------------------------------------------------
@@ -904,7 +852,7 @@ def init_cmd(profile, assume_yes, skip_models):
     """Set up Phileas for Claude Code.
 
     Selects a profile (each profile is a separate instance with its own data
-    dir, daemon, and timer), wires the Phileas MCP server and recall skill into
+    dir and daemon), wires the Phileas MCP server and recall skill into
     Claude Code, sets up the embedding and reranker models, and establishes the
     daemon that owns the entity graph so it works out of the box.
 

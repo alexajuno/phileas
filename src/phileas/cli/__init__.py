@@ -19,7 +19,6 @@ from phileas.cli.commands import (
     export_cmd,
     find_entities,
     forget,
-    health,
     hydrate,
     ingest,
     init_cmd,
@@ -61,7 +60,7 @@ from phileas.stats.cli import stats
     default=None,
     metavar="NAME",
     help=(
-        "Select a named Phileas instance with its own data dir, daemon, and timer. "
+        "Select a named Phileas instance with its own data dir and daemon. "
         "Each profile lives at ~/.config/phileas/profiles/<name>. "
         "Sets PHILEAS_PROFILE for this invocation. Without it, flag-less commands "
         "use the active profile set by `phileas profile use`, else `default`."
@@ -87,7 +86,6 @@ def app(ctx: click.Context, profile: str | None):
 
 
 app.add_command(status)
-app.add_command(health)
 app.add_command(recall)
 app.add_command(recall_recent)
 app.add_command(timeline)

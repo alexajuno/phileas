@@ -1,7 +1,7 @@
 """Interactive setup wizard for `phileas init`.
 
 Walks the user through first-time configuration:
- 1. Choose a profile (which instance, with its own data dir, daemon, timer)
+ 1. Choose a profile (which instance, with its own data dir and daemon)
  2. Wire the Phileas MCP server + recall skill into Claude Code
  3. Set up the embedding (required) and reranker (optional) models
  4. Establish the daemon that owns the entity graph (so it works out of the box)
@@ -397,7 +397,7 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
     console.print("[bold cyan]Welcome to Phileas[/bold cyan] -- persistent memory for AI.")
     console.print()
 
-    # 1. Profile -- which instance to set up (its own data dir, daemon, timer)
+    # 1. Profile -- which instance to set up (its own data dir and daemon)
     if profile is not None:
         try:
             home = resolve_home(profile)

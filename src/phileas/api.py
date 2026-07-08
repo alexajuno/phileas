@@ -138,7 +138,7 @@ def create_app(engine: MemoryEngine, dispatch=None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        # Unauthenticated on purpose: the liveness probe for push-health.
+        # Unauthenticated on purpose: a liveness probe any uptime check can hit.
         return {"ok": True, "pid": os.getpid()}
 
     if dispatch is not None:

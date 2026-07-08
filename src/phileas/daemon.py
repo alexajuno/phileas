@@ -82,14 +82,6 @@ def stop(config: PhileasConfig | None = None) -> bool:
     pid_file.unlink(missing_ok=True)
     _port_path(config).unlink(missing_ok=True)
 
-    # Remove systemd timers
-    try:
-        from phileas.systemd import remove_timers
-
-        remove_timers(profile=config.profile)
-    except Exception:
-        pass
-
     return True
 
 
@@ -424,19 +416,15 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     except Exception:
         pass
 
-    # -- Install the systemd health-check timer ---
+    # -- Sweep systemd user units Phileas no longer installs ---
     try:
-        from phileas.systemd import install_timers
+        from phileas.systemd import prune_retired_units
 
-        installed = install_timers(
-            config.home,
-            profile=config.profile,
-            health_interval_min=config.health.check_interval_minutes,
-        )
-        if installed:
-            log.info("systemd timers installed", extra={"op": "daemon", "data": {"timers": installed}})
+        pruned = prune_retired_units()
+        if pruned:
+            log.info("pruned retired systemd units", extra={"op": "daemon", "data": {"units": pruned}})
     except Exception as e:
-        log.debug("systemd timer install failed", extra={"op": "daemon", "data": {"error": str(e)}})
+        log.debug("systemd unit prune failed", extra={"op": "daemon", "data": {"error": str(e)}})
 
     # -- Reinforcement queue (background thread) ---
     import threading

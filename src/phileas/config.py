@@ -81,40 +81,6 @@ class SyncConfig:
 
 
 @dataclass
-class HealthConfig:
-    """Push health monitoring — alerts when the daemon dies, ingestion goes
-    silent, or memory climbs, instead of a dashboard you have to remember to
-    open.
-
-    Disabled by default; opt in by setting ``enabled`` and a ``notify_command``.
-    The command is transport: Phileas decides *when* to alert and hands the
-    message to *your* command (ntfy, mail, a webhook), so the channel stays the
-    operator's choice — same model as the sync transport. The title and body are
-    passed both on the command's stdin (``"<title>\\n<body>"``) and as the env
-    vars ``PHILEAS_ALERT_TITLE`` / ``PHILEAS_ALERT_BODY``. Examples::
-
-        notify_command = "ntfy publish phileas-yourtopic"
-        notify_command = "mail -s \\"$PHILEAS_ALERT_TITLE\\" you@example.com"
-    """
-
-    enabled: bool = False
-    notify_command: str | None = None
-    notify_timeout_seconds: float = 30.0
-    # Send a one-shot "recovered" notice when a firing condition clears.
-    notify_on_recovery: bool = True
-    # How often the systemd timer runs `phileas health --notify`.
-    check_interval_minutes: int = 15
-    # Flag ingestion as silent when the newest event is older than this. Quiet
-    # spells are normal, so the default is generous; tighten it if you ingest
-    # continuously.
-    ingestion_silence_hours: float = 48.0
-    # Flag memory when the daemon's VmRSS crosses this (the kuzu buffer-pool leak
-    # is watchdogged at 2 GB; alert above that so a recycle that isn't keeping up
-    # is visible).
-    rss_alert_mb: int = 3000
-
-
-@dataclass
 class LLMConfig:
     """The extraction LLM Phileas runs internally to memorize ingested turns.
 
@@ -187,7 +153,6 @@ class PhileasConfig:
     home: Path = field(default_factory=lambda: resolve_home())
     profile: str = DEFAULT_PROFILE
     sync: SyncConfig = field(default_factory=SyncConfig)
-    health: HealthConfig = field(default_factory=HealthConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     # -- Derived paths --
@@ -229,15 +194,13 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place.
 
-    The ``[sync]``, ``[health]``, and ``[llm]`` sections are configurable; every
-    other section (including retired ones like ``[recall]``) is silently ignored.
-    A nested table inside a section (such as a stale ``[llm.operations]``) is an
-    unknown key on the dataclass and is dropped along with it.
+    The ``[sync]`` and ``[llm]`` sections are configurable; every other section
+    (including retired ones like ``[recall]``) is silently ignored. A nested
+    table inside a section (such as a stale ``[llm.operations]``) is an unknown
+    key on the dataclass and is dropped along with it.
     """
     if "sync" in data:
         _apply_toml_section(cfg.sync, data["sync"])
-    if "health" in data:
-        _apply_toml_section(cfg.health, data["health"])
     if "llm" in data:
         _apply_toml_section(cfg.llm, data["llm"])
 
@@ -466,7 +429,6 @@ def update_user_config(home: Path, section: str, values: dict[str, Any]) -> Path
 # nothing secret to read or write through this surface.
 _EDITABLE_SECTIONS: dict[str, type] = {
     "sync": SyncConfig,
-    "health": HealthConfig,
     "llm": LLMConfig,
 }
 
