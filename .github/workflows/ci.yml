@@ -82,7 +82,7 @@ jobs:
         run: pytest tests/test_platform_compat.py -q
 
       - name: Cache local models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\.hf
           key: hf-models-v1
