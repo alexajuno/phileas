@@ -80,26 +80,33 @@ class SyncConfig:
     pull_command: str | None = None
 
 
-# The two extraction strategies. ``client`` rides the live Claude Code model via
-# the Stop-hook memorize nudge; ``api`` runs the background ExtractionWorker with
-# Phileas's own key. Exactly one is active, so double extraction is unrepresentable.
-EXTRACTION_MODES: tuple[str, ...] = ("client", "api")
+# The three extraction strategies. ``manual`` (the default) captures nothing on
+# its own: the user triggers a ``/phileas`` capture pass, the live model proposes,
+# and memories are stored only once the user approves them in the review queue.
+# ``client`` rides the live Claude Code model per turn via the Stop-hook memorize
+# nudge; ``api`` runs the background ExtractionWorker with Phileas's own key
+# (reserved for imports Phileas was not present for). Exactly one is active, so
+# double extraction is unrepresentable.
+EXTRACTION_MODES: tuple[str, ...] = ("client", "api", "manual")
 
 
 @dataclass
 class ExtractionConfig:
     """Which strategy distills ingested turns into memories.
 
-    ``client`` (the default) leaves the memorize decision to the live Claude Code
-    model: the Stop capture hook nudges it at end of turn. ``api`` hands the work
-    to Phileas's own background worker instead, off the turn's critical path, and
-    the Stop hook is re-wired to skip the nudge. The switch has two coordinated
-    effects — the daemon starts (or doesn't start) its worker and marks ingested
-    turns ``pending`` (or ``extracted``), and the Claude Code Stop hook is wired
-    with (or without) the memorize nudge. ``phileas config mode`` applies both.
+    ``manual`` (the default) does no automatic extraction: raw turns are still
+    captured, but memories are made only through a user-triggered capture pass
+    where the live model proposes and the user approves in the review queue. Both
+    the Stop nudge and the background worker are off. ``client`` leaves the
+    memorize decision to the live model per turn via the Stop capture hook.
+    ``api`` hands the work to Phileas's own background worker, off the turn's
+    critical path, and marks ingested turns ``pending`` for it to distill. The
+    switch is applied by ``phileas config mode`` (or ``phileas hooks sync``),
+    which starts or stops the worker and wires the Stop hook with or without the
+    memorize nudge; only ``client`` wires the nudge.
     """
 
-    mode: str = "client"
+    mode: str = "manual"
 
 
 @dataclass

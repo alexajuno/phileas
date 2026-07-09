@@ -60,6 +60,11 @@ def test_user_prompt_empty_is_noop(monkeypatch):
 
 
 def test_user_prompt_prints_recall_hint(monkeypatch, capsys):
+    # Pin the capture-thread lookup off so the recall-hint path is tested on its
+    # own, independent of the ambient extraction mode (manual mode would add a
+    # start_thread "tool" call here).
+    monkeypatch.setattr(capture, "_capture_thread_id", lambda session_id: None)
+
     def fake_call(method, params):
         if method == "ingest":
             return {"ok": True, "result": {"event_id": "e1"}}
@@ -74,6 +79,7 @@ def test_user_prompt_prints_recall_hint(monkeypatch, capsys):
 
 
 def test_user_prompt_prints_hint_even_for_a_bare_ack(monkeypatch, capsys):
+    monkeypatch.setattr(capture, "_capture_thread_id", lambda session_id: None)
     calls = _record_calls(monkeypatch)
     capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "thanks!"})
     assert calls == [
@@ -85,16 +91,30 @@ def test_user_prompt_prints_hint_even_for_a_bare_ack(monkeypatch, capsys):
     assert "<phileas-recall-hint>" in capsys.readouterr().out
 
 
+def test_user_prompt_injects_capture_hint_when_thread_resolves(monkeypatch, capsys):
+    # In the manual capture mode _capture_thread_id yields the session's thread;
+    # the UserPromptSubmit hint then carries it so a capture pass can anchor to it.
+    monkeypatch.setattr(capture, "_capture_thread_id", lambda session_id: "thread-xyz")
+    monkeypatch.setattr(capture, "call", lambda method, params: {"ok": True, "result": {"event_id": "e1"}})
+    capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "remember our plan"})
+    out = capsys.readouterr().out
+    assert "<phileas-recall-hint>" in out
+    assert "<phileas-capture-hint>" in out
+    assert 'thread_id="thread-xyz"' in out
+    assert "propose_memory" in out
+
+
 def test_user_prompt_prints_hint_even_when_daemon_down(monkeypatch, capsys):
     monkeypatch.setattr(capture, "call", lambda method, params: None)
     assert capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "I play tennis"}) == 0
     assert "<phileas-recall-hint>" in capsys.readouterr().out
 
 
-def test_stop_ingests_whole_assistant_turn(tmp_path, monkeypatch):
+def test_stop_records_prose_and_tool_activity(tmp_path, monkeypatch):
     # A turn whose text straddles a tool call: "Let me check." then a tool_use,
     # the tool_result (a user-type entry), then the final "Done." Both text
-    # blocks belong to the one turn; the tool_result must not end it.
+    # blocks belong to the one turn; the tool_result must not end it. The recorded
+    # turn keeps the call and its result interleaved with the prose.
     transcript = tmp_path / "t.jsonl"
     transcript.write_text(
         "\n".join(
@@ -133,9 +153,51 @@ def test_stop_ingests_whole_assistant_turn(tmp_path, monkeypatch):
     assert method == "ingest"
     assert params["attribution"] == "assistant"
     assert params["client_key"] == "claude_code:s1"
-    assert params["text"] == "Let me check.\n\nDone."
-    # "Let me check.\n\nDone." is well under TRIVIAL_TURN_CHARS -- no nudge.
+    assert params["text"] == "Let me check.\n[tool: x {}]\n[result: ok]\nDone."
+    # The trivial-turn check reads the prose ("Let me check.\n\nDone.", under
+    # TRIVIAL_TURN_CHARS), not the recorded turn -- so the tool lines don't nudge.
     assert exit_code == 0
+
+
+def test_stop_clips_a_huge_tool_result(tmp_path, monkeypatch):
+    # A tool result can be a whole command dump; the recorded turn clips it so one
+    # turn -- and the extraction window that batches several -- stays bounded.
+    big = "y" * 5000
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "user", "message": {"role": "user", "content": "run it"}}),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": big}]}}
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    calls = _record_calls(monkeypatch)
+    capture.handle_stop({"session_id": "s1", "transcript_path": str(transcript)})
+
+    text = calls[0][1]["text"]
+    assert '[tool: Bash {"command": "ls"}]' in text
+    assert "y" * capture.TOOL_RESULT_CHARS in text  # kept up to the cap
+    assert "y" * (capture.TOOL_RESULT_CHARS + 1) not in text  # clipped past it
+    assert "…" in text
 
 
 def _turn_transcript(tmp_path, assistant_text: str, *, memorize_call: bool = False, user_prompt: str = "hi"):

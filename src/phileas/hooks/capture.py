@@ -2,10 +2,12 @@
 
 Three hooks, one job each. SessionStart opens (or resumes) the session's
 thread; UserPromptSubmit stores the human's prompt and nudges the model to
-recall relevant memories itself before answering; Stop stores the assistant's
-reply and, when wired for it, nudges the same live model to consider a
-`memorize` call. Every turn lands as an event, attributed and threaded, before
-any of that — so memory always has the original to point back to.
+recall relevant memories itself before answering; Stop records the assistant's
+reply, the tool calls and results it ran included, and, when wired for it, nudges
+the same live model to consider a `memorize` call. Every turn lands as an event,
+attributed and threaded, before any of that — so memory always has the original
+to point back to, and the api-mode extractor sees what the turn did, not only how
+the assistant narrated it.
 
 Both nudges are model-free from the hook's side: neither one calls a model or
 the daemon to decide what to print — each is a fixed string, injected as
@@ -64,8 +66,18 @@ _RECALL_HINT = (
 # the turn is too trivial to plausibly have produced anything durable — skip
 # the nudge (raw capture still runs). Combined, not assistant-only: what's
 # worth memorizing is often the user's own statement, which the assistant may
-# have answered in a handful of words.
+# have answered in a handful of words. Measured on the assistant's prose, not the
+# recorded turn, so tool-call boilerplate never tips a trivial turn over the bar.
 TRIVIAL_TURN_CHARS = 80
+
+# Tool activity folded into a recorded turn. A coding turn's durable facts often
+# live in what the tools did — a value read from a file, an error a command
+# surfaced — not in the assistant's prose, so a recorded turn keeps its calls and
+# their results. Each is clipped: an input can carry a whole file and a result a
+# whole command dump, and the recorded turn feeds both the event store and the
+# api-mode extractor, so both stay bounded.
+TOOL_INPUT_CHARS = 200
+TOOL_RESULT_CHARS = 800
 
 
 def _client_key(session_id: str) -> str:
@@ -112,15 +124,56 @@ def handle_session_start(payload: dict) -> int:
     return 0
 
 
+def _capture_thread_id(session_id: str) -> str | None:
+    """This session's thread id, but only in the ``manual`` capture mode.
+
+    Manual mode is the one where a ``/phileas`` capture pass proposes memories the
+    user reviews; the thread id lets those proposals anchor to this conversation
+    (``propose_memory``). Best-effort: an unreadable config or an unreachable
+    daemon yields None, so the capture hint is simply omitted.
+    """
+    try:
+        from phileas.config import load_config
+
+        if load_config().extraction.mode != "manual":
+            return None
+    except Exception:
+        return None
+    response = call(
+        "tool",
+        {"name": "start_thread", "params": {"client_key": _client_key(session_id), "source_kind": "claude_code"}},
+    )
+    if not response or not response.get("ok"):
+        return None
+    result = response.get("result")
+    return result.get("thread_id") if isinstance(result, dict) else None
+
+
+def _capture_hint(thread_id: str) -> str:
+    return (
+        "<phileas-capture-hint>\n"
+        f"Manual capture mode; this conversation's thread_id is {thread_id}. When "
+        "(and only when) the user asks to capture or save what's worth keeping from "
+        "this conversation, follow the phileas skill's manual-capture flow and pass "
+        f'thread_id="{thread_id}" to propose_memory. Otherwise ignore this.\n'
+        "</phileas-capture-hint>"
+    )
+
+
 def handle_user_prompt_submit(payload: dict) -> int:
     """Store the user's prompt verbatim, attributed to the human, then nudge
-    the model to recall relevant memories itself before answering."""
+    the model to recall relevant memories itself before answering. In the manual
+    capture mode, also surface the current thread id so a capture pass can anchor
+    its proposals to this conversation."""
     session_id = payload.get("session_id")
     prompt = (payload.get("prompt") or "").strip()
     if not session_id or not prompt:
         return 0
     _ingest(session_id, prompt, "self")
     print(_RECALL_HINT)
+    thread_id = _capture_thread_id(session_id)
+    if thread_id:
+        print(_capture_hint(thread_id))
     return 0
 
 
@@ -176,13 +229,14 @@ def handle_stop(payload: dict, *, memorize: bool = True) -> int:
         return 0
 
     prompt, entries = _turn_slice(transcript_path)
-    text = _assistant_turn_text(entries)
+    prose = _assistant_turn_text(entries)
+    text = _turn_record(entries)
     event_id = _ingest(session_id, text, "assistant") if text else None
 
     if not memorize:
         return 0
 
-    combined_len = len(f"{prompt}\n\n{text}".strip())
+    combined_len = len(f"{prompt}\n\n{prose}".strip())
     if combined_len < TRIVIAL_TURN_CHARS or _memorize_called(entries):
         return 0
 
@@ -254,9 +308,63 @@ def _turn_slice(transcript_path: str) -> tuple[str, list[dict]]:
 def _assistant_turn_text(entries: list[dict]) -> str:
     """The assistant's whole turn: every text block in `entries`, in order.
     Intermediate text the model emitted before a tool call is part of the turn
-    and is kept; tool calls and tool results are not text and drop out."""
+    and is kept; tool calls and tool results are not text and drop out. Prose
+    only — for display and the trivial-turn check; `_turn_record` keeps the tools."""
     chunks = [text for entry in entries if (text := _assistant_text(entry))]
     return "\n\n".join(chunks).strip()
+
+
+def _clip(text: str, limit: int) -> str:
+    """`text` trimmed and capped to `limit` chars, with an ellipsis when cut."""
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit].rstrip() + " …"
+
+
+def _tool_result_text(block: dict) -> str:
+    """A tool_result's text, whether Claude Code stored it as a bare string or as
+    a list of text sub-blocks."""
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def _turn_record(entries: list[dict]) -> str:
+    """The assistant's whole turn as recorded: prose interleaved with the tool
+    calls and results it ran, in order.
+
+    Unlike `_assistant_turn_text`, which keeps only the prose, this keeps the tool
+    activity, because a coding turn's durable facts often live in what a tool read
+    or a command surfaced rather than in how the assistant narrated it. This is the
+    text ingested as the turn's event, so the api-mode extractor reading events
+    back sees the work itself. Inputs and results are clipped to stay bounded.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        etype = entry.get("type")
+        content = entry.get("message", {}).get("content")
+        if etype == "assistant":
+            if isinstance(content, str):
+                if content.strip():
+                    lines.append(content.strip())
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "text":
+                        if block.get("text", "").strip():
+                            lines.append(block["text"].strip())
+                    elif block.get("type") == "tool_use":
+                        name = block.get("name") or "?"
+                        args = _clip(json.dumps(block.get("input", {}), ensure_ascii=False), TOOL_INPUT_CHARS)
+                        lines.append(f"[tool: {name} {args}]")
+        elif etype == "user" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    lines.append(f"[result: {_clip(_tool_result_text(block), TOOL_RESULT_CHARS)}]")
+    return "\n".join(lines).strip()
 
 
 def _memorize_called(entries: list[dict]) -> bool:

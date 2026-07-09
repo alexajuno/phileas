@@ -80,8 +80,11 @@ def test_daemon_tool_branch_routes_to_run_mcp(tmp_dir: Path):
 
 
 def test_tool_write_names_cover_daemon_write_methods():
-    # The tool-routed push-arm set must cover every canonical-store write method.
-    assert tool_runner.TOOL_WRITE_NAMES >= daemon._WRITE_METHODS
+    # Every canonical-store write that is ALSO reachable as an MCP tool must arm a
+    # push on the tool path too. Daemon-only writes (e.g. resolve_proposal, invoked
+    # by the CLI and web, never via the tool relay) arm via _WRITE_METHODS alone.
+    tool_reachable_writes = daemon._WRITE_METHODS & set(tool_runner.MCP_ACTIONS)
+    assert tool_reachable_writes <= tool_runner.TOOL_WRITE_NAMES
 
 
 # -- the stdio relay's degradation contract ----------------------------------

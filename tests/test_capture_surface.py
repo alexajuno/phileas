@@ -30,12 +30,13 @@ def test_memorize_and_recall_remain():
     assert {"memorize", "recall"} <= names
 
 
-def test_skill_carries_the_endorsement_capture_model():
+def test_skill_carries_the_propose_and_review_capture_model():
     skill = skill_sync.render_skill()
-    # The capture section is present and framed around endorsement, not ingest.
+    # The capture section is present and framed around propose-then-review.
     assert "## Capture" in skill
-    assert "endorse" in skill.lower()
     assert "memorize" in skill
+    assert "propose_memory" in skill  # the review-first capture surface
+    assert "phileas memory queue" in skill  # where proposals are reviewed
     # No residue of the removed concepts or the old variant marker.
     assert "ingest" not in skill
     assert "<!-- CAPTURE -->" not in skill

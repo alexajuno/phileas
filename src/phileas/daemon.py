@@ -52,7 +52,7 @@ _extraction_worker: ExtractionWorker | None = None
 # Dispatch methods that mutate the canonical (synced) store and should arm a
 # push. Events ride along incrementally on the next push, and the derived graph
 # is rebuilt on import, so neither needs its own trigger here.
-_WRITE_METHODS = frozenset({"memorize", "forget", "update", "resolve_contradiction"})
+_WRITE_METHODS = frozenset({"memorize", "forget", "update", "resolve_contradiction", "resolve_proposal"})
 
 # Cross-machine sync timing. The transport (push/pull commands, peer URL) and the
 # mode toggles are the operator's to set in config; these coalescing and timeout
@@ -684,6 +684,23 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
     elif method == "update":
         # Ensure backward compat: old callers pass only memory_id + content
         return engine.update(**params)
+    elif method == "list_proposals":
+        return engine.list_proposals(status=params.get("status", "pending"), thread_id=params.get("thread_id"))
+    elif method == "resolve_proposal":
+        # One method, three actions, so the CLI and web share a single endpoint.
+        action = params.get("action")
+        proposal_id = params.get("id")
+        if action == "approve":
+            return engine.approve_proposal(proposal_id, edits=params.get("edits"))
+        if action == "reject":
+            return engine.reject_proposal(proposal_id)
+        if action == "edit":
+            proposal = engine.db.get_proposal(proposal_id)
+            if proposal is None:
+                raise ValueError(f"no proposal {proposal_id!r}")
+            engine.db.update_proposal(proposal["id"], params.get("edits") or {})
+            return engine.db.get_proposal(proposal["id"])
+        raise ValueError(f"resolve_proposal action must be approve/reject/edit, got {action!r}")
     elif method == "status":
         return engine.status()
     elif method == "config_get":

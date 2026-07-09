@@ -343,9 +343,9 @@ class TestLegacyFallback:
 class TestExtractionConfig:
     """The ``[extraction]`` section selects the memorization strategy."""
 
-    def test_default_mode_is_client(self, tmp_path):
+    def test_default_mode_is_manual(self, tmp_path):
         cfg = load_config(home=tmp_path)
-        assert cfg.extraction.mode == "client"
+        assert cfg.extraction.mode == "manual"
 
     def test_toml_override(self, tmp_path):
         (tmp_path / "config.toml").write_text(
@@ -526,7 +526,7 @@ class TestConfigSnapshot:
         assert snap["config_path"] == str(cfg.config_path)
         assert snap["sections"]["extraction"]["mode"] == cfg.extraction.mode
         assert snap["sections"]["llm"]["model"] == cfg.llm.model
-        assert snap["choices"]["modes"] == ["client", "api"]
+        assert snap["choices"]["modes"] == ["client", "api", "manual"]
         assert "anthropic" in snap["choices"]["providers"]
         assert cfg.llm.model in snap["choices"]["models"]
         assert snap["secrets"]["llm_api_key_set"] is False

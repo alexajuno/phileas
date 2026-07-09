@@ -176,3 +176,44 @@ def test_save_item_stores_null_for_sourceless(tmp_dir):
     assert db.get_item("a").source_event_id is None
     assert db.get_item("b").source_event_id is None
     assert db.get_item("c").source_event_id == "evt-9"
+
+
+# -- span provenance: a memory's source is a SET of turns --------------------
+
+
+def test_memorize_records_a_source_set(srv):
+    e1 = srv.ingest_text("turn one about sailing")["event_id"]
+    e2 = srv.ingest_text("turn two about sailing")["event_id"]
+    out = srv.engine.memorize(content="User sails on weekends", source_event_ids=[e1, e2])
+    mem_id = out["id"]
+    # Both turns are recorded as sources...
+    assert set(srv.db.get_source_event_ids_for_memory(mem_id)) == {e1, e2}
+    # ...and the reverse lookup finds the memory from either turn.
+    assert any(m.id == mem_id for m in srv.db.get_memories_for_event(e1))
+    assert any(m.id == mem_id for m in srv.db.get_memories_for_event(e2))
+
+
+def test_hydrate_returns_full_source_set_and_derived_threads(srv):
+    e1 = srv.ingest_text("first turn", thread_id="t-span")["event_id"]
+    e2 = srv.ingest_text("second turn", thread_id="t-span")["event_id"]
+    out = srv.engine.memorize(content="spanning memory", source_event_ids=[e1, e2])
+    h = srv.engine.hydrate(out["id"])
+    assert set(h["source_event_ids"]) == {e1, e2}
+    # Both turns sit in one thread, so the derived span is that single thread.
+    assert h["thread_ids"] == ["t-span"]
+    # Back-compat singletons stay populated (first source, its thread).
+    assert h["source_event_id"] in {e1, e2}
+    assert h["thread_id"] == "t-span"
+
+
+def test_memorize_single_source_still_joins(srv):
+    # The one-element case: a lone source_event_id lands in the join too.
+    e1 = srv.ingest_text("just one turn")["event_id"]
+    out = srv.engine.memorize(content="from one turn", source_event_id=e1)
+    assert srv.db.get_source_event_ids_for_memory(out["id"]) == [e1]
+
+
+def test_memorize_source_set_rejects_a_fabricated_member(srv):
+    e1 = srv.ingest_text("a real turn")["event_id"]
+    with pytest.raises(ValueError):
+        srv.engine.memorize(content="cites a fake among reals", source_event_ids=[e1, "does-not-exist"])
