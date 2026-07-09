@@ -48,6 +48,7 @@ dev = [
     "pytest",
     "pytest-asyncio>=1.3.0",
     "pre-commit>=4.5.1",
+    "mypy",
 ]
 
 [build-system]
@@ -80,3 +81,28 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.mypy]
+# A scoped gate, not a full-package check. The 20k-line engine predates any typing
+# discipline and reports hundreds of errors under mypy; cleaning it is out of scope.
+# What we enforce here is the backend contract MemoryEngine is typed against: the
+# SDK seam (the files below) must type-check, and typecheck/conformance.py proves
+# each concrete store is assignable to its Protocol at the signature level (the
+# runtime name-level counterpart lives in tests/test_backends.py). Widen `files`
+# one module at a time as the codebase gains annotations.
+python_version = "3.11"
+# Resolve `phileas.*` from the source tree, so followed imports carry real types
+# (without this the concrete stores degrade to Any and conformance checks pass
+# vacuously). Reads source directly — no install needed in CI.
+mypy_path = "src"
+# Follow imports for type info but suppress errors in modules outside `files`,
+# so the engine's existing type debt doesn't fail this gate.
+follow_imports = "silent"
+# Third-party deps (chromadb, kuzu, sentence_transformers, ...) ship no stubs.
+ignore_missing_imports = true
+files = [
+    "typecheck",
+    "src/phileas/backends.py",
+    "src/phileas/factory.py",
+    "src/phileas/client.py",
+]
