@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import os
 import threading
+import uuid
 from datetime import date, datetime, timezone
 from typing import cast, get_args
 
@@ -473,19 +474,33 @@ class MemoryEngine:
             contradictions = self.graph.get_contradictions_for_memory(item.id)
         except Exception as e:
             log.debug("hydrate contradiction lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
-        # Provenance: the raw turn this memory was distilled from, and the thread
-        # (conversation) it sits in. `thread(thread_id)` reads back the full run.
-        source_turn: dict | None = None
-        thread_id: str | None = None
-        if item.source_event_id:
-            event = self.db.get_event(item.source_event_id)
-            if event is not None:
-                thread_id = event.thread_id or event.id
-                source_turn = {
+        # Provenance: the set of raw turns this memory was distilled from, and the
+        # thread(s) they belong to. The `memory_sources` join is authoritative;
+        # fall back to the legacy single column so a memory written before the
+        # backfill still shows its source. `thread(thread_id)` reads back a run.
+        source_event_ids = self.db.get_source_event_ids_for_memory(item.id)
+        if not source_event_ids and item.source_event_id:
+            source_event_ids = [item.source_event_id]
+        source_turns: list[dict] = []
+        thread_ids: list[str] = []
+        for eid in source_event_ids:
+            event = self.db.get_event(eid)
+            if event is None:
+                continue
+            source_turns.append(
+                {
                     "event_id": event.id,
                     "text": event.text,
                     "received_at": event.received_at.isoformat() if event.received_at else None,
                 }
+            )
+            tid = event.thread_id or event.id
+            if tid not in thread_ids:
+                thread_ids.append(tid)
+        # Back-compat singletons: the first (oldest) source turn and its thread.
+        source_event_id = source_event_ids[0] if source_event_ids else None
+        source_turn = source_turns[0] if source_turns else None
+        thread_id = thread_ids[0] if thread_ids else None
         return {
             "id": item.id,
             "content": item.content,
@@ -496,9 +511,12 @@ class MemoryEngine:
             "daily_ref": item.daily_ref,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            "source_event_id": item.source_event_id,
+            "source_event_id": source_event_id,
+            "source_event_ids": source_event_ids,
             "thread_id": thread_id,
+            "thread_ids": thread_ids,
             "source_turn": source_turn,
+            "source_turns": source_turns,
             "entities": entities,
             "scopes": scopes,
             "contradictions": contradictions,
@@ -567,15 +585,20 @@ class MemoryEngine:
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         source_event_id: str | None = None,
+        source_event_ids: list[str] | None = None,
         contexts: list[str] | None = None,
         child_ids: list[str] | None = None,
         detect_conflict: bool = True,
     ) -> dict:
         """Store a memory across all three backends.
 
-        `content` is the canonical, AI-written fact. The raw source turn lives in
-        the `events` table; pass `source_event_id` to reference it. Memories
-        must not contain raw verbatim text — that's what events are for.
+        `content` is the canonical, AI-written fact. The raw source turns live in
+        the `events` table. Provenance is a set: a memory can be distilled from one
+        turn, a span, or a whole conversation. Pass `source_event_id` for the
+        single-turn case or `source_event_ids` for the set; both are merged and
+        recorded in the `memory_sources` join, and the memory's thread(s) are
+        derived from that set. Memories must not contain raw verbatim text — that's
+        what events are for.
 
         `contexts` scopes the memory: each name resolves (or mints) a
         Context-typed entity and gets a SCOPED_TO edge. No contexts ⇒ the
@@ -602,17 +625,26 @@ class MemoryEngine:
             context_count=len(contexts or []),
         )
 
-        # Provenance: a supplied source must reference a real captured turn, so a
-        # typo or hallucinated id can't slip in. A memory with no single source —
-        # a reflection or rollup derived from other memories, or a legacy write —
-        # is NULL-sourced, which is allowed.
-        source_event_id = clean_source_event_id(source_event_id)
-        if source_event_id is not None and self.db.get_event(source_event_id) is None:
-            raise ValueError(
-                f"source_event_id {source_event_id!r} does not reference a captured turn. "
-                "Capture the source with ingest_text(...) and use the id it returns, "
-                "or omit it for a memory derived from other memories."
-            )
+        # Provenance: the source set is `source_event_id` (the one-element case)
+        # merged with `source_event_ids`, de-duplicated. Every id must reference a
+        # real captured turn, so a typo or hallucinated id can't slip in. A memory
+        # with no source — a reflection or rollup derived from other memories, or a
+        # legacy write — has an empty set, which is allowed. The legacy single
+        # column keeps the first source for back-compat; the full set goes to the
+        # `memory_sources` join after the row is saved.
+        source_ids: list[str] = []
+        for raw in [source_event_id, *(source_event_ids or [])]:
+            sid = clean_source_event_id(raw)
+            if sid is None or sid in source_ids:
+                continue
+            if self.db.get_event(sid) is None:
+                raise ValueError(
+                    f"source_event_id {sid!r} does not reference a captured turn. "
+                    "Capture the source with ingest_text(...) and use the id it returns, "
+                    "or omit it for a memory derived from other memories."
+                )
+            source_ids.append(sid)
+        source_event_id = source_ids[0] if source_ids else None
 
         # 1. Default daily_ref to today
         if daily_ref is None:
@@ -632,6 +664,10 @@ class MemoryEngine:
         )
 
         self.db.save_item(item)
+        # Record the full provenance set (the join is the source of truth; the
+        # single column above is the back-compat first-source cache).
+        if source_ids:
+            self.db.add_memory_sources(item.id, source_ids)
 
         # 4. Probe for a possible conflict *before* the new embedding lands and
         # before the new edges are written, so neither the nearest-neighbour
@@ -755,6 +791,77 @@ class MemoryEngine:
             pass
 
         return result
+
+    # --- Proposal queue (manual capture: propose -> review -> approve) ---
+
+    def propose_memory(
+        self,
+        content: str,
+        memory_type: str = "knowledge",
+        entities: list[dict] | None = None,
+        relationships: list[dict] | None = None,
+        source_text: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict:
+        """Enqueue one candidate memory for the user to review, storing nothing yet.
+
+        The manual capture mode's write path: the live model proposes, and the
+        memory is materialized only once the user approves. Returns the proposal id.
+        """
+        proposal_id = uuid.uuid4().hex
+        self.db.save_proposal(
+            proposal_id,
+            content=content,
+            memory_type=memory_type,
+            entities=entities,
+            relationships=relationships,
+            source_text=source_text,
+            thread_id=thread_id,
+        )
+        return {"id": proposal_id, "status": "pending"}
+
+    def list_proposals(self, status: str | None = "pending", thread_id: str | None = None) -> list[dict]:
+        """Proposals awaiting (or past) review; see ``Database.list_proposals``."""
+        return self.db.list_proposals(status=status, thread_id=thread_id)
+
+    def approve_proposal(self, proposal_id: str, edits: dict | None = None) -> dict:
+        """Materialize a proposal into a real memory, then mark it approved.
+
+        Applies any ``edits`` (content / memory_type / entities / relationships /
+        source_text) first. Provenance is the proposal's thread expanded to its
+        turns, so the memory carries the whole conversation it was distilled from
+        as its ``memory_sources`` set. ``source_text`` is a review aid, not a
+        memory body: the durable body is the conversation the sources point at.
+        """
+        proposal = self.db.get_proposal(proposal_id)
+        if proposal is None:
+            raise ValueError(f"no proposal {proposal_id!r}")
+        if proposal["status"] != "pending":
+            raise ValueError(f"proposal {proposal['id']!r} is already {proposal['status']}")
+        if edits:
+            self.db.update_proposal(proposal["id"], edits)
+            proposal = self.db.get_proposal(proposal["id"])
+
+        thread_id = proposal.get("thread_id")
+        source_event_ids = [e.id for e in self.db.get_events_for_thread(thread_id)] if thread_id else []
+        result = self.memorize(
+            content=proposal["content"],
+            memory_type=proposal["memory_type"],
+            entities=proposal["entities"],
+            relationships=proposal["relationships"],
+            source_event_ids=source_event_ids,
+            detect_conflict=False,
+        )
+        self.db.mark_proposal_resolved(proposal["id"], "approved")
+        return {"proposal_id": proposal["id"], "memory_id": result["id"], "status": "approved"}
+
+    def reject_proposal(self, proposal_id: str) -> dict:
+        """Drop a proposal without storing it (status 'rejected')."""
+        proposal = self.db.get_proposal(proposal_id)
+        if proposal is None:
+            raise ValueError(f"no proposal {proposal_id!r}")
+        self.db.mark_proposal_resolved(proposal["id"], "rejected")
+        return {"proposal_id": proposal["id"], "status": "rejected"}
 
     def _queue_reinforcement(self, memory_id: str, content: str) -> None:
         """Fire-and-forget: notify daemon to check reinforcement asynchronously."""

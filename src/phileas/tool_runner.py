@@ -912,12 +912,44 @@ def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) 
     return instr + "\n" + "\n\n".join(blocks)
 
 
+def propose_memory(
+    engine,
+    entities_fn: EntitiesFn,
+    *,
+    content: str,
+    memory_type: str = "knowledge",
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
+    source_text: str | None = None,
+    thread_id: str | None = None,
+) -> str:
+    """Enqueue one candidate memory for the user to review; store nothing yet.
+
+    The manual capture mode's write path. ``thread_id`` (injected by the capture
+    hook) anchors the proposal to the conversation, so approval can expand that
+    thread's turns into the memory's provenance.
+    """
+    _reject_tool_markup(content=content)
+    parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
+    parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
+    out = engine.propose_memory(
+        content=content,
+        memory_type=memory_type,
+        entities=parsed_entities,
+        relationships=parsed_relationships,
+        source_text=source_text,
+        thread_id=thread_id,
+    )
+    return f"Proposed [{out['id'][:8]}] [{memory_type}] {content} — awaiting review (phileas memory queue list)"
+
+
 # Action tools that return their final string/dict directly (not via the
 # read-family pointer path).
 MCP_ACTIONS: dict[str, Callable[..., object]] = {
     "recall": recall,
     "memorize": memorize,
     "memorize_batch": memorize_batch,
+    "propose_memory": propose_memory,
     "forget": forget,
     "relate": relate,
     "scope": scope,

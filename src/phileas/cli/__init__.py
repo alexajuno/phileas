@@ -47,6 +47,7 @@ from phileas.cli.commands import (
 )
 from phileas.cli.hooks import hook_group
 from phileas.cli.hooks_admin import hooks_group
+from phileas.cli.memory import memory_group
 from phileas.cli.profile import profile_group
 from phileas.cli.sessions import sessions
 from phileas.config import cli_default_profile, resolve_profile
@@ -115,6 +116,7 @@ app.add_command(config_cmd)
 app.add_command(profile_group)
 app.add_command(hook_group)
 app.add_command(hooks_group)
+app.add_command(memory_group)
 app.add_command(retry_events)
 app.add_command(reconcile)
 app.add_command(consolidate)

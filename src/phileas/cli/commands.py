@@ -1077,13 +1077,15 @@ def _project_section_override(section: str):
 
 @click.group("config")
 def config_cmd():
-    """View and change how Phileas extracts memories from captured turns.
+    """View and change how Phileas turns captured turns into memories.
 
-    ``mode`` chooses the strategy — ``client`` (the live Claude Code model, via
-    the Stop-hook nudge) or ``api`` (Phileas's own background worker) — and writes
-    the ``[extraction]`` block of the user ``config.toml``. ``set-model`` writes the
-    ``[llm]`` model the ``api`` path uses. ``mode`` and ``set-model`` re-wire the
-    hooks and restart the daemon for you so the change takes effect.
+    ``mode`` chooses the strategy and writes the ``[extraction]`` block of the
+    user ``config.toml``: ``manual`` (the default; a user-triggered ``/phileas``
+    capture pass proposes memories you review), ``client`` (the live Claude Code
+    model per turn, via the Stop-hook nudge), or ``api`` (Phileas's own background
+    worker, for imports). ``set-model`` writes the ``[llm]`` model the ``api`` path
+    uses. ``mode`` and ``set-model`` re-wire the hooks and restart the daemon for
+    you so the change takes effect.
     """
 
 
@@ -1131,19 +1133,25 @@ def config_show():
 @config_cmd.command("mode")
 @click.argument("mode", type=click.Choice(EXTRACTION_MODES))
 def config_mode(mode: str):
-    """Choose the extraction strategy — writes [extraction].mode and re-wires hooks."""
+    """Choose the extraction strategy: writes [extraction].mode and re-wires hooks."""
     from phileas.config import update_user_config
     from phileas.hook_sync import install_hooks
 
     cfg = load_config()
     update_user_config(cfg.home, "extraction", {"mode": mode})
     print_success(f"Set extraction.mode = {mode}")
-    # Keep the Stop-hook wiring matched to the mode: client wires the nudge, api
-    # installs capture-only so the background worker distills instead.
+    # Keep the Stop-hook wiring matched to the mode: only client wires the memorize
+    # nudge. api installs capture-only so the background worker distills; manual
+    # installs capture-only too, with the review-first capture pass instead.
     if install_hooks(cfg.profile, memorize=mode == "client"):
         console.print("[dim]Re-wired the Claude Code Stop hook to match.[/dim]")
     else:
         print_warning("Could not update the Claude Code settings file; run `phileas hooks sync` after fixing it.")
+    if mode == "manual":
+        console.print(
+            "[dim]Capture is now manual: ask Phileas to save what's worth keeping from a session, "
+            "then review with `phileas memory queue list`.[/dim]"
+        )
     if mode == "api" and not os.environ.get(cfg.llm.api_key_env):
         print_warning(
             f"{cfg.llm.api_key_env} is unset; the worker leaves turns pending and visible until a key is reachable."

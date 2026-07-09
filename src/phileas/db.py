@@ -141,6 +141,19 @@ CREATE TABLE IF NOT EXISTS threads (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_client_key
     ON threads(client_key) WHERE client_key IS NOT NULL;
 
+-- A memory's provenance is a SET of raw turns, not a single one: it may be
+-- distilled from one turn, a span, or a whole conversation. This join holds that
+-- set (many-to-many memory <-> event). A memory's thread(s) are derived from it
+-- (DISTINCT events.thread_id over its source events), so no thread_id is stored
+-- on memory_items. The legacy memory_items.source_event_id is the degenerate
+-- one-element case, backfilled into this table.
+CREATE TABLE IF NOT EXISTS memory_sources (
+    memory_id TEXT NOT NULL REFERENCES memory_items(id),
+    event_id TEXT NOT NULL REFERENCES events(id),
+    PRIMARY KEY (memory_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_sources_event ON memory_sources(event_id);
+
 CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
@@ -175,6 +188,27 @@ CREATE TABLE IF NOT EXISTS consolidation_queue (
     status TEXT NOT NULL DEFAULT 'pending'
 );
 CREATE INDEX IF NOT EXISTS idx_consqueue_status ON consolidation_queue(status);
+
+-- Candidate memories awaiting the user's review before they become real
+-- memories. In the manual capture mode the live model enqueues here (via
+-- propose_memory); the user approves / edits / rejects through `phileas memory
+-- queue` or the web, and an approved row is materialized through engine.memorize.
+-- Holds the full memory payload (entities / relationships as JSON) plus the
+-- thread it was distilled from, so approval can expand that thread's turns into
+-- memory_sources.
+CREATE TABLE IF NOT EXISTS memory_proposals (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    source_text TEXT,
+    memory_type TEXT NOT NULL DEFAULT 'knowledge',
+    entities TEXT NOT NULL DEFAULT '[]',
+    relationships TEXT NOT NULL DEFAULT '[]',
+    thread_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON memory_proposals(status);
 
 -- Inverted index over memory content, powering the keyword (sparse) leg of
 -- recall via FTS5 + BM25. Standalone (not external-content): it stores mem_id
@@ -297,6 +331,41 @@ class Database:
         )
         self._fts_upsert(item.id, item.content)
         self.conn.commit()
+
+    @_locked
+    def add_memory_sources(self, memory_id: str, event_ids: list[str]) -> None:
+        """Record a memory's provenance: the set of raw turns it was distilled from.
+
+        Idempotent per (memory_id, event_id). Empty / 'unknown' / missing ids are
+        dropped by ``clean_source_event_id``, so only real turns become sources; a
+        memory with no resolvable source (a reflection, a legacy row) simply has no
+        rows here.
+        """
+        rows = [(memory_id, sid) for eid in event_ids if (sid := clean_source_event_id(eid))]
+        if not rows:
+            return
+        self.conn.executemany("INSERT OR IGNORE INTO memory_sources (memory_id, event_id) VALUES (?, ?)", rows)
+        self.conn.commit()
+
+    @_locked
+    def get_source_event_ids_for_memory(self, memory_id: str) -> list[str]:
+        """The event ids a memory was distilled from, oldest turn first."""
+        rows = self.conn.execute(
+            "SELECT ms.event_id FROM memory_sources ms JOIN events e ON e.id = ms.event_id "
+            "WHERE ms.memory_id = ? ORDER BY e.received_at ASC",
+            (memory_id,),
+        ).fetchall()
+        return [row["event_id"] for row in rows]
+
+    @_locked
+    def get_thread_ids_for_memory(self, memory_id: str) -> list[str]:
+        """The distinct threads a memory's source turns belong to (its derived span)."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT e.thread_id FROM memory_sources ms JOIN events e ON e.id = ms.event_id "
+            "WHERE ms.memory_id = ?",
+            (memory_id,),
+        ).fetchall()
+        return [row["thread_id"] for row in rows]
 
     @_locked
     def get_item(self, item_id: str) -> MemoryItem | None:
@@ -675,9 +744,11 @@ class Database:
         mems = self.conn.execute(
             """SELECT id, content, memory_type, created_at
                FROM memory_items
-               WHERE source_event_id = ? AND status = 'active'
+               WHERE status = 'active'
+                 AND (source_event_id = ?
+                      OR id IN (SELECT memory_id FROM memory_sources WHERE event_id = ?))
                ORDER BY created_at ASC""",
-            (event_id,),
+            (event_id, event_id),
         ).fetchall()
         return {
             "event": {"id": ev["id"], "text": ev["text"], "received_at": ev["received_at"]},
@@ -843,12 +914,19 @@ class Database:
 
     @_locked
     def get_memories_for_event(self, event_id: str) -> list[MemoryItem]:
-        """Active memories whose source_event_id == event_id, oldest first."""
+        """Active memories that count this event among their source turns, oldest first.
+
+        Reads the many-to-many ``memory_sources`` join, unioned with the legacy
+        single ``source_event_id`` so a memory written before the backfill is still
+        found by its source turn.
+        """
         rows = self.conn.execute(
             """SELECT * FROM memory_items
-               WHERE source_event_id = ? AND status = 'active'
+               WHERE status = 'active'
+                 AND (source_event_id = ?
+                      OR id IN (SELECT memory_id FROM memory_sources WHERE event_id = ?))
                ORDER BY created_at ASC""",
-            (event_id,),
+            (event_id, event_id),
         ).fetchall()
         return [self._row_to_item(row) for row in rows]
 
@@ -1051,6 +1129,112 @@ class Database:
         self.conn.execute(
             f"UPDATE consolidation_queue SET presented_at = ? WHERE id IN ({placeholders})",
             [now, *queue_ids],
+        )
+        self.conn.commit()
+
+    # --- Memory proposals (the review queue) ---
+
+    @staticmethod
+    def _row_to_proposal(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "content": row["content"],
+            "source_text": row["source_text"],
+            "memory_type": row["memory_type"],
+            "entities": json.loads(row["entities"] or "[]"),
+            "relationships": json.loads(row["relationships"] or "[]"),
+            "thread_id": row["thread_id"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "resolved_at": row["resolved_at"],
+        }
+
+    @_locked
+    def save_proposal(
+        self,
+        proposal_id: str,
+        content: str,
+        memory_type: str = "knowledge",
+        entities: list[dict] | None = None,
+        relationships: list[dict] | None = None,
+        source_text: str | None = None,
+        thread_id: str | None = None,
+    ) -> None:
+        """Enqueue one candidate memory for review (status 'pending')."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "INSERT INTO memory_proposals (id, content, source_text, memory_type, entities, "
+            "relationships, thread_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (
+                proposal_id,
+                content,
+                source_text,
+                memory_type,
+                json.dumps(entities or []),
+                json.dumps(relationships or []),
+                thread_id,
+                now,
+            ),
+        )
+        self.conn.commit()
+
+    @_locked
+    def get_proposal(self, proposal_id: str) -> dict | None:
+        """One proposal by full id or 8-char prefix, or None (prefix picks the newest match)."""
+        row = self.conn.execute(
+            "SELECT * FROM memory_proposals WHERE id = ? OR id LIKE ? ORDER BY created_at DESC LIMIT 1",
+            (proposal_id, f"{proposal_id}%"),
+        ).fetchone()
+        return self._row_to_proposal(row) if row else None
+
+    @_locked
+    def list_proposals(self, status: str | None = "pending", thread_id: str | None = None) -> list[dict]:
+        """Proposals, newest first; filter by status (default 'pending') and/or thread.
+
+        Pass ``status=None`` for every status.
+        """
+        clauses: list[str] = []
+        args: list[str] = []
+        if status is not None:
+            clauses.append("status = ?")
+            args.append(status)
+        if thread_id is not None:
+            clauses.append("thread_id = ?")
+            args.append(thread_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(f"SELECT * FROM memory_proposals {where} ORDER BY created_at DESC", args).fetchall()
+        return [self._row_to_proposal(r) for r in rows]
+
+    @_locked
+    def update_proposal(self, proposal_id: str, fields: dict) -> None:
+        """Edit a pending proposal's memory payload before approval.
+
+        Only content, source_text, memory_type, entities, relationships are
+        editable; unknown keys are ignored. entities/relationships are JSON-encoded.
+        """
+        editable = {"content", "source_text", "memory_type", "entities", "relationships"}
+        sets: list[str] = []
+        args: list = []
+        for key, value in fields.items():
+            if key not in editable:
+                continue
+            if key in ("entities", "relationships"):
+                value = json.dumps(value or [])
+            sets.append(f"{key} = ?")
+            args.append(value)
+        if not sets:
+            return
+        args.append(proposal_id)
+        self.conn.execute(f"UPDATE memory_proposals SET {', '.join(sets)} WHERE id = ?", args)
+        self.conn.commit()
+
+    @_locked
+    def mark_proposal_resolved(self, proposal_id: str, status: str) -> None:
+        """Set a proposal's terminal status ('approved' | 'rejected') and stamp resolved_at."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE memory_proposals SET status = ?, resolved_at = ? WHERE id = ?",
+            (status, now, proposal_id),
         )
         self.conn.commit()
 

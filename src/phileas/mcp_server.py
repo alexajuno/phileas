@@ -209,6 +209,50 @@ def memorize(
 
 
 @mcp.tool()
+def propose_memory(
+    content: str,
+    source_text: str | None = None,
+    memory_type: str = "knowledge",
+    entities: list | str | None = None,
+    relationships: list | str | None = None,
+    thread_id: str | None = None,
+) -> str:
+    """Propose one candidate memory for the user to review — the manual capture surface.
+
+    Unlike `memorize` (which stores at once), `propose_memory` enqueues a candidate
+    that stores nothing until the user approves it in the review queue (`phileas
+    memory queue`, or the web dashboard). This is the manual capture pass: at the
+    end of a conversation, review the whole thread and propose the memories worth
+    keeping, one call each, and let the user validate. Nothing lands unapproved.
+
+    Pass `thread_id` exactly as the `<phileas-capture-hint>` gives it: it anchors
+    the proposal to this conversation, so an approved memory records the thread's
+    turns as its provenance. Omit it only when no hint was provided.
+
+    Args:
+        content: The candidate memory, phrased as a durable one-liner.
+        source_text: Optional short rationale shown to the user at review time
+            (why it is worth keeping). A review aid, not stored as a memory body.
+        memory_type: one of knowledge / decision / behavior / reflection / event / profile.
+        entities: What the memory is about — a list (or JSON string) of
+            {"name","type","description"}, same vocabulary as `memorize`.
+        relationships: Optional list/JSON of edges between entities.
+        thread_id: The conversation id from the capture hint; anchors provenance.
+    """
+    return _call(
+        "propose_memory",
+        {
+            "content": content,
+            "source_text": source_text,
+            "memory_type": memory_type,
+            "entities": entities,
+            "relationships": relationships,
+            "thread_id": thread_id,
+        },
+    )
+
+
+@mcp.tool()
 def recall(
     query: str,
     memory_type: str | None = None,

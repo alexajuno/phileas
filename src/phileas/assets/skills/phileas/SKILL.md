@@ -1,6 +1,6 @@
 ---
 name: phileas
-description: Phileas long-term companion memory. Use it two ways. To recall, when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". To capture, when the user asks to remember, record, note, save, or "don't forget" something, above all a decision (a choice and why), call `memorize` directly rather than writing a file.
+description: Phileas long-term companion memory. Use it two ways. To recall, when the prompt references past work, decisions, named projects, people, dates, or asks "what did we / last time / remember when". To capture, when the user asks to remember, record, note, or save something, above all a decision (a choice and why): call `memorize` directly for a single fact, or run the review-first capture pass with `propose_memory` when they ask to save what's worth keeping from the whole conversation.
 ---
 
 # Phileas — Companion Memory
@@ -57,20 +57,24 @@ Name a recalled memory explicitly only when it earns it:
 
 Otherwise hold it. Never lead with "Based on my memory…", and never list what you know about someone as a preamble. Work the knowledge in silently and surface it only when it's load-bearing.
 
-## Capture — what's worth recalling later
+## Capture — what's worth keeping, and how it lands
 
-Every turn of this conversation is already saved verbatim by Phileas, on its own. You never call a capture tool for the raw record and never judge which turns to keep; that floor is laid for you. Your job is narrower and higher: turn what you learned this turn into durable memory with `memorize`.
+Every turn is already saved verbatim by Phileas on its own. You never capture the raw record and never judge which turns to keep; that floor is laid for you. Your job is higher: turn what a conversation taught into durable memory. How that memory lands depends on the mode, and the mode announces itself through the hint you see.
 
-Save what would be useful to recall later, whether it came from the user or from your own work: a fact or preference the user states about themselves; a decision and its reason; a gotcha or root cause you hit; a wiring or location fact that would otherwise go stale and mislead; a dead end worth not re-walking; a command or recipe that worked. A thing *you* discovered counts on its own, it does not need the user to have endorsed it first. When they do state or take up a fact, record it as they land on it, not when you first offer it.
+**What is worth keeping** (the same in every mode). Save what would be useful to recall later, from the user or from your own work: a fact or preference the user states about themselves; a decision and its reason; a gotcha or root cause you hit; a wiring or location fact that would otherwise go stale and mislead; a dead end worth not re-walking; a command or recipe that worked. A thing *you* discovered counts on its own, it does not need the user to have endorsed it first. The bar is usefulness, not authorship: the archaeology test. Will this still be useful once the code shows only the result and git shows only the diff? If it survives that, keep it; if it is obvious from the code or the diff, let it go. Never keep what the user waves off, argues down, or passes over. A path rejected is not a memory; the choice landed on is.
 
-The bar is usefulness, not authorship: the archaeology test. Will this still be useful once the code shows only the result and git shows only the diff? If it survives that, memorize it; if it is obvious from reading the code or the diff, let it go. Never memorize what the user waves off, argues down, or passes over. A path considered and rejected is not a memory; the choice landed on is.
+**How it lands** — three surfaces, and the hint tells you which is live:
 
-- `memorize(content=<the conclusion, one line>, source_text=<the why: the reasoning, the alternatives passed over, what it changes>, memory_type=<"decision" for a choice-and-why, else "knowledge">, entities=[...])`.
-- `content` is the pointer recall surfaces; `source_text` is the body `hydrate` then `thread` drills into. Put the conclusion in `content`, the reasoning in `source_text`.
-- Tag `entities` with what the memory governs, for a decision the repo, the file(s) or dir, and the concept, so a later `about(<file>, memory_type="decision")` surfaces it. With no entities it is findable only by full-text search.
-- Pick each entity's `type` from exactly this vocabulary, closest bucket wins: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept. The type is a collision-resistant bucket, not a rich label; an invented synonym (Company, Topic, Repo) splits the same referent across separate graph nodes. Put richness in the entity's `description` (a brief, stable phrase saying which one this is), which also helps the linker keep same-name entities apart.
-- When the user explicitly says to remember or record something, that is a `memorize` you make directly; you have already judged it worth keeping.
-- If the write conflicts with an existing memory, the result ends with a resolve menu; that is how a reversed decision supersedes the one it replaces.
+- **The user asks directly** ("remember that ...", "save this"). Call `memorize` now — they have already judged it worth keeping. Works in any mode.
+- **A `<phileas-memorize-hint>` at end of a turn** (the per-turn mode). Judge that one turn against the bar and, if something qualifies, `memorize` it, one memory per fact.
+- **A `<phileas-capture-hint>` carrying a `thread_id`** (the default, review-first mode). Do not `memorize` mid-conversation. When the user asks to capture or save what's worth keeping from the conversation, review the whole thread and, for each candidate, call `propose_memory(content=..., thread_id=<the id from the hint>, ...)`, one call per fact. Nothing is stored yet: proposals wait in a review queue the user approves from (`phileas memory queue list`, or the web dashboard). After proposing, tell the user how many you queued and where to review them. Don't propose unprompted; a normal turn just answers.
+
+**Writing a memory or a proposal** — the fields are the same for `memorize` and `propose_memory`:
+
+- `content` is the conclusion as a one-line pointer recall surfaces. `source_text` is the body: for `memorize` the reasoning and alternatives that `hydrate` then `thread` drill into; for `propose_memory` a short "why it's worth keeping" the user sees at review.
+- `memory_type` is `decision` for a choice-and-why, else `knowledge` / `behavior` / `reflection` / `event` / `profile`.
+- Tag `entities` with what the memory governs — for a code decision the repo, the file(s) or dir, and the concept — so a later `about(<file>)` surfaces it. With no entities it is findable only by full-text search. Pick each entity's `type` from exactly this vocabulary, closest bucket wins: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept. The type is a collision-resistant bucket, not a rich label; an invented synonym (Company, Topic, Repo) splits the same referent across separate graph nodes. Put richness in the entity's `description`, a brief stable phrase saying which one this is, which also helps the linker keep same-name entities apart.
+- If a `memorize` write conflicts with an existing memory, the result ends with a resolve menu; that is how a reversed decision supersedes the one it replaces.
 
 Forward-prescriptive conventions ("always use snake_case", "tests live in `tests/`") are not memory; they belong in `CLAUDE.md`. The decision behind one ("snake_case over camelCase because the linter assumes it") is a memory.
 
