@@ -5,9 +5,10 @@ over a fixed Mara corpus, run through two configs against the real model, scored
 on recall@k / MRR / nDCG and resource cost, with the gate that cut any missing
 gold memory named in the diff. Numbers, not vibes.
 
-Like the rest of `evals/`, this is local and not committed. The only production
-code it relies on is the recall trace seam (`phileas.recall_trace`, exercised by
-`tests/test_recall_trace.py`).
+This eval is committed with the rest of `evals/`; only the built `mara-eval` store
+(an external profile at `~/.phileas-mara-eval`, rebuilt by `seed.py`) stays out of
+git. The only production code it relies on is the recall trace seam
+(`phileas.recall_trace`, exercised by `tests/test_recall_trace.py`).
 
 ## Pieces
 
@@ -17,7 +18,6 @@ code it relies on is the recall trace seam (`phileas.recall_trace`, exercised by
 - `metrics.py` — recall@k, MRR, nDCG@k (graded), hit@k, intrusion@1, and cost summaries (mean / p50 / p90). Surface-agnostic: every function takes `(results, gold...)`.
 - `ab.py` — the runner. Loads the fixture and gold set, asserts the real reranker, freezes the store, runs every query through config A and B reading each trace via `recall_trace.record()`, and prints a per-query table, a per-`query_type` scorecard, and an A/B diff.
 - `_engine.py` — isolated `mara-eval` engine builder; refuses to touch the real `~/.phileas`.
-- `PROVENANCE.md` — what the fixture is and how to rebuild it.
 
 ## Run
 
@@ -42,3 +42,16 @@ env bled across configs — treat the comparison as confounded.
 - New query: add an entry to `goldset.json` (relevant/excluded as content substrings); the runner validates uniqueness.
 - New config: add a named block to `configs.json`.
 - Re-curate after corpus changes: `fixture_version` in `goldset.json` is the corpus fingerprint; the runner warns if it drifts.
+
+## Fixture provenance
+
+The fixture is the `mara-eval` profile store at `~/.phileas-mara-eval`
+(`memory.db` + `chroma` + `graph`), built by `seed.py` from the cold-start Mara
+corpus. It is rebuilt from committed corpus text on demand rather than checked in:
+the binary `chroma`/`kuzu` files are version-sensitive and would bloat git.
+
+- **Source corpus:** the sibling `coldstart` eval's session transcripts + extraction JSON (30 sessions, 184 memories, 2026-03-22 → 2026-09-30). Ground truth: `coldstart/persona.md`.
+- **Seeding:** chronological, one Event/thread per session, entity names fed raw so the linker runs for real.
+- **Built shape (sanity check):** 184 memories, 184 memory vectors, 30 event vectors, ~249 graph nodes, ~454 edges.
+- **Rebuild:** run `seed.py --reset`; it refuses any home other than `~/.phileas-mara-eval`, so it can never touch the real `~/.phileas` graph.
+- **Versioning:** `fixture_version` in `goldset.json` is the corpus fingerprint (sha256 of the concatenated, name-sorted extraction files); the runner recomputes it and warns if the gold set was authored against a different corpus revision.
