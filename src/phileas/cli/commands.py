@@ -453,11 +453,11 @@ def list_cmd(
 
     \b
     Examples:
-      phileas list                      # 20 most recent active memories
-      phileas list --since 24h          # everything from the last day
-      phileas list --source sourced     # only memories that trace to a captured turn
-      phileas list --type reflection -n 50
-      phileas list --status all --json  # every memory, machine-readable
+      phileas memory list                      # 20 most recent active memories
+      phileas memory list --since 24h          # everything from the last day
+      phileas memory list --source sourced     # only memories that trace to a captured turn
+      phileas memory list --type reflection -n 50
+      phileas memory list --status all --json  # every memory, machine-readable
     """
     try:
         db = _get_db()

@@ -18,11 +18,9 @@ from phileas.cli.commands import (
     contradictions,
     export_cmd,
     find_entities,
-    forget,
     hydrate,
     ingest,
     init_cmd,
-    list_cmd,
     recall,
     recall_recent,
     reconcile,
@@ -33,7 +31,6 @@ from phileas.cli.commands import (
     scopes,
     serendipity,
     serve,
-    show,
     start,
     status,
     stop_cmd,
@@ -42,7 +39,6 @@ from phileas.cli.commands import (
     sync_plan_cmd,
     thread,
     timeline,
-    update_cmd,
     usage,
 )
 from phileas.cli.hooks import hook_group
@@ -100,10 +96,6 @@ app.add_command(find_entities)
 app.add_command(scope_cmd)
 app.add_command(scopes)
 app.add_command(resolve_cmd)
-app.add_command(forget)
-app.add_command(update_cmd)
-app.add_command(list_cmd)
-app.add_command(show)
 app.add_command(ingest)
 app.add_command(contradictions)
 app.add_command(export_cmd)

@@ -1,11 +1,16 @@
 """``phileas memory`` — noun-verb commands over the memory store.
 
-Today this hosts the review queue (``phileas memory queue``), the manual capture
-mode's approval surface. In manual mode the live model proposes candidate
-memories; these commands list, inspect, approve, edit, and reject them. Approve
-materializes a proposal into a real memory (its conversation's turns become the
-memory's provenance); reject drops it without storing. The CLI here and the web
-dashboard drive the same daemon methods (``list_proposals`` / ``resolve_proposal``).
+The core verbs act on stored memories: ``list`` browses them, ``show`` inspects
+one, ``update`` edits one in place, and ``forget`` archives one. Their bodies
+live in ``commands.py`` beside the engine/db helpers they lean on and are
+attached to the ``memory`` noun here.
+
+Nested under it, ``phileas memory queue`` is the manual capture mode's approval
+surface. In manual mode the live model proposes candidate memories; the queue
+commands list, inspect, approve, edit, and reject them. Approve materializes a
+proposal into a real memory (its conversation's turns become the memory's
+provenance); reject drops it without storing. The CLI here and the web dashboard
+drive the same daemon methods (``list_proposals`` / ``resolve_proposal``).
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import click
 
 from phileas import daemon_client
+from phileas.cli.commands import forget, list_cmd, show, update_cmd
 from phileas.cli.formatter import console, print_error, print_success, print_warning
 
 
@@ -30,7 +36,13 @@ def _daemon(method: str, params: dict | None = None):
 
 @click.group("memory")
 def memory_group() -> None:
-    """Work with the memory store (noun-verb: `phileas memory <resource> <verb>`)."""
+    """Work with the memory store (noun-verb: `phileas memory <verb>`)."""
+
+
+memory_group.add_command(list_cmd)
+memory_group.add_command(show)
+memory_group.add_command(update_cmd)
+memory_group.add_command(forget)
 
 
 @memory_group.group("queue")

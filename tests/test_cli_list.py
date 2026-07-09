@@ -1,4 +1,4 @@
-"""``phileas list`` browses the store newest-first with filters.
+"""``phileas memory list`` browses the store newest-first with filters.
 
 Each case seeds an isolated store (HOME pinned by the autouse fixture, so the
 profile resolves under a fresh XDG home) with a handful of memories that differ
@@ -87,7 +87,7 @@ def _run(args):
 
 def test_default_lists_active_and_hides_archived():
     _seed()
-    result = _run(["list"])
+    result = _run(["memory", "list"])
     assert result.exit_code == 0, result.output
     assert "alpha" in result.output
     assert "bravo" in result.output
@@ -97,20 +97,20 @@ def test_default_lists_active_and_hides_archived():
 
 def test_newest_first_ordering():
     _seed()
-    result = _run(["list"])
+    result = _run(["memory", "list"])
     assert result.output.index("alpha") < result.output.index("charlie")
 
 
 def test_type_filter():
     _seed()
-    result = _run(["list", "--type", "profile"])
+    result = _run(["memory", "list", "--type", "profile"])
     assert "bravo" in result.output
     assert "alpha" not in result.output
 
 
 def test_source_sourced_excludes_unsourced():
     _seed()
-    result = _run(["list", "--source", "sourced"])
+    result = _run(["memory", "list", "--source", "sourced"])
     assert "alpha" in result.output  # real source event
     assert "charlie" in result.output
     assert "bravo" not in result.output  # NULL source is unsourced
@@ -118,34 +118,34 @@ def test_source_sourced_excludes_unsourced():
 
 def test_source_unsourced_excludes_sourced():
     _seed()
-    result = _run(["list", "--source", "unsourced"])
+    result = _run(["memory", "list", "--source", "unsourced"])
     assert "bravo" in result.output
     assert "alpha" not in result.output
 
 
 def test_since_window_excludes_old():
     _seed()
-    result = _run(["list", "--since", "24h"])
+    result = _run(["memory", "list", "--since", "24h"])
     assert "alpha" in result.output
     assert "charlie" not in result.output  # 400 days old
 
 
 def test_status_all_includes_archived():
     _seed()
-    result = _run(["list", "--status", "all"])
+    result = _run(["memory", "list", "--status", "all"])
     assert "delta" in result.output
 
 
 def test_limit_caps_rows():
     _seed()
-    result = _run(["list", "--limit", "1"])
+    result = _run(["memory", "list", "--limit", "1"])
     assert "alpha" in result.output
     assert "bravo" not in result.output
 
 
 def test_json_output_shape():
     _seed()
-    result = _run(["list", "--json"])
+    result = _run(["memory", "list", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     by_content = {row["content"]: row for row in payload}
@@ -164,6 +164,6 @@ def test_json_output_shape():
 
 def test_bad_since_is_rejected():
     _seed()
-    result = _run(["list", "--since", "nonsense"])
+    result = _run(["memory", "list", "--since", "nonsense"])
     assert result.exit_code != 0
     assert "--since" in result.output
