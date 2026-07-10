@@ -555,6 +555,10 @@ class TestConfigSnapshot:
         assert snap["choices"]["modes"] == ["client", "api", "manual"]
         assert "anthropic" in snap["choices"]["providers"]
         assert cfg.llm.model in snap["choices"]["models"]
+        # Each provider maps to its default key env var; a keyless one maps to None.
+        assert snap["choices"]["provider_key_env"]["anthropic"] == "PHILEAS_ANTHROPIC_API_KEY"
+        assert snap["choices"]["provider_key_env"]["openai"] == "PHILEAS_OPENAI_API_KEY"
+        assert snap["choices"]["provider_key_env"]["ollama"] is None
         assert snap["secrets"]["llm_api_key_set"] is False
         assert snap["secrets"]["llm_api_key_source"] is None
         assert snap["secrets"]["sync_token_set"] is False

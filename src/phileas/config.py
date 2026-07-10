@@ -536,9 +536,14 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
     environment carries it (which wins), ``"stored"`` when only the secrets file
     does, else ``None``. ``llm_available`` is the "will the api path actually
     extract" status: the ``api`` mode is chosen *and* the key is reachable.
+
+    ``choices.provider_key_env`` maps each provider to its default key env var
+    (``None`` for a keyless one), so a UI can repoint ``api_key_env`` when the
+    provider changes — the same coupling ``phileas config set-provider`` applies —
+    and tell that a keyless provider needs no key at all.
     """
     from phileas import secrets
-    from phileas.llm.client import SUPPORTED_PROVIDERS, known_models
+    from phileas.llm.client import SUPPORTED_PROVIDERS, default_api_key_env, known_models
 
     env_set = bool(os.environ.get(cfg.llm.api_key_env))
     stored = cfg.llm.api_key_env in secrets.load_secrets(cfg.home)
@@ -551,6 +556,7 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
             "modes": list(EXTRACTION_MODES),
             "providers": list(SUPPORTED_PROVIDERS),
             "models": known_models(),
+            "provider_key_env": {p: default_api_key_env(p) for p in SUPPORTED_PROVIDERS},
         },
         "secrets": {
             "llm_api_key_env": cfg.llm.api_key_env,
