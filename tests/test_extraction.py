@@ -1,43 +1,47 @@
-"""Extraction reads an attribution-tagged transcript into memory dicts (Phase 3).
+"""Extraction reads an attribution-tagged transcript into memory dicts.
 
-Offline: a fake client stands in for ``LLMClient``, returning a canned Anthropic
-message. These cover the forced-tool-use happy path, the fenced-JSON fallback,
-default filling, the availability gate, and raise-on-unusable behavior.
+Offline: a fake client stands in for ``LLMClient``, returning a canned
+``RecordMemories``. These cover the happy path and ``model_dump`` shape, the
+Pydantic defaults, the availability gate, propagation of a failed structured
+call, and that the transcript and schema reach the client.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from phileas.llm.extraction import ExtractionUnavailable, extract_memories
-
-
-def _tool_msg(payload, name="record_memories"):
-    return SimpleNamespace(content=[SimpleNamespace(type="tool_use", name=name, input=payload)])
-
-
-def _text_msg(text):
-    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+from phileas.llm.extraction import (
+    ExtractedEntity,
+    ExtractedMemory,
+    ExtractedRelationship,
+    ExtractionUnavailable,
+    RecordMemories,
+    extract_memories,
+)
 
 
 class _FakeClient:
-    """Duck-typed stand-in for LLMClient: records the request, returns a canned message."""
+    """Duck-typed stand-in for LLMClient: records the request, returns a canned result.
 
-    def __init__(self, response, available=True):
-        self._response = response
+    ``result`` is either a ``RecordMemories`` to return or an ``Exception`` to
+    raise, mirroring a structured call that succeeds or fails validation.
+    """
+
+    def __init__(self, result, available=True):
+        self._result = result
         self.available = available
         self.calls: list[dict] = []
 
-    def complete(self, operation, **kwargs):
-        self.calls.append({"operation": operation, **kwargs})
-        return self._response
+    def invoke_structured(self, operation, schema, messages):
+        self.calls.append({"operation": operation, "schema": schema, "messages": messages})
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
 
 
-def test_extracts_from_tool_use_and_fills_defaults():
-    resp = _tool_msg({"memories": [{"content": "The user plays tennis", "memory_type": "behavior"}]})
-    out = extract_memories(_FakeClient(resp), "self: I play tennis")
+def test_extracts_and_dumps_to_dicts():
+    result = RecordMemories(memories=[ExtractedMemory(content="The user plays tennis", memory_type="behavior")])
+    out = extract_memories(_FakeClient(result), "self: I play tennis")
     assert out == [
         {
             "content": "The user plays tennis",
@@ -49,36 +53,48 @@ def test_extracts_from_tool_use_and_fills_defaults():
 
 
 def test_memory_type_defaults_when_omitted():
-    resp = _tool_msg({"memories": [{"content": "The user moved to Bangkok"}]})
-    out = extract_memories(_FakeClient(resp), "self: I moved to Bangkok")
+    result = RecordMemories(memories=[ExtractedMemory(content="The user moved to Bangkok")])
+    out = extract_memories(_FakeClient(result), "self: I moved to Bangkok")
     assert out[0]["memory_type"] == "knowledge"
     assert out[0]["entities"] == []
 
 
-def test_falls_back_to_fenced_json_without_tool_use():
-    resp = _text_msg('```json\n{"memories": [{"content": "y", "memory_type": "event"}]}\n```')
-    out = extract_memories(_FakeClient(resp), "self: y")
-    assert out[0]["content"] == "y"
-    assert out[0]["memory_type"] == "event"
+def test_entities_and_relationships_dump_nested():
+    result = RecordMemories(
+        memories=[
+            ExtractedMemory(
+                content="The user builds Phileas",
+                memory_type="knowledge",
+                entities=[ExtractedEntity(name="Phileas", type="Project", description="a memory companion")],
+                relationships=[
+                    ExtractedRelationship(
+                        from_name="Giao", from_type="Person", edge="BUILDS", to_name="Phileas", to_type="Project"
+                    )
+                ],
+            )
+        ]
+    )
+    out = extract_memories(_FakeClient(result), "self: I build Phileas")
+    assert out[0]["entities"] == [{"name": "Phileas", "type": "Project", "description": "a memory companion"}]
+    assert out[0]["relationships"] == [
+        {"from_name": "Giao", "from_type": "Person", "edge": "BUILDS", "to_name": "Phileas", "to_type": "Project"}
+    ]
 
 
 def test_unavailable_client_raises():
-    resp = _tool_msg({"memories": []})
     with pytest.raises(ExtractionUnavailable):
-        extract_memories(_FakeClient(resp, available=False), "self: z")
+        extract_memories(_FakeClient(RecordMemories(), available=False), "self: z")
 
 
-def test_unusable_shape_raises():
-    resp = _tool_msg({"not_memories": []})
-    with pytest.raises((KeyError, ValueError)):
-        extract_memories(_FakeClient(resp), "self: z")
+def test_failed_structured_call_propagates():
+    with pytest.raises(ValueError, match="bad shape"):
+        extract_memories(_FakeClient(ValueError("bad shape")), "self: z")
 
 
-def test_forces_the_record_memories_tool_with_the_transcript():
-    client = _FakeClient(_tool_msg({"memories": []}))
+def test_passes_the_schema_and_transcript_to_the_client():
+    client = _FakeClient(RecordMemories())
     extract_memories(client, "self: hi there")
     call = client.calls[0]
     assert call["operation"] == "extraction"
-    assert call["tool_choice"] == {"type": "tool", "name": "record_memories"}
-    assert call["tools"][0]["name"] == "record_memories"
-    assert "self: hi there" in call["messages"][0]["content"]
+    assert call["schema"] is RecordMemories
+    assert "self: hi there" in call["messages"]

@@ -1,17 +1,25 @@
 """Memory extraction from an attribution-tagged transcript.
 
-No fallback: if the client is unavailable or returns something unusable, this
-raises. The extraction worker catches it and marks the source events `failed`,
-so a raw turn never becomes a polluted memory row. Empty memories plus pending
-events is a better state than a guess written to the store.
+The extracted shape is a Pydantic schema (``RecordMemories``). Handing it to the
+client's ``invoke_structured`` binds it as the model's response shape, so the
+model returns validated structure rather than a fenced JSON blob to parse by
+hand. The ``memory_type`` field is typed as ``MemoryType`` directly, so the
+allowed values cannot drift from the canonical enum in ``models``.
+
+No fallback: if the client is unavailable or the model returns something the
+schema rejects, this raises. The extraction worker catches it and marks the
+source events ``failed``, so a raw turn never becomes a polluted memory row.
+Empty memories plus pending events is a better state than a guess written to the
+store.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING
 
-from phileas.llm.client import parse_json_response, text_from, tool_input_from
+from pydantic import BaseModel, Field
+
 from phileas.models import MemoryType
 
 if TYPE_CHECKING:
@@ -19,77 +27,44 @@ if TYPE_CHECKING:
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extraction.txt"
 
-# Defaults filled in when the model omits an optional field. ``memory_type`` is
-# the only output field with a sensible default; ``content`` has none, so a
-# memory missing it is a shape failure the caller surfaces.
-_DEFAULTS: dict = {
-    "memory_type": "knowledge",
-    "entities": [],
-    "relationships": [],
-}
+# Entity/relationship type vocabularies live in the prompt (the descriptions
+# below), not as enums here: the type's job is a collision-resistant bucket, and
+# an over-strict enum would drop a memory when the model reaches for a near-miss
+# label. The schema keeps them free strings; the prompt does the steering.
 
-_TOOL_NAME = "record_memories"
 
-# Forced tool use is how the extraction call returns validated structure rather
-# than a fenced JSON blob. The memory_type enum is derived from the model so the
-# schema cannot drift from ``MemoryType``.
-_RECORD_MEMORIES_TOOL: dict = {
-    "name": _TOOL_NAME,
-    "description": "Record the durable memories extracted from the transcript.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "memories": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "content": {
-                            "type": "string",
-                            "description": "One or two sentences, third person about the user.",
-                        },
-                        "memory_type": {"type": "string", "enum": list(get_args(MemoryType))},
-                        "entities": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "type": {"type": "string"},
-                                    "description": {
-                                        "type": "string",
-                                        "description": (
-                                            "A brief, stable phrase identifying which entity this is, "
-                                            "grounded enough to tell it apart from others with a similar "
-                                            "name. Describe what the entity is, not its current status."
-                                        ),
-                                    },
-                                },
-                                "required": ["name", "type", "description"],
-                            },
-                        },
-                        "relationships": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "from_name": {"type": "string"},
-                                    "from_type": {"type": "string"},
-                                    "edge": {"type": "string"},
-                                    "to_name": {"type": "string"},
-                                    "to_type": {"type": "string"},
-                                },
-                                "required": ["from_name", "from_type", "edge", "to_name", "to_type"],
-                            },
-                        },
-                    },
-                    "required": ["content", "memory_type"],
-                },
-            },
-        },
-        "required": ["memories"],
-    },
-}
+class ExtractedEntity(BaseModel):
+    name: str
+    type: str = Field(
+        description="One of: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept."
+    )
+    description: str = Field(
+        description=(
+            "A brief, stable phrase identifying which entity this is, grounded enough to tell it apart "
+            "from others with a similar name. Describe what the entity is, not its current status."
+        )
+    )
+
+
+class ExtractedRelationship(BaseModel):
+    from_name: str
+    from_type: str
+    edge: str
+    to_name: str
+    to_type: str
+
+
+class ExtractedMemory(BaseModel):
+    content: str = Field(description="One or two sentences, third person about the user.")
+    memory_type: MemoryType = "knowledge"
+    entities: list[ExtractedEntity] = Field(default_factory=list)
+    relationships: list[ExtractedRelationship] = Field(default_factory=list)
+
+
+class RecordMemories(BaseModel):
+    """The durable memories extracted from the transcript."""
+
+    memories: list[ExtractedMemory] = Field(default_factory=list)
 
 
 class ExtractionUnavailable(RuntimeError):
@@ -99,38 +74,17 @@ class ExtractionUnavailable(RuntimeError):
 def extract_memories(client: LLMClient, transcript: str) -> list[dict]:
     """Extract durable third-person memories from an attribution-tagged transcript.
 
-    Returns a list of memory dicts, each with at least ``content``,
-    ``memory_type``, ``entities``, ``relationships``. Forced tool use makes the
-    model return structured output; ``parse_json_response`` over the message
-    text is the fallback when no tool call comes back.
+    Returns a list of memory dicts, each with ``content``, ``memory_type``,
+    ``entities``, and ``relationships`` — the shape ``engine.memorize`` consumes.
 
-    Raises ``ExtractionUnavailable`` when the client cannot run, and lets parse
-    or shape failures (``KeyError``, ``ValueError``, ``TypeError``) propagate, so
-    the worker records the failure against the source events instead of inventing
-    a memory.
+    Raises ``ExtractionUnavailable`` when the client cannot run, and lets the
+    structured-output call's parse/validation failures propagate, so the worker
+    records the failure against the source events instead of inventing a memory.
     """
     if not client.available:
         raise ExtractionUnavailable("extraction client not configured")
 
     prompt = _PROMPT_PATH.read_text(encoding="utf-8").format(transcript=transcript)
+    result = client.invoke_structured("extraction", RecordMemories, prompt)
 
-    response = client.complete(
-        operation="extraction",
-        messages=[{"role": "user", "content": prompt}],
-        tools=[_RECORD_MEMORIES_TOOL],
-        tool_choice={"type": "tool", "name": _TOOL_NAME},
-    )
-
-    data = tool_input_from(response, _TOOL_NAME)
-    if data is None:
-        data = parse_json_response(text_from(response))
-
-    memories = data["memories"]
-    if not isinstance(memories, list):
-        raise ValueError("extraction returned a non-list 'memories'")
-
-    for memory in memories:
-        for field, default in _DEFAULTS.items():
-            memory.setdefault(field, default)
-
-    return memories
+    return [memory.model_dump() for memory in result.memories]

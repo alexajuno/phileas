@@ -9,7 +9,6 @@ network, no models.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 from phileas.db import Database
 from phileas.extraction_worker import ExtractionWorker, build_transcript
@@ -24,14 +23,13 @@ class _Clock:
         return self.t
 
 
-def _tool_msg(memories):
-    return SimpleNamespace(
-        content=[SimpleNamespace(type="tool_use", name="record_memories", input={"memories": memories})]
-    )
-
-
 class _FakeClient:
-    """Returns canned memories from complete(); extract_memories parses it for real."""
+    """Returns canned memories through the structured-output seam.
+
+    ``invoke_structured`` builds the real ``RecordMemories`` from the canned
+    dicts, so the worker's dict-shaped consumption is exercised for real; only
+    the model call is faked.
+    """
 
     def __init__(self, memories=None, available=True, fail=False):
         self.available = available
@@ -39,11 +37,11 @@ class _FakeClient:
         self._fail = fail
         self.calls: list[dict] = []
 
-    def complete(self, operation, **kwargs):
-        self.calls.append({"operation": operation, **kwargs})
+    def invoke_structured(self, operation, schema, messages):
+        self.calls.append({"operation": operation, "schema": schema, "messages": messages})
         if self._fail:
             raise RuntimeError("boom")
-        return _tool_msg(self._memories)
+        return schema(memories=self._memories)
 
 
 class _FakeEngine:
@@ -123,7 +121,7 @@ def test_transcript_carries_attribution_into_extraction(tmp_dir):
     clock.t = 8.0
     worker.tick(8.0)
 
-    prompt = client.calls[0]["messages"][0]["content"]
+    prompt = client.calls[0]["messages"]
     assert "self: I moved to Bangkok" in prompt
     assert "assistant: congrats" in prompt
 

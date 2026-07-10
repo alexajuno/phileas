@@ -109,20 +109,27 @@ class ExtractionConfig:
     mode: str = "manual"
 
 
+# Providers that run a model locally and need no API key. For these,
+# ``LLMConfig.available`` is True without any env var set, so a laptop can distill
+# against a local Ollama model with no credential.
+_KEYLESS_PROVIDERS = frozenset({"ollama"})
+
+
 @dataclass
 class LLMConfig:
     """How the ``api`` extraction path talks to a model.
 
     This is Phileas's own model call, not the MCP client's model. Phileas uses it
     to distill ingested turns into memories when ``extraction.mode`` is ``api``.
-    The key itself never lives in config: it is read at call time from the env var
-    named by ``api_key_env``, the same way the sync and API bearer secrets stay
-    out of a committed ``config.toml``. The default var is namespaced
-    (``PHILEAS_ANTHROPIC_API_KEY``), not the generic ``ANTHROPIC_API_KEY``, so it
-    never collides with the host Claude Code's own credential, which takes
-    precedence over a Pro/Max subscription. ``available`` reports whether that key
-    is reachable; the worker checks it before each call, so a keyless box leaves
-    ingested turns pending and visible rather than failing a write.
+    For a keyed provider the key never lives in config: it is read at call time
+    from the env var named by ``api_key_env``, the same way the sync and API
+    bearer secrets stay out of a committed ``config.toml``. The default var is
+    namespaced (``PHILEAS_ANTHROPIC_API_KEY``), not the generic
+    ``ANTHROPIC_API_KEY``, so it never collides with the host Claude Code's own
+    credential, which takes precedence over a Pro/Max subscription. ``available``
+    reports whether the provider can run (key reachable, or a keyless local
+    provider); the worker checks it before each call, so a box that cannot run
+    leaves ingested turns pending and visible rather than failing a write.
 
     Only provider/model selection and the key pointer live here. The token cap
     and the extraction debounce/buffer timing are never hand-tuned, so they are
@@ -137,7 +144,9 @@ class LLMConfig:
 
     @property
     def available(self) -> bool:
-        """True when the key env var is reachable in the process environment."""
+        """True when the configured provider can run: keyless, or its key is set."""
+        if self.provider in _KEYLESS_PROVIDERS:
+            return True
         return bool(os.environ.get(self.api_key_env))
 
 
