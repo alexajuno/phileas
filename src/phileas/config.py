@@ -543,12 +543,28 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
     and tell that a keyless provider needs no key at all. ``choices.models_by_provider``
     gives the suggested model ids per provider, so the model picker offers a set
     that fits the chosen provider.
+
+    ``secrets.llm_keys`` reports presence (set + source) for *each* provider's key
+    env var, not only the saved one, so a UI can show the right status and let the
+    key be set for whichever provider is currently selected, before that choice is
+    saved. The value itself is never included.
     """
     from phileas import secrets
     from phileas.llm.client import SUPPORTED_PROVIDERS, default_api_key_env, known_models, models_for_provider
 
-    env_set = bool(os.environ.get(cfg.llm.api_key_env))
-    stored = cfg.llm.api_key_env in secrets.load_secrets(cfg.home)
+    stored_names = set(secrets.load_secrets(cfg.home))
+
+    def _key_status(name: str) -> dict[str, Any]:
+        in_env = bool(os.environ.get(name))
+        in_file = name in stored_names
+        return {"set": in_env or in_file, "source": "env" if in_env else ("stored" if in_file else None)}
+
+    # Presence for the saved provider's var plus every provider's default var, so
+    # the UI can render an accurate badge/field for the selected provider.
+    key_envs = {cfg.llm.api_key_env}
+    key_envs.update(e for p in SUPPORTED_PROVIDERS if (e := default_api_key_env(p)))
+    llm_keys = {name: _key_status(name) for name in sorted(key_envs)}
+    saved = _key_status(cfg.llm.api_key_env)
 
     return {
         "profile": cfg.profile,
@@ -563,8 +579,9 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
         },
         "secrets": {
             "llm_api_key_env": cfg.llm.api_key_env,
-            "llm_api_key_set": env_set or stored,
-            "llm_api_key_source": "env" if env_set else ("stored" if stored else None),
+            "llm_api_key_set": saved["set"],
+            "llm_api_key_source": saved["source"],
+            "llm_keys": llm_keys,
             "sync_token_set": bool(os.environ.get("PHILEAS_SYNC_TOKEN")),
         },
         "llm_available": cfg.api_extraction_active,

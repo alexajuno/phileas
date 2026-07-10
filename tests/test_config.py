@@ -567,6 +567,10 @@ class TestConfigSnapshot:
         assert snap["secrets"]["llm_api_key_set"] is False
         assert snap["secrets"]["llm_api_key_source"] is None
         assert snap["secrets"]["sync_token_set"] is False
+        # Per-env-var presence covers every provider's key var, not just the saved one.
+        keys = snap["secrets"]["llm_keys"]
+        assert keys["PHILEAS_ANTHROPIC_API_KEY"] == {"set": False, "source": None}
+        assert keys["PHILEAS_OPENAI_API_KEY"] == {"set": False, "source": None}
         assert snap["llm_available"] is False
 
     def test_secret_presence_tracks_env(self, _isolate_home, monkeypatch):
@@ -577,6 +581,7 @@ class TestConfigSnapshot:
         snap = config_snapshot(load_config())
         assert snap["secrets"]["llm_api_key_set"] is True
         assert snap["secrets"]["llm_api_key_source"] == "env"
+        assert snap["secrets"]["llm_keys"]["PHILEAS_ANTHROPIC_API_KEY"] == {"set": True, "source": "env"}
         assert snap["secrets"]["sync_token_set"] is True
         # The presence booleans never carry the secret value itself.
         assert key_canary not in str(snap) and token_canary not in str(snap)
@@ -591,6 +596,7 @@ class TestConfigSnapshot:
         snap = config_snapshot(load_config())
         assert snap["secrets"]["llm_api_key_set"] is True
         assert snap["secrets"]["llm_api_key_source"] == "stored"
+        assert snap["secrets"]["llm_keys"]["PHILEAS_ANTHROPIC_API_KEY"] == {"set": True, "source": "stored"}
         # The stored value never rides along in the snapshot.
         assert key_canary not in str(snap)
 
