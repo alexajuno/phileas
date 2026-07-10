@@ -30,10 +30,8 @@ from phileas.daemon_client import (  # noqa: F401  (call/ensure_running/is_runni
     ensure_running,
     is_running,
 )
-from phileas.db import Database
 from phileas.engine import MemoryEngine
-from phileas.graph import GraphStore
-from phileas.vector import VectorStore
+from phileas.factory import build_engine
 
 if TYPE_CHECKING:
     from phileas.extraction_worker import ExtractionWorker
@@ -317,18 +315,13 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     # -- From here: either child process or foreground mode --
 
-    # Suppress model loading noise
-    import logging
-
-    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-
-    # Load engine (this loads models — the whole point)
-    db = Database(path=config.db_path)
-    vector = VectorStore(path=config.chroma_path)
-    graph = GraphStore(path=config.graph_path)
-    engine = MemoryEngine(db=db, vector=vector, graph=graph, config=config)
+    # Load engine (this loads models — the whole point). build_engine wires the
+    # three stores and quiets model-loading noise; the graph/vector locals below
+    # drive the daemon-only warmup (eager lock, pre-warm) that follows.
+    engine = build_engine(config)
+    db = engine.db
+    graph = engine.graph
+    vector = engine.vector
 
     # Eagerly initialize KuzuDB connection — the daemon is the single
     # process that should hold the write lock. Lazy init can race with

@@ -426,6 +426,27 @@ def load_config(
     return cfg
 
 
+def config_from_dict(data: dict) -> PhileasConfig:
+    """Build a config from a plain dict — the SDK's ``Memory.from_config`` path.
+
+    Same shape and semantics as a ``config.toml``: ``home`` and ``profile`` are
+    top-level keys, while ``sync`` / ``extraction`` / ``llm`` are nested tables
+    applied section by section. Unknown keys are ignored, exactly as when loading
+    a TOML file. ``home`` (when given) is expanded and used verbatim; otherwise
+    the home is resolved from ``profile`` under the usual XDG layout.
+
+    Storage-backend selection is not a config knob yet, so a ``vector_store`` /
+    ``graph_store`` section here is silently dropped like any other unknown key.
+    """
+    home_value = data.get("home")
+    home = Path(home_value).expanduser() if home_value else None
+    profile = resolve_profile(data.get("profile"))
+    resolved_home = home if home is not None else resolve_home(data.get("profile"))
+    cfg = PhileasConfig(home=resolved_home, profile=profile)
+    _apply_toml_data(cfg, data)
+    return cfg
+
+
 # ------------------------------------------------------------------
 # Config writing
 # ------------------------------------------------------------------

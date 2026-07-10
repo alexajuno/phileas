@@ -30,6 +30,26 @@ jobs:
       - name: Ruff format check
         run: ruff format --check src/ tests/
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+
+      # Scoped gate: the SDK seam plus typecheck/conformance.py, which proves each
+      # concrete store satisfies its backend Protocol. Config in [tool.mypy] reads
+      # the source directly (mypy_path = src), so no package install or model
+      # download is needed — this stays a fast static check.
+      - name: Install mypy
+        run: pip install mypy
+
+      - name: Type check
+        run: mypy
+
   test:
     runs-on: ubuntu-latest
     needs: lint

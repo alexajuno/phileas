@@ -18,10 +18,11 @@ from datetime import date, datetime, timezone
 from typing import cast, get_args
 
 from phileas import contradiction
+from phileas.backends import DatabaseBackend, GraphBackend, VectorBackend
 from phileas.config import PhileasConfig, load_config
-from phileas.db import Database, clean_source_event_id
+from phileas.db import clean_source_event_id
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
-from phileas.graph import GraphStore, _norm_type
+from phileas.graph import _norm_type
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Thread
 from phileas.reconcile import candidate_pairs
@@ -29,7 +30,6 @@ from phileas.scoring import mmr_select, retrieval_strength, score_components, se
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.temporal import resolve_deixis, resolve_temporal
-from phileas.vector import VectorStore
 
 log = get_logger()
 
@@ -278,9 +278,9 @@ def _context_score_delta(
 class MemoryEngine:
     def __init__(
         self,
-        db: Database,
-        vector: VectorStore,
-        graph: GraphStore,
+        db: DatabaseBackend,
+        vector: VectorBackend,
+        graph: GraphBackend,
         config: PhileasConfig | None = None,
     ) -> None:
         self.db = db

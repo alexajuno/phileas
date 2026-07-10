@@ -25,9 +25,7 @@ from phileas.cli.formatter import (
 from phileas.config import EXTRACTION_MODES, load_config
 from phileas.db import Database, clean_source_event_id
 from phileas.engine import MemoryEngine
-from phileas.graph import GraphStore
 from phileas.models import MemoryItem
-from phileas.vector import VectorStore
 
 
 def _daemon_call(method: str, params: dict | None = None, timeout: float = 30) -> dict | None:
@@ -38,18 +36,10 @@ def _daemon_call(method: str, params: dict | None = None, timeout: float = 30) -
 
 
 def _get_engine() -> MemoryEngine:
-    """Create a MemoryEngine from the current config. Suppresses model loading noise."""
-    import logging
+    """Create a MemoryEngine from the current config."""
+    from phileas.factory import build_engine
 
-    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-
-    cfg = load_config()
-    db = Database(path=cfg.db_path)
-    vector = VectorStore(path=cfg.chroma_path)
-    graph = GraphStore(path=cfg.graph_path)
-    return MemoryEngine(db=db, vector=vector, graph=graph, config=cfg)
+    return build_engine(load_config())
 
 
 def _get_db() -> Database:
