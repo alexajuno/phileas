@@ -34,7 +34,7 @@ import json
 import sys
 
 from phileas.config import LLMConfig
-from phileas.llm import LLMClient, extract_memories
+from phileas.llm import LLMClient, default_api_key_env, extract_memories
 from phileas.llm.extraction import ExtractionUnavailable
 
 # A short attribution-tagged conversation that carries a few durable facts and
@@ -46,13 +46,6 @@ self: It's my local-first memory layer for AI assistants. I've been building it 
 assistant: Nice. What are you using for the vector search?
 self: Chroma for vectors and Kuzu for the entity graph. I care a lot about it staying offline and private.
 """
-
-# Env var that holds each keyed provider's credential when --api-key-env is unset.
-# Ollama is keyless and needs none.
-_DEFAULT_KEY_ENV = {
-    "anthropic": "PHILEAS_ANTHROPIC_API_KEY",
-    "openai": "PHILEAS_OPENAI_API_KEY",
-}
 
 
 def _unavailable_hint(provider: str, api_key_env: str) -> str:
@@ -71,7 +64,7 @@ def main() -> int:
     parser.add_argument("--transcript", default=None, help="path to a transcript file (default: a built-in sample)")
     args = parser.parse_args()
 
-    api_key_env = args.api_key_env or _DEFAULT_KEY_ENV.get(args.provider, "PHILEAS_ANTHROPIC_API_KEY")
+    api_key_env = args.api_key_env or default_api_key_env(args.provider) or "PHILEAS_ANTHROPIC_API_KEY"
     config = LLMConfig(provider=args.provider, model=args.model, api_key_env=api_key_env)
     client = LLMClient(config)
 

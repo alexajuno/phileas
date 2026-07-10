@@ -144,6 +144,69 @@ def test_show_reports_mode_and_model(tmp_path):
     assert "api_key_env" in result.output
 
 
+# -- set-provider ---------------------------------------------------------
+
+
+def test_set_provider_writes_provider_and_default_key_env(tmp_path):
+    result = _run(["config", "set-provider", "openai"])
+    assert result.exit_code == 0, result.output
+    cfg = load_config(project_start=tmp_path)
+    assert cfg.llm.provider == "openai"
+    assert cfg.llm.api_key_env == "PHILEAS_OPENAI_API_KEY"  # repointed to the provider's var
+
+
+def test_set_provider_ollama_notes_keyless(tmp_path):
+    result = _run(["config", "set-provider", "ollama"])
+    assert result.exit_code == 0, result.output
+    assert load_config(project_start=tmp_path).llm.provider == "ollama"
+    assert "no API key" in result.output
+
+
+def test_set_provider_rejects_unknown():
+    assert _run(["config", "set-provider", "grok"]).exit_code != 0
+
+
+# -- set-key / unset-key --------------------------------------------------
+
+
+def test_set_key_stores_in_0600_file_not_config(tmp_path, monkeypatch):
+    import stat
+
+    from phileas import secrets
+
+    monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+    result = _run(["config", "set-key", "--key", "sk-secret-xyz"])
+    assert result.exit_code == 0, result.output
+
+    cfg = load_config(project_start=tmp_path)
+    # Stored in the secrets file, 0600, and reachable.
+    assert secrets.read_stored_key(cfg.home, "PHILEAS_ANTHROPIC_API_KEY") == "sk-secret-xyz"
+    assert stat.S_IMODE(secrets.secrets_path(cfg.home).stat().st_mode) == 0o600
+    # Never written into config.toml, and never echoed to the terminal.
+    assert "sk-secret-xyz" not in (cfg.config_path.read_text() if cfg.config_path.exists() else "")
+    assert "sk-secret-xyz" not in result.output
+
+
+def test_show_reports_stored_key_source(tmp_path, monkeypatch):
+    monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+    assert _run(["config", "set-key", "--key", "sk-abc"]).exit_code == 0
+    result = _run(["config", "show"])
+    assert "stored in" in result.output
+
+
+def test_unset_key_removes_stored(tmp_path, monkeypatch):
+    from phileas import secrets
+
+    monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+    assert _run(["config", "set-key", "--key", "sk-abc"]).exit_code == 0
+    cfg = load_config(project_start=tmp_path)
+    assert secrets.read_stored_key(cfg.home, "PHILEAS_ANTHROPIC_API_KEY") == "sk-abc"
+
+    result = _run(["config", "unset-key"])
+    assert result.exit_code == 0, result.output
+    assert secrets.read_stored_key(cfg.home, "PHILEAS_ANTHROPIC_API_KEY") is None
+
+
 # -- applying the change to the running processes -------------------------
 
 

@@ -110,8 +110,8 @@ class ExtractionConfig:
 
 
 # Providers that run a model locally and need no API key. For these,
-# ``LLMConfig.available`` is True without any env var set, so a laptop can distill
-# against a local Ollama model with no credential.
+# A keyless provider is reachable without any credential, so a laptop can distill
+# against a local Ollama model with no key set.
 _KEYLESS_PROVIDERS = frozenset({"ollama"})
 
 
@@ -126,10 +126,12 @@ class LLMConfig:
     bearer secrets stay out of a committed ``config.toml``. The default var is
     namespaced (``PHILEAS_ANTHROPIC_API_KEY``), not the generic
     ``ANTHROPIC_API_KEY``, so it never collides with the host Claude Code's own
-    credential, which takes precedence over a Pro/Max subscription. ``available``
-    reports whether the provider can run (key reachable, or a keyless local
-    provider); the worker checks it before each call, so a box that cannot run
-    leaves ingested turns pending and visible rather than failing a write.
+    credential, which takes precedence over a Pro/Max subscription. A key may also
+    be stored, out of ``config.toml``, in the profile's ``0600`` secrets file (see
+    :mod:`phileas.secrets`); :func:`key_reachable` folds the environment and that
+    file into one reachability check the worker consults before each call, so a box
+    that cannot run leaves ingested turns pending and visible rather than failing a
+    write.
 
     Only provider/model selection and the key pointer live here. The token cap
     and the extraction debounce/buffer timing are never hand-tuned, so they are
@@ -142,12 +144,25 @@ class LLMConfig:
     model: str = "claude-haiku-4-5-20251001"
     api_key_env: str = "PHILEAS_ANTHROPIC_API_KEY"
 
-    @property
-    def available(self) -> bool:
-        """True when the configured provider can run: keyless, or its key is set."""
-        if self.provider in _KEYLESS_PROVIDERS:
-            return True
-        return bool(os.environ.get(self.api_key_env))
+
+def provider_needs_key(provider: str) -> bool:
+    """Whether ``provider`` requires an API key (false for a local keyless one)."""
+    return provider not in _KEYLESS_PROVIDERS
+
+
+def key_reachable(llm: LLMConfig, home: Path | None) -> bool:
+    """Whether ``llm``'s provider can authenticate right now.
+
+    True for a keyless provider (a local Ollama), otherwise true when its key is
+    reachable in the environment or in the profile's stored secrets file (see
+    :func:`phileas.secrets.resolve_key`). ``home`` may be ``None`` for a caller
+    without a resolved profile home, in which case only the environment is read.
+    """
+    if llm.provider in _KEYLESS_PROVIDERS:
+        return True
+    from phileas import secrets
+
+    return bool(secrets.resolve_key(home, llm.api_key_env))
 
 
 # ------------------------------------------------------------------
@@ -203,7 +218,7 @@ class PhileasConfig:
         so the worker's start gate is ``mode == "api"`` alone; this stricter check
         is what a settings UI reports as "extraction available".
         """
-        return self.extraction.mode == "api" and self.llm.available
+        return self.extraction.mode == "api" and key_reachable(self.llm, self.home)
 
     # -- Derived paths --
 
@@ -512,15 +527,21 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
 
     Reports the effective values (what a freshly loaded config resolves to),
     the user ``config.toml`` path they write to, secret *presence* — whether the
-    LLM key and sync token are reachable in the environment, never their values —
-    and the offered ``choices`` (extraction modes, providers, models) so a settings
-    UI can render those fields as pickers driven by core rather than a hardcoded
-    list. Secrets stay in the environment by design, so the UI shows a
-    reachable/unreachable status rather than an editable field. ``llm_available``
-    is the "will the api path actually extract" status: the ``api`` mode is chosen
-    *and* the key is reachable.
+    LLM key and sync token are reachable, never their values — and the offered
+    ``choices`` (extraction modes, providers, models) so a settings UI can render
+    those fields as pickers driven by core rather than a hardcoded list. The key
+    value stays out of ``config.toml`` by design: the UI shows a reachable status
+    and where it resolves from (the environment, or the profile's stored secrets
+    file), never an editable value. ``llm_api_key_source`` is ``"env"`` when the
+    environment carries it (which wins), ``"stored"`` when only the secrets file
+    does, else ``None``. ``llm_available`` is the "will the api path actually
+    extract" status: the ``api`` mode is chosen *and* the key is reachable.
     """
+    from phileas import secrets
     from phileas.llm.client import SUPPORTED_PROVIDERS, known_models
+
+    env_set = bool(os.environ.get(cfg.llm.api_key_env))
+    stored = cfg.llm.api_key_env in secrets.load_secrets(cfg.home)
 
     return {
         "profile": cfg.profile,
@@ -533,7 +554,8 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
         },
         "secrets": {
             "llm_api_key_env": cfg.llm.api_key_env,
-            "llm_api_key_set": bool(os.environ.get(cfg.llm.api_key_env)),
+            "llm_api_key_set": env_set or stored,
+            "llm_api_key_source": "env" if env_set else ("stored" if stored else None),
             "sync_token_set": bool(os.environ.get("PHILEAS_SYNC_TOKEN")),
         },
         "llm_available": cfg.api_extraction_active,

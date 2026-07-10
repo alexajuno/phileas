@@ -25,6 +25,7 @@ from phileas.cli.formatter import (
 from phileas.config import EXTRACTION_MODES, load_config
 from phileas.db import Database, clean_source_event_id
 from phileas.engine import MemoryEngine
+from phileas.llm.client import SUPPORTED_PROVIDERS
 from phileas.models import MemoryItem
 
 
@@ -1096,16 +1097,27 @@ def _apply_config_change(cfg) -> None:
 @config_cmd.command("show")
 def config_show():
     """Print the effective extraction settings and where they resolve from."""
+    from phileas import secrets
+    from phileas.config import provider_needs_key
     from phileas.hook_sync import hooks_status
 
     cfg = load_config()
     llm = cfg.llm
-    key_set = bool(os.environ.get(llm.api_key_env))
+    env_set = bool(os.environ.get(llm.api_key_env))
+    stored = llm.api_key_env in secrets.load_secrets(cfg.home)
+    if not provider_needs_key(llm.provider):
+        key_status = f"not needed for {llm.provider}"
+    elif env_set:
+        key_status = "set in this shell"
+    elif stored:
+        key_status = f"stored in {secrets.secrets_path(cfg.home)}"
+    else:
+        key_status = "unset — run `phileas config set-key`"
     console.print(f"[bold]Extraction[/bold]  ({cfg.config_path})")
     console.print(f"  mode         {cfg.extraction.mode}")
     console.print(f"  provider     {llm.provider}")
     console.print(f"  model        {llm.model}")
-    console.print(f"  api_key_env  {llm.api_key_env}  ({'set' if key_set else 'unset'} in this shell)")
+    console.print(f"  api_key_env  {llm.api_key_env}  ({key_status})")
 
     nudge = hooks_status(cfg.profile)["stop_memorize"]
     nudge_text = "not installed" if nudge is None else ("on" if nudge else "off")
@@ -1142,9 +1154,12 @@ def config_mode(mode: str):
             "[dim]Capture is now manual: ask Phileas to save what's worth keeping from a session, "
             "then review with `phileas memory queue list`.[/dim]"
         )
-    if mode == "api" and not os.environ.get(cfg.llm.api_key_env):
+    from phileas.config import key_reachable
+
+    if mode == "api" and not key_reachable(cfg.llm, cfg.home):
         print_warning(
-            f"{cfg.llm.api_key_env} is unset; the worker leaves turns pending and visible until a key is reachable."
+            f"No key for {cfg.llm.api_key_env}; the worker leaves turns pending and visible until one is reachable. "
+            "Set it with `phileas config set-key`."
         )
     if _project_section_override("extraction") is not None:
         print_warning("A project .phileas.toml [extraction] section shadows this write.")
@@ -1166,4 +1181,85 @@ def config_set_model(model: str):
         print_warning(f"{model!r} has no known pricing, so usage cost records as 0. Known: {', '.join(known_models())}")
     if _project_section_override("llm") is not None:
         print_warning("A project .phileas.toml [llm] section shadows this write.")
+    _apply_config_change(cfg)
+
+
+@config_cmd.command("set-provider")
+@click.argument("provider", type=click.Choice(SUPPORTED_PROVIDERS))
+def config_set_provider(provider: str):
+    """Set the extraction provider — writes [llm].provider and its default key env var.
+
+    Switching provider also points ``api_key_env`` at that provider's conventional
+    var (``PHILEAS_ANTHROPIC_API_KEY``, ``PHILEAS_OPENAI_API_KEY``), so the stored or
+    exported key for the new provider is found without a second edit. A keyless
+    provider (``ollama``) needs no key at all.
+    """
+    from phileas import secrets
+    from phileas.config import provider_needs_key, update_user_config
+    from phileas.llm import default_api_key_env
+
+    cfg = load_config()
+    values: dict[str, str] = {"provider": provider}
+    key_env = default_api_key_env(provider)
+    if key_env:
+        values["api_key_env"] = key_env
+    path = update_user_config(cfg.home, "llm", values)
+    print_success(f"Set llm.provider = {provider}")
+    if key_env:
+        console.print(f"[dim]llm.api_key_env = {key_env}[/dim]")
+    console.print(f"[dim]{path}[/dim]")
+
+    if not provider_needs_key(provider):
+        console.print(f"[dim]{provider} runs locally with no API key.[/dim]")
+    elif key_env and not (os.environ.get(key_env) or key_env in secrets.load_secrets(cfg.home)):
+        print_warning(f"No key for {key_env} yet. Set it with `phileas config set-key`.")
+    if _project_section_override("llm") is not None:
+        print_warning("A project .phileas.toml [llm] section shadows this write.")
+    _apply_config_change(cfg)
+
+
+@config_cmd.command("set-key")
+@click.option("--env", "env_name", default=None, help="env-var name to store under (default: the api_key_env)")
+@click.option("--key", "key_value", default=None, help="the key value (omit to be prompted, kept out of shell history)")
+def config_set_key(env_name: str | None, key_value: str | None):
+    """Store the extraction API key in the profile's 0600 secrets file, not config.toml.
+
+    The key is read at call time as a fallback behind the environment, so an exported
+    ``PHILEAS_*`` var still wins. Omit ``--key`` to be prompted with hidden input
+    (keeping the secret out of your shell history). Restart the daemon to apply.
+    """
+    from phileas import secrets
+    from phileas.config import provider_needs_key
+
+    cfg = load_config()
+    name = env_name or cfg.llm.api_key_env
+    if not provider_needs_key(cfg.llm.provider) and env_name is None:
+        print_warning(f"Provider {cfg.llm.provider} is keyless; a stored key won't be used until you switch provider.")
+    if key_value is None:
+        key_value = click.prompt(f"Paste the key for {name}", hide_input=True)
+    try:
+        path = secrets.store_key(cfg.home, name, key_value)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    print_success(f"Stored a key for {name}")
+    console.print(f"[dim]{path}  (0600, value not echoed)[/dim]")
+    if os.environ.get(name):
+        print_warning(f"{name} is also set in this shell, which takes precedence over the stored key.")
+    _apply_config_change(cfg)
+
+
+@config_cmd.command("unset-key")
+@click.option("--env", "env_name", default=None, help="env-var name to clear (default: the configured api_key_env)")
+def config_unset_key(env_name: str | None):
+    """Remove a stored key from the profile's secrets file. Leaves the environment alone."""
+    from phileas import secrets
+
+    cfg = load_config()
+    name = env_name or cfg.llm.api_key_env
+    if secrets.remove_key(cfg.home, name):
+        print_success(f"Removed the stored key for {name}")
+    else:
+        console.print(f"[dim]No stored key for {name}.[/dim]")
+    if os.environ.get(name):
+        console.print(f"[dim]{name} is still set in this shell (the environment is not touched here).[/dim]")
     _apply_config_change(cfg)

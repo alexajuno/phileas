@@ -22,6 +22,7 @@ message alongside the parsed object so token usage still reaches the ledger.
 
 from __future__ import annotations
 
+from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -54,6 +55,21 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 # ``build_chat_model``. ``ollama`` runs a model locally with no API key.
 SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "ollama")
 
+# The env var each keyed provider reads its credential from by default. Namespaced
+# with ``PHILEAS_`` so Phileas's key never collides with the host agent's generic
+# ``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``. ``set-provider`` writes the matching
+# name into ``api_key_env`` when the provider changes; a keyless provider (Ollama)
+# has no entry.
+_DEFAULT_API_KEY_ENV: dict[str, str] = {
+    "anthropic": "PHILEAS_ANTHROPIC_API_KEY",
+    "openai": "PHILEAS_OPENAI_API_KEY",
+}
+
+
+def default_api_key_env(provider: str) -> str | None:
+    """The conventional key env var for ``provider``; ``None`` for a keyless one."""
+    return _DEFAULT_API_KEY_ENV.get(provider)
+
 
 def known_models() -> list[str]:
     """Model names with known pricing — the CLI's suggestion set for ``set-model``.
@@ -73,22 +89,25 @@ def _cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens / 1_000_000) * price_in + (output_tokens / 1_000_000) * price_out
 
 
-def build_chat_model(config: LLMConfig, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> BaseChatModel:
+def build_chat_model(
+    config: LLMConfig, *, home: Path | None = None, max_tokens: int = DEFAULT_MAX_TOKENS
+) -> BaseChatModel:
     """Construct the LangChain chat model for the configured provider.
 
-    The key never lives in config: it is read at call time from the env var named
-    by ``config.api_key_env`` and passed to the adapter explicitly, so Phileas's
-    namespaced key (``PHILEAS_ANTHROPIC_API_KEY``) is used rather than the generic
-    ``ANTHROPIC_API_KEY`` the host agent may also hold. A keyless local provider
-    (Ollama) takes no key.
+    The key never lives in config: it is resolved at call time (environment first,
+    then the profile's stored secrets file under ``home``; see
+    :func:`phileas.secrets.resolve_key`) and passed to the adapter explicitly, so
+    Phileas's namespaced key (``PHILEAS_ANTHROPIC_API_KEY``) is used rather than the
+    generic ``ANTHROPIC_API_KEY`` the host agent may also hold. A keyless local
+    provider (Ollama) takes no key.
 
     Adapters are imported inside their branch so only the selected provider's
     package needs to be installed.
     """
-    import os
+    from phileas import secrets
 
     provider = config.provider
-    api_key = os.environ.get(config.api_key_env)
+    api_key = secrets.resolve_key(home, config.api_key_env)
 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -114,21 +133,30 @@ class LLMClient:
     """Synchronous, provider-agnostic wrapper for daemon-side structured calls."""
 
     def __init__(
-        self, config: LLMConfig, usage_tracker: Any | None = None, *, model: BaseChatModel | None = None
+        self,
+        config: LLMConfig,
+        usage_tracker: Any | None = None,
+        *,
+        home: Path | None = None,
+        model: BaseChatModel | None = None,
     ) -> None:
-        """``model`` is injectable so tests run without an adapter or a network."""
+        """``home`` locates the stored secrets file for key resolution; ``model`` is
+        injectable so tests run without an adapter or a network."""
         self._config = config
         self._usage = usage_tracker
+        self._home = home
         self._model = model
 
     @property
     def available(self) -> bool:
-        """True when the configured provider can run (key present, or keyless)."""
-        return self._config.available
+        """True when the configured provider can run (key reachable, or keyless)."""
+        from phileas.config import key_reachable
+
+        return key_reachable(self._config, self._home)
 
     def _chat_model(self) -> BaseChatModel:
         if self._model is None:
-            self._model = build_chat_model(self._config)
+            self._model = build_chat_model(self._config, home=self._home)
         return self._model
 
     def invoke_structured(self, operation: str, schema: type[TSchema], messages: Any) -> TSchema:

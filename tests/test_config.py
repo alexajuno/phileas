@@ -19,7 +19,9 @@ from phileas.config import (
     cli_default_profile,
     config_snapshot,
     discover_profiles,
+    key_reachable,
     load_config,
+    provider_needs_key,
     read_active_profile,
     resolve_home,
     resolve_profile,
@@ -365,6 +367,15 @@ class TestExtractionConfig:
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         assert load_config(home=tmp_path).api_extraction_active is True
 
+    def test_api_extraction_active_via_stored_key(self, tmp_path, monkeypatch):
+        from phileas import secrets
+
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        (tmp_path / "config.toml").write_text('[extraction]\nmode = "api"\n')
+        assert load_config(home=tmp_path).api_extraction_active is False
+        secrets.store_key(tmp_path, "PHILEAS_ANTHROPIC_API_KEY", "sk-stored")
+        assert load_config(home=tmp_path).api_extraction_active is True
+
     def test_client_mode_is_never_api_active(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         cfg = load_config(home=tmp_path)  # default client mode
@@ -380,20 +391,35 @@ class TestLLMConfig:
         assert cfg.llm.model == "claude-haiku-4-5-20251001"
         assert cfg.llm.api_key_env == "PHILEAS_ANTHROPIC_API_KEY"
 
-    def test_available_tracks_key_presence(self, monkeypatch):
+    def test_key_reachable_tracks_env_presence(self, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         cfg = LLMConfig()
-        assert cfg.available is False
+        assert key_reachable(cfg, None) is False
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
-        assert cfg.available is True
+        assert key_reachable(cfg, None) is True
 
-    def test_available_honors_custom_key_env(self, monkeypatch):
+    def test_key_reachable_honors_custom_key_env(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         cfg = LLMConfig(api_key_env="PHILEAS_ANTHROPIC_API_KEY")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-wrong")
-        assert cfg.available is False
+        assert key_reachable(cfg, None) is False  # the generic var doesn't count
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-right")
-        assert cfg.available is True
+        assert key_reachable(cfg, None) is True
+
+    def test_key_reachable_falls_back_to_stored_file(self, tmp_path, monkeypatch):
+        from phileas import secrets
+
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        cfg = LLMConfig()
+        assert key_reachable(cfg, tmp_path) is False
+        secrets.store_key(tmp_path, cfg.api_key_env, "sk-stored")
+        assert key_reachable(cfg, tmp_path) is True  # reachable via the 0600 file
+
+    def test_keyless_provider_reachable_without_key(self, monkeypatch):
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        assert key_reachable(LLMConfig(provider="ollama", model="llama3.1"), None) is True
+        assert provider_needs_key("ollama") is False
+        assert provider_needs_key("anthropic") is True
 
     def test_toml_overrides(self, tmp_path):
         (tmp_path / "config.toml").write_text(
@@ -530,6 +556,7 @@ class TestConfigSnapshot:
         assert "anthropic" in snap["choices"]["providers"]
         assert cfg.llm.model in snap["choices"]["models"]
         assert snap["secrets"]["llm_api_key_set"] is False
+        assert snap["secrets"]["llm_api_key_source"] is None
         assert snap["secrets"]["sync_token_set"] is False
         assert snap["llm_available"] is False
 
@@ -540,9 +567,23 @@ class TestConfigSnapshot:
         monkeypatch.setenv("PHILEAS_SYNC_TOKEN", token_canary)
         snap = config_snapshot(load_config())
         assert snap["secrets"]["llm_api_key_set"] is True
+        assert snap["secrets"]["llm_api_key_source"] == "env"
         assert snap["secrets"]["sync_token_set"] is True
         # The presence booleans never carry the secret value itself.
         assert key_canary not in str(snap) and token_canary not in str(snap)
+
+    def test_secret_presence_tracks_stored_file(self, _isolate_home, monkeypatch):
+        from phileas import secrets
+
+        key_canary = "LEAKCANARY-STORED-9f3a"
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        cfg = load_config()
+        secrets.store_key(cfg.home, cfg.llm.api_key_env, key_canary)
+        snap = config_snapshot(load_config())
+        assert snap["secrets"]["llm_api_key_set"] is True
+        assert snap["secrets"]["llm_api_key_source"] == "stored"
+        # The stored value never rides along in the snapshot.
+        assert key_canary not in str(snap)
 
 
 class TestValidateConfigUpdate:
