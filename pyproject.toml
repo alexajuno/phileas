@@ -40,7 +40,11 @@ phileas = "phileas.cli:app"
 embeddings = ["sentence-transformers"]
 # Internal extraction LLM (the observer capture path). Off unless [llm] is
 # enabled with a key present, so the SDK stays an opt-in install.
-extraction = ["anthropic"]
+extraction = [
+    "langchain-anthropic>=1.4.8",
+    "langchain-ollama>=1.1.0",
+    "langchain-openai>=1.3.4",
+]
 
 [dependency-groups]
 dev = [

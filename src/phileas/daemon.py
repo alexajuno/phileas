@@ -588,7 +588,7 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         from phileas.extraction_worker import ExtractionWorker
         from phileas.llm import LLMClient
 
-        client = LLMClient(config.llm, usage_tracker=engine._usage_tracker)
+        client = LLMClient(config.llm, usage_tracker=engine._usage_tracker, home=config.home)
         _extraction_worker = ExtractionWorker(engine, client)
         _extraction_worker.seed()
         _extraction_worker.start()
@@ -721,6 +721,31 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             from phileas.hook_sync import install_hooks
 
             install_hooks(fresh.profile, memorize=fresh.extraction.mode == "client")
+        return {"config": config_snapshot(fresh), "restart_required": True}
+    elif method == "config_set_secret":
+        from phileas import secrets
+        from phileas.config import config_snapshot
+
+        # Store the key in the profile's 0600 secrets file, never config.toml. The
+        # value is write-only across this surface: the snapshot echoes presence, not
+        # the key. Default the env-var name to the saved config's api_key_env so the
+        # UI can just send the value.
+        fresh = load_config(home=engine.config.home, profile=engine.config.profile)
+        value = params.get("value")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("a non-empty key value is required")
+        name = params.get("name") or fresh.llm.api_key_env
+        secrets.store_key(fresh.home, name, value)
+        fresh = load_config(home=engine.config.home, profile=engine.config.profile)
+        return {"config": config_snapshot(fresh), "restart_required": True}
+    elif method == "config_unset_secret":
+        from phileas import secrets
+        from phileas.config import config_snapshot
+
+        fresh = load_config(home=engine.config.home, profile=engine.config.profile)
+        name = params.get("name") or fresh.llm.api_key_env
+        secrets.remove_key(fresh.home, name)
+        fresh = load_config(home=engine.config.home, profile=engine.config.profile)
         return {"config": config_snapshot(fresh), "restart_required": True}
     elif method == "list":
         memory_type = params.get("memory_type")

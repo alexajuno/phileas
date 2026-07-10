@@ -1,38 +1,46 @@
-"""Anthropic-backed client for Phileas's internal extraction calls.
+"""LangChain-backed client for Phileas's internal extraction calls.
 
 The daemon constructs one ``LLMClient`` after the engine loads and hands it to
-the extraction worker. ``complete`` is synchronous (the worker runs in a daemon
-thread, like the reinforcement loop), records token usage to the existing
-``UsageTracker``, and returns the raw Anthropic ``Message`` so callers can pull
-either text (``text_from``) or a forced tool call's structured input
-(``tool_input_from``).
+the extraction worker. The client owns two concerns: building a chat model for
+the configured provider, and running one structured-output call while recording
+token usage to the existing ``UsageTracker``.
 
-The ``anthropic`` SDK is imported lazily inside ``_ensure_client`` so importing
-this module stays cheap and safe when extraction is off, and a missing SDK
-surfaces only when a call is actually attempted.
+Provider portability is the reason for LangChain here. ``build_chat_model`` maps
+``LLMConfig.provider`` onto a LangChain chat adapter (Anthropic, OpenAI, or a
+local Ollama), so switching the model Phileas extracts with is a config change,
+not a code change. Each adapter is imported lazily inside the branch that needs
+it, so importing this module stays cheap on the no-extraction path and a provider
+whose adapter is not installed only fails when it is actually selected.
+
+``invoke_structured`` is synchronous (the worker runs in a daemon thread, like
+the reinforcement loop). It asks the model for output shaped to a Pydantic schema
+via ``with_structured_output`` — for a tool-calling provider that is forced tool
+use under the hood, the same mechanism the hand-rolled client drove by hand, now
+with validation and provider-agnostic. ``include_raw=True`` keeps the underlying
+message alongside the parsed object so token usage still reaches the ledger.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import re
+from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+    from pydantic import BaseModel
+
     from phileas.config import LLMConfig
 
 # Output-token cap for an extraction call. Fixed rather than configurable: the
 # extraction prompt returns a small, bounded set of memories, so this is a
-# safety ceiling, not a knob to hand-tune. Callers of ``complete`` may still pass
-# a per-call override.
+# safety ceiling, not a knob to hand-tune.
 DEFAULT_MAX_TOKENS = 2048
 
-# Per-model price in USD per million (input, output) tokens. Anthropic responses
-# carry no cost, so we derive it for the usage ledger; an unrecognized model
-# records its tokens with zero cost rather than a wrong guess. Source: the
-# claude-api model/pricing reference.
+# Per-model price in USD per million (input, output) tokens. LangChain reports
+# token counts uniformly across providers, but not cost, so we derive it for the
+# usage ledger; an unrecognized model records its tokens with zero cost rather
+# than a wrong guess. Source: the claude-api model/pricing reference.
 _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
@@ -42,53 +50,51 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
-# Providers the extraction client can talk to. Anthropic-only today; the tuple
-# is the offered set for a provider picker (and the guard for a future second
-# backend).
-SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic",)
+# Providers the extraction client can talk to, one LangChain adapter each. The
+# tuple is the offered set for a provider picker and the guard in
+# ``build_chat_model``. ``ollama`` runs a model locally with no API key.
+SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "ollama")
+
+# The env var each keyed provider reads its credential from by default. Namespaced
+# with ``PHILEAS_`` so Phileas's key never collides with the host agent's generic
+# ``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``. ``set-provider`` writes the matching
+# name into ``api_key_env`` when the provider changes; a keyless provider (Ollama)
+# has no entry.
+_DEFAULT_API_KEY_ENV: dict[str, str] = {
+    "anthropic": "PHILEAS_ANTHROPIC_API_KEY",
+    "openai": "PHILEAS_OPENAI_API_KEY",
+}
+
+
+def default_api_key_env(provider: str) -> str | None:
+    """The conventional key env var for ``provider``; ``None`` for a keyless one."""
+    return _DEFAULT_API_KEY_ENV.get(provider)
+
+
+# Offered model ids per provider, for a settings-UI model picker. The adapter
+# accepts any string, so these are the suggested choices, not a hard whitelist:
+# Anthropic's are the priced set (their cost lands in the usage ledger), the
+# others are common current models. A model set by hand that isn't listed is
+# preserved by the picker (it keeps the current value alongside these).
+_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
+    "anthropic": ("claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-5", "claude-opus-4-8"),
+    "openai": ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"),
+    "ollama": ("llama3.2", "llama3.1", "qwen2.5", "mistral"),
+}
+
+
+def models_for_provider(provider: str) -> list[str]:
+    """Suggested model ids for ``provider``; empty for an unknown one."""
+    return list(_MODELS_BY_PROVIDER.get(provider, ()))
 
 
 def known_models() -> list[str]:
     """Model names with known pricing — the CLI's suggestion set for ``set-model``.
 
-    Any model string is accepted by the SDK; these are the ones whose cost the
-    usage ledger can derive, so they make the natural offered choices.
+    Any model string is accepted; these are the ones whose cost the usage ledger
+    can derive, so they make the natural offered choices.
     """
     return sorted(_PRICE_PER_MTOK)
-
-
-def parse_json_response(text: str) -> Any:
-    """Parse the first JSON value out of a model response.
-
-    Models sometimes wrap output in ```json fences and emit trailing prose after
-    the closing fence. Strip a leading fence, then ``raw_decode`` so trailing
-    junk is ignored instead of raising "Extra data".
-    """
-    stripped = re.sub(r"^```(?:json)?\s*\n?", "", text.strip()).lstrip()
-    value, _ = json.JSONDecoder().raw_decode(stripped)
-    return value
-
-
-def text_from(message: Any) -> str:
-    """Concatenate the text blocks of an Anthropic message response."""
-    parts: list[str] = []
-    for block in getattr(message, "content", None) or []:
-        if getattr(block, "type", None) == "text":
-            parts.append(getattr(block, "text", "") or "")
-    return "".join(parts)
-
-
-def tool_input_from(message: Any, tool_name: str | None = None) -> dict | None:
-    """Return the ``input`` of the first ``tool_use`` block (optionally by name).
-
-    Forced tool use (``tool_choice={"type": "tool", "name": ...}``) is how the
-    extraction call gets validated structured output; this pulls that payload.
-    """
-    for block in getattr(message, "content", None) or []:
-        if getattr(block, "type", None) == "tool_use":
-            if tool_name is None or getattr(block, "name", None) == tool_name:
-                return getattr(block, "input", None)
-    return None
 
 
 def _cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -100,46 +106,89 @@ def _cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens / 1_000_000) * price_in + (output_tokens / 1_000_000) * price_out
 
 
-class LLMClient:
-    """Thin synchronous wrapper over the Anthropic SDK for daemon-side calls."""
+def build_chat_model(
+    config: LLMConfig, *, home: Path | None = None, max_tokens: int = DEFAULT_MAX_TOKENS
+) -> BaseChatModel:
+    """Construct the LangChain chat model for the configured provider.
 
-    def __init__(self, config: LLMConfig, usage_tracker: Any | None = None, *, client: Any | None = None) -> None:
-        """``client`` is injectable so tests run without the SDK or a network."""
+    The key never lives in config: it is resolved at call time (environment first,
+    then the profile's stored secrets file under ``home``; see
+    :func:`phileas.secrets.resolve_key`) and passed to the adapter explicitly, so
+    Phileas's namespaced key (``PHILEAS_ANTHROPIC_API_KEY``) is used rather than the
+    generic ``ANTHROPIC_API_KEY`` the host agent may also hold. A keyless local
+    provider (Ollama) takes no key.
+
+    Adapters are imported inside their branch so only the selected provider's
+    package needs to be installed.
+    """
+    from phileas import secrets
+
+    provider = config.provider
+    api_key = secrets.resolve_key(home, config.api_key_env)
+
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(model=config.model, max_tokens=max_tokens, api_key=api_key)
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(model=config.model, max_tokens=max_tokens, api_key=api_key)
+    if provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        # Local server, no key. num_predict is Ollama's output-token cap.
+        return ChatOllama(model=config.model, num_predict=max_tokens)
+
+    raise ValueError(f"unsupported extraction provider {provider!r}; expected one of {SUPPORTED_PROVIDERS}")
+
+
+TSchema = TypeVar("TSchema", bound="BaseModel")
+
+
+class LLMClient:
+    """Synchronous, provider-agnostic wrapper for daemon-side structured calls."""
+
+    def __init__(
+        self,
+        config: LLMConfig,
+        usage_tracker: Any | None = None,
+        *,
+        home: Path | None = None,
+        model: BaseChatModel | None = None,
+    ) -> None:
+        """``home`` locates the stored secrets file for key resolution; ``model`` is
+        injectable so tests run without an adapter or a network."""
         self._config = config
         self._usage = usage_tracker
-        self._client = client
+        self._home = home
+        self._model = model
 
     @property
     def available(self) -> bool:
-        """True when extraction is enabled and the key env var is set."""
-        return self._config.available
+        """True when the configured provider can run (key reachable, or keyless)."""
+        from phileas.config import key_reachable
 
-    def _ensure_client(self) -> Any:
-        if self._client is None:
-            import anthropic  # lazy: keep import-time cost off the no-extraction path
+        return key_reachable(self._config, self._home)
 
-            api_key = os.environ.get(self._config.api_key_env)
-            self._client = anthropic.Anthropic(api_key=api_key)
-        return self._client
+    def _chat_model(self) -> BaseChatModel:
+        if self._model is None:
+            self._model = build_chat_model(self._config, home=self._home)
+        return self._model
 
-    def complete(
-        self,
-        operation: str,
-        *,
-        messages: list[dict[str, Any]],
-        system: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: dict[str, Any] | None = None,
-        max_tokens: int | None = None,
-    ) -> Any:
-        """Run one messages call and return the Anthropic ``Message``.
+    def invoke_structured(self, operation: str, schema: type[TSchema], messages: Any) -> TSchema:
+        """Run one call whose output is validated against ``schema`` and return it.
 
-        Usage (tokens, cost, latency, success) is recorded to the tracker in a
-        ``finally`` so a failed call is still accounted for. Exceptions propagate
-        so the worker can mark the source event failed.
+        ``with_structured_output(schema, include_raw=True)`` binds the schema as
+        the model's response shape and returns ``{"raw", "parsed", "parsing_error"}``:
+        the parsed Pydantic instance for the caller, the raw message for the usage
+        it carries. A parse failure or an empty parse raises, so the worker records
+        the failure against the source events instead of writing a guessed memory.
+
+        Usage (tokens, cost, latency, success) is recorded in a ``finally`` so a
+        failed call is still accounted for. Exceptions propagate.
         """
-        model = self._config.model
-        max_tokens = max_tokens or DEFAULT_MAX_TOKENS
+        structured = self._chat_model().with_structured_output(schema, include_raw=True)
 
         start = perf_counter()
         success = True
@@ -147,28 +196,33 @@ class LLMClient:
         input_tokens = 0
         output_tokens = 0
         try:
-            client = self._ensure_client()
-            kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": messages}
-            if system is not None:
-                kwargs["system"] = system
-            if tools is not None:
-                kwargs["tools"] = tools
-            if tool_choice is not None:
-                kwargs["tool_choice"] = tool_choice
+            result = structured.invoke(messages)
 
-            response = client.messages.create(**kwargs)
+            raw = result.get("raw")
+            usage = getattr(raw, "usage_metadata", None) or {}
+            input_tokens = usage.get("input_tokens", 0) or 0
+            output_tokens = usage.get("output_tokens", 0) or 0
 
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                input_tokens = getattr(usage, "input_tokens", 0) or 0
-                output_tokens = getattr(usage, "output_tokens", 0) or 0
-            return response
+            if result.get("parsing_error"):
+                raise ValueError(f"structured output parse failed: {result['parsing_error']}")
+            parsed = result.get("parsed")
+            if parsed is None:
+                raise ValueError("structured output returned no parsed value")
+            return parsed
         except Exception as exc:
             success = False
             error = str(exc)[:500]
             raise
         finally:
-            self._record(operation, model, input_tokens, output_tokens, (perf_counter() - start) * 1000, success, error)
+            self._record(
+                operation,
+                self._config.model,
+                input_tokens,
+                output_tokens,
+                (perf_counter() - start) * 1000,
+                success,
+                error,
+            )
 
     def _record(
         self,

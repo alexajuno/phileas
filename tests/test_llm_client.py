@@ -1,66 +1,25 @@
 """Tests for the internal extraction LLM client.
 
-These run offline: ``LLMClient`` takes an injected fake Anthropic client, so no
-SDK import and no network call happen. They cover the response helpers, the
-availability gate, request assembly, and usage accounting.
+These run offline and without any LangChain adapter installed: ``LLMClient``
+takes an injected fake chat model, so no adapter import and no network call
+happen. They cover cost derivation, the availability gate, the structured-output
+call, and usage accounting.
 """
 
 from types import SimpleNamespace
 
 import pytest
+from pydantic import BaseModel
 
 from phileas.config import LLMConfig
-from phileas.llm import LLMClient, parse_json_response, text_from, tool_input_from
-from phileas.llm.client import _cost_usd
-
-# -- Response parsing helpers ------------------------------------------------
+from phileas.llm import LLMClient
+from phileas.llm.client import _cost_usd, build_chat_model
 
 
-class TestParseJsonResponse:
-    def test_bare_json(self):
-        assert parse_json_response('{"a": 1}') == {"a": 1}
+class _Out(BaseModel):
+    """A throwaway schema for the generic structured call."""
 
-    def test_fenced_json(self):
-        assert parse_json_response('```json\n{"a": 1}\n```') == {"a": 1}
-
-    def test_fence_without_lang(self):
-        assert parse_json_response('```\n{"a": 1}\n```') == {"a": 1}
-
-    def test_trailing_prose_after_value(self):
-        assert parse_json_response('{"a": 1}\n\nThat is the answer.') == {"a": 1}
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            parse_json_response("not json at all")
-
-
-def _text_block(text):
-    return SimpleNamespace(type="text", text=text)
-
-
-def _tool_block(name, payload):
-    return SimpleNamespace(type="tool_use", name=name, input=payload)
-
-
-class TestContentExtractors:
-    def test_text_from_concatenates_text_blocks(self):
-        msg = SimpleNamespace(content=[_text_block("Hello "), _tool_block("x", {}), _text_block("world")])
-        assert text_from(msg) == "Hello world"
-
-    def test_text_from_empty_when_no_text(self):
-        assert text_from(SimpleNamespace(content=[_tool_block("x", {})])) == ""
-        assert text_from(SimpleNamespace(content=None)) == ""
-
-    def test_tool_input_first_match(self):
-        msg = SimpleNamespace(content=[_tool_block("a", {"k": 1}), _tool_block("b", {"k": 2})])
-        assert tool_input_from(msg) == {"k": 1}
-
-    def test_tool_input_by_name(self):
-        msg = SimpleNamespace(content=[_tool_block("a", {"k": 1}), _tool_block("b", {"k": 2})])
-        assert tool_input_from(msg, "b") == {"k": 2}
-
-    def test_tool_input_none_when_absent(self):
-        assert tool_input_from(SimpleNamespace(content=[_text_block("hi")]), "b") is None
+    value: str
 
 
 # -- Cost derivation ---------------------------------------------------------
@@ -75,31 +34,33 @@ class TestCost:
         assert _cost_usd("some-other-model", 1_000_000, 1_000_000) == 0.0
 
 
-# -- Fakes for the SDK + usage tracker ---------------------------------------
+# -- Fakes for the chat model + usage tracker --------------------------------
 
 
-class _FakeMessages:
-    def __init__(self, response):
-        self._response = response
-        self.calls: list[dict] = []
+class _FakeStructured:
+    """Stand-in for the runnable returned by ``with_structured_output``."""
 
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-        return self._response
+    def __init__(self, result):
+        self._result = result
+        self.calls: list = []
 
-
-class _FakeAnthropic:
-    def __init__(self, response):
-        self.messages = _FakeMessages(response)
+    def invoke(self, messages):
+        self.calls.append(messages)
+        return self._result
 
 
-class _RaisingAnthropic:
-    class _Messages:
-        def create(self, **kwargs):
-            raise RuntimeError("boom")
+class _FakeChatModel:
+    """Records the schema it is bound to and returns a canned structured result."""
 
-    def __init__(self):
-        self.messages = self._Messages()
+    def __init__(self, result):
+        self._result = result
+        self.structured_calls: list[tuple] = []
+        self.bound: _FakeStructured | None = None
+
+    def with_structured_output(self, schema, **kwargs):
+        self.structured_calls.append((schema, kwargs))
+        self.bound = _FakeStructured(self._result)
+        return self.bound
 
 
 class _FakeTracker:
@@ -110,11 +71,20 @@ class _FakeTracker:
         self.records.append(kwargs)
 
 
-def _message(text="ok", input_tokens=10, output_tokens=20):
+def _raw(input_tokens=10, output_tokens=20):
+    """A raw message carrying LangChain-style usage metadata."""
     return SimpleNamespace(
-        content=[_text_block(text)],
-        usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens),
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
     )
+
+
+def _result(parsed, *, error=None, input_tokens=10, output_tokens=20):
+    """The ``include_raw=True`` envelope: raw message, parsed object, parse error."""
+    return {"raw": _raw(input_tokens, output_tokens), "parsed": parsed, "parsing_error": error}
 
 
 # -- Availability gate -------------------------------------------------------
@@ -129,20 +99,39 @@ class TestAvailability:
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         assert LLMClient(LLMConfig()).available is True
 
+    def test_keyless_provider_available_without_key(self, monkeypatch):
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        assert LLMClient(LLMConfig(provider="ollama", model="llama3.1")).available is True
 
-# -- complete() --------------------------------------------------------------
+
+# -- build_chat_model --------------------------------------------------------
 
 
-class TestComplete:
-    def test_returns_response_and_records_usage(self):
+class TestBuildChatModel:
+    def test_unknown_provider_raises(self):
+        # Guards before any adapter import, so this is safe with no extra installed.
+        with pytest.raises(ValueError, match="unsupported extraction provider"):
+            build_chat_model(LLMConfig(provider="grok"))
+
+
+# -- invoke_structured -------------------------------------------------------
+
+
+class TestInvokeStructured:
+    def test_returns_parsed_and_records_usage(self):
         tracker = _FakeTracker()
-        fake = _FakeAnthropic(_message(input_tokens=100, output_tokens=200))
-        client = LLMClient(LLMConfig(model="claude-haiku-4-5-20251001"), tracker, client=fake)
+        model = _FakeChatModel(_result(_Out(value="ok"), input_tokens=100, output_tokens=200))
+        client = LLMClient(LLMConfig(model="claude-haiku-4-5-20251001"), tracker, model=model)
 
-        result = client.complete("extraction", messages=[{"role": "user", "content": "hi"}])
+        out = client.invoke_structured("extraction", _Out, [("human", "hi")])
 
-        assert text_from(result) == "ok"
-        assert len(tracker.records) == 1
+        assert out == _Out(value="ok")
+        # The schema was bound with the raw message kept for usage.
+        schema, kwargs = model.structured_calls[0]
+        assert schema is _Out
+        assert kwargs == {"include_raw": True}
+        assert model.bound.calls == [[("human", "hi")]]
+
         rec = tracker.records[0]
         assert rec["operation"] == "extraction"
         assert rec["model"] == "claude-haiku-4-5-20251001"
@@ -154,46 +143,25 @@ class TestComplete:
         assert rec["success"] is True
         assert rec["error"] is None
 
-    def test_passes_optional_params_through(self):
-        fake = _FakeAnthropic(_message())
-        client = LLMClient(LLMConfig(), client=fake)
-        tools = [{"name": "record", "input_schema": {"type": "object"}}]
-        choice = {"type": "tool", "name": "record"}
-
-        client.complete(
-            "extraction",
-            messages=[{"role": "user", "content": "x"}],
-            system="be terse",
-            tools=tools,
-            tool_choice=choice,
-            max_tokens=512,
-        )
-
-        sent = fake.messages.calls[0]
-        assert sent["system"] == "be terse"
-        assert sent["tools"] == tools
-        assert sent["tool_choice"] == choice
-        assert sent["max_tokens"] == 512
-
-    def test_omits_optional_params_when_unset(self):
-        fake = _FakeAnthropic(_message())
-        client = LLMClient(LLMConfig(), client=fake)
-        client.complete("extraction", messages=[{"role": "user", "content": "x"}])
-        sent = fake.messages.calls[0]
-        assert "system" not in sent
-        assert "tools" not in sent
-        assert "tool_choice" not in sent
-
-    def test_failure_records_and_reraises(self):
+    def test_parse_error_raises_and_records_failure(self):
         tracker = _FakeTracker()
-        client = LLMClient(LLMConfig(), tracker, client=_RaisingAnthropic())
-        with pytest.raises(RuntimeError, match="boom"):
-            client.complete("extraction", messages=[{"role": "user", "content": "x"}])
-        assert len(tracker.records) == 1
+        model = _FakeChatModel(_result(None, error=ValueError("bad")))
+        client = LLMClient(LLMConfig(), tracker, model=model)
+
+        with pytest.raises(ValueError, match="structured output parse failed"):
+            client.invoke_structured("extraction", _Out, "x")
+
         assert tracker.records[0]["success"] is False
-        assert "boom" in tracker.records[0]["error"]
+        # Usage is still accounted for even on a failed parse.
+        assert tracker.records[0]["prompt_tokens"] == 10
+
+    def test_empty_parse_raises(self):
+        model = _FakeChatModel(_result(None))
+        client = LLMClient(LLMConfig(), model=model)
+        with pytest.raises(ValueError, match="no parsed value"):
+            client.invoke_structured("extraction", _Out, "x")
 
     def test_no_tracker_is_fine(self):
-        client = LLMClient(LLMConfig(), client=_FakeAnthropic(_message()))
-        # Should not raise despite no usage tracker.
-        assert text_from(client.complete("extraction", messages=[{"role": "user", "content": "x"}])) == "ok"
+        model = _FakeChatModel(_result(_Out(value="ok")))
+        client = LLMClient(LLMConfig(), model=model)
+        assert client.invoke_structured("extraction", _Out, "x") == _Out(value="ok")
