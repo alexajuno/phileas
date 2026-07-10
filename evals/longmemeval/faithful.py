@@ -1,7 +1,7 @@
-"""LongMemEval, faithful end-to-end — the real test of phileas (WIP).
+"""LongMemEval, faithful end-to-end — the real test of phileas.
 
-Unlike the retrieval-only `run.py` (which indexes raw sessions and skips phileas's
-capture step), this runs each haystack through phileas's *actual* pipeline:
+Runs each haystack through phileas's *actual* capture pipeline, so the score
+reflects what phileas would remember, not a reranker over raw chat blobs:
 
     extract (LLM reads each session, emits memory JSON)
       -> engine.memorize (the real capture path)
@@ -9,27 +9,23 @@ capture step), this runs each haystack through phileas's *actual* pipeline:
       -> reader (LLM answers from what recall surfaced)
       -> judge  (LongMemEval's own prompt grades the answer)
 
-The extractor here is **Claude Code headless** (`claude -p`, haiku) so it runs under
-a Claude subscription with no API key. That is proven correct end-to-end (oracle
-instance 0 answers correctly; the first `s` instance scored OK at 179 memories).
+All three LLM roles (extract, read, judge) run on gpt-4o-mini through the OpenAI
+API — the cost-tractable judge the field uses. The pipeline is model-agnostic:
+point `MODEL` at another chat model to swap it.
 
-KNOWN BLOCKER (see STATUS.md): subscription headless haiku is rate/usage-capped at
-~50 calls per window. A real run needs hundreds-to-thousands of extraction calls,
-so after the first instance (~50 sessions) every later instance extraction-fails
-(0 memories). A throttled `claude -p` returns the limit notice as a *successful*
-result (exit 0, non-empty text), which is why it shows as 0 memories rather than an
-error. To finish a multi-instance run, swap `extract_session`'s LLM for an API model
-(e.g. gpt-4o-mini via the OpenAI key) — the pipeline is model-agnostic.
+An instance that extracts 0 memories is treated as an infrastructure failure and
+excluded from the accuracy denominator rather than scored as a miss.
 
 Usage:  faithful.py [PER_TYPE=1] [OUT_NAME=faithful_s.json]
-Needs:  the LongMemEval `s` file (see README "Data"), and `claude` on PATH.
+Needs:  the LongMemEval `s` file (see README "Data"), and OPENAI_API_KEY in the env
+        (e.g. `source ~/.secrets/openai.env`).
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -44,14 +40,13 @@ from phileas.vector import VectorStore
 HERE = Path(__file__).resolve().parent
 DATA = HERE.parents[2] / "LongMemEval" / "data" / "longmemeval_s_cleaned.json"
 PROFILE = "longmemeval-eval"        # dedicated throwaway profile; reset per instance
-EXTRACT_MODEL = "claude-haiku-4-5"
+MODEL = "gpt-4o-mini"               # extract, read, and judge all run here
 TYPES = ("single-session-user", "single-session-assistant", "single-session-preference",
          "multi-session", "knowledge-update", "temporal-reasoning")
 PER_TYPE = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 OUT_NAME = sys.argv[2] if len(sys.argv) > 2 else "faithful_s.json"
 TOPK = 10
-EXTRACT_WORKERS = 3          # >3 tripped the rate cap faster; keep low
-INTER_INSTANCE_SLEEP = 15    # let a per-burst rate window recover between instances
+EXTRACT_WORKERS = 8          # gpt-4o-mini has ample rate headroom
 
 # The capture contract phileas's own extraction expects (mirrors evals/coldstart's guide).
 EXTRACT_GUIDE = """You are the memory layer of a personal AI companion. You read one conversation session between a user and an assistant, and you decide which durable facts the companion should remember about the user, then emit them.
@@ -97,22 +92,32 @@ def get_anscheck_prompt(task, question, answer, response, abstention=False):
     return template.format(question, answer, response)
 
 
-def claude(prompt, system=None, model=EXTRACT_MODEL, retries=4):
-    """Headless call with retry-on-empty and real backoff. NOTE: does not detect a
-    rate-limit *message* (returned as a successful result) — see the module blocker."""
-    cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "json"]
-    if system:
-        cmd += ["--append-system-prompt", system]
+_CLIENT = None
+
+
+def _client():
+    """Lazily build one shared OpenAI client (thread-safe; reused across workers)."""
+    global _CLIENT
+    if _CLIENT is None:
+        from openai import OpenAI
+        _CLIENT = OpenAI()  # reads OPENAI_API_KEY from the env
+    return _CLIENT
+
+
+def llm(prompt, system=None, model=MODEL, retries=4):
+    """One chat completion at temperature 0, with retry+backoff on transient errors.
+    Returns "" if every attempt fails, so a single bad session yields 0 memories
+    rather than aborting the instance (the 0-memory guard in main() catches the
+    systemic case)."""
+    messages = [{"role": "system", "content": system}] if system else []
+    messages.append({"role": "user", "content": prompt})
     for attempt in range(retries):
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            if out.returncode == 0:
-                res = json.loads(out.stdout).get("result", "")
-                if res.strip():
-                    return res
+            r = _client().chat.completions.create(model=model, messages=messages, temperature=0)
+            return (r.choices[0].message.content or "").strip()
         except Exception:
-            pass
-        time.sleep(min(10 * (2 ** attempt), 90))
+            if attempt < retries - 1:
+                time.sleep(min(4 * (2 ** attempt), 30))
     return ""
 
 
@@ -133,7 +138,7 @@ def render(sess):
 
 def extract_session(arg):
     sess, date = arg
-    raw = claude(
+    raw = llm(
         f"Here is one conversation session dated {date}. Extract the durable facts about the user.\n\n"
         f"{render(sess)}\n\n"
         'Return ONLY a JSON object {"memories": [...]} — no prose, no markdown fence.',
@@ -157,13 +162,15 @@ def build_engine():
 def main():
     if not DATA.exists():
         raise SystemExit(f"dataset not found: {DATA} (see README 'Data')")
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("OPENAI_API_KEY not set (e.g. `source ~/.secrets/openai.env`)")
     data = json.loads(DATA.read_text())
     picked = []
     for t in TYPES:
         hits = [x for x in data if x["question_type"] == t and not x["question_id"].endswith("_abs")]
         picked += hits[:PER_TYPE]
 
-    print(f"START faithful `s`: {len(picked)} instances ({PER_TYPE}/type), extractor={EXTRACT_MODEL}, workers={EXTRACT_WORKERS}", flush=True)
+    print(f"START faithful `s`: {len(picked)} instances ({PER_TYPE}/type), model={MODEL}, workers={EXTRACT_WORKERS}", flush=True)
     rows = []
     for idx, inst in enumerate(picked, 1):
         eng = build_engine()
@@ -188,18 +195,18 @@ def main():
                 except Exception:
                     pass
 
-        extraction_failed = nmem == 0  # 0 memories => extraction infra failed (e.g. rate cap)
+        extraction_failed = nmem == 0  # 0 memories => extraction infra failed (every session errored)
         if extraction_failed:
             ans, correct = "(extraction produced no memories)", False
         else:
             recall = eng.recall(inst["question"], top_k=TOPK)
             ctx = "\n".join(f"- {r['content']}" for r in recall) or "(none)"
-            ans = claude(
+            ans = llm(
                 "Using ONLY these remembered facts about the user, answer the question in one short sentence. "
                 "If the facts do not contain the answer, reply exactly: I don't know.\n\n"
                 f"Facts:\n{ctx}\n\nQuestion: {inst['question']}"
-            ).strip()
-            verdict = claude(get_anscheck_prompt(inst["question_type"], inst["question"], inst["answer"], ans))
+            )
+            verdict = llm(get_anscheck_prompt(inst["question_type"], inst["question"], inst["answer"], ans))
             correct = verdict.strip().lower().startswith("yes")
 
         rows.append({"qid": inst["question_id"], "type": inst["question_type"], "question": inst["question"],
@@ -208,8 +215,6 @@ def main():
         tag = "EXTRACT-FAIL" if extraction_failed else ("OK" if correct else "MISS")
         print(f"[{idx}/{len(picked)}] {inst['question_type']:<26} {len(sessions)}s -> {nmem}mem | {tag}", flush=True)
         (HERE / OUT_NAME).write_text(json.dumps(rows, indent=2))  # checkpoint per instance
-        if idx < len(picked):
-            time.sleep(INTER_INSTANCE_SLEEP)
 
     scored = [r for r in rows if not r["extraction_failed"]]
     failed = [r for r in rows if r["extraction_failed"]]
