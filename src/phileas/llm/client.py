@@ -71,6 +71,23 @@ def default_api_key_env(provider: str) -> str | None:
     return _DEFAULT_API_KEY_ENV.get(provider)
 
 
+# Offered model ids per provider, for a settings-UI model picker. The adapter
+# accepts any string, so these are the suggested choices, not a hard whitelist:
+# Anthropic's are the priced set (their cost lands in the usage ledger), the
+# others are common current models. A model set by hand that isn't listed is
+# preserved by the picker (it keeps the current value alongside these).
+_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
+    "anthropic": ("claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-5", "claude-opus-4-8"),
+    "openai": ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"),
+    "ollama": ("llama3.2", "llama3.1", "qwen2.5", "mistral"),
+}
+
+
+def models_for_provider(provider: str) -> list[str]:
+    """Suggested model ids for ``provider``; empty for an unknown one."""
+    return list(_MODELS_BY_PROVIDER.get(provider, ()))
+
+
 def known_models() -> list[str]:
     """Model names with known pricing — the CLI's suggestion set for ``set-model``.
 

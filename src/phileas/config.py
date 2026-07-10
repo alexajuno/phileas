@@ -540,10 +540,12 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
     ``choices.provider_key_env`` maps each provider to its default key env var
     (``None`` for a keyless one), so a UI can repoint ``api_key_env`` when the
     provider changes — the same coupling ``phileas config set-provider`` applies —
-    and tell that a keyless provider needs no key at all.
+    and tell that a keyless provider needs no key at all. ``choices.models_by_provider``
+    gives the suggested model ids per provider, so the model picker offers a set
+    that fits the chosen provider.
     """
     from phileas import secrets
-    from phileas.llm.client import SUPPORTED_PROVIDERS, default_api_key_env, known_models
+    from phileas.llm.client import SUPPORTED_PROVIDERS, default_api_key_env, known_models, models_for_provider
 
     env_set = bool(os.environ.get(cfg.llm.api_key_env))
     stored = cfg.llm.api_key_env in secrets.load_secrets(cfg.home)
@@ -556,6 +558,7 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
             "modes": list(EXTRACTION_MODES),
             "providers": list(SUPPORTED_PROVIDERS),
             "models": known_models(),
+            "models_by_provider": {p: models_for_provider(p) for p in SUPPORTED_PROVIDERS},
             "provider_key_env": {p: default_api_key_env(p) for p in SUPPORTED_PROVIDERS},
         },
         "secrets": {

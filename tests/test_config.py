@@ -559,6 +559,11 @@ class TestConfigSnapshot:
         assert snap["choices"]["provider_key_env"]["anthropic"] == "PHILEAS_ANTHROPIC_API_KEY"
         assert snap["choices"]["provider_key_env"]["openai"] == "PHILEAS_OPENAI_API_KEY"
         assert snap["choices"]["provider_key_env"]["ollama"] is None
+        # Each provider offers a non-empty model set fitting that provider.
+        by_provider = snap["choices"]["models_by_provider"]
+        assert any("claude" in m for m in by_provider["anthropic"])
+        assert any("gpt" in m for m in by_provider["openai"])
+        assert any("llama" in m for m in by_provider["ollama"])
         assert snap["secrets"]["llm_api_key_set"] is False
         assert snap["secrets"]["llm_api_key_source"] is None
         assert snap["secrets"]["sync_token_set"] is False
