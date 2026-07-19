@@ -59,13 +59,13 @@ def test_hydrate_resolves_id8_to_full_record(tmp_path: Path):
         id="abcd1234-5e6f-7890-abcd-ef1234567890",
         content="the cake memory",
         memory_type="event",
-        source_event_id="99887766",
+        source_id="99887766",
     )
     out = eng.hydrate("abcd1234")  # 8-char pointer prefix
     assert out is not None and "error" not in out
     assert out["id"] == mid  # resolves to the FULL id
     assert out["content"] == "the cake memory"
-    assert out["source_event_id"] == "99887766"  # the handle for thread()
+    assert out["source_id"] == "99887766"  # the handle for source()
     assert out["entities"] == []  # graph down -> empty, not a crash
 
 

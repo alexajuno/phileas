@@ -52,8 +52,9 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 
 # Providers the extraction client can talk to, one LangChain adapter each. The
 # tuple is the offered set for a provider picker and the guard in
-# ``build_chat_model``. ``ollama`` runs a model locally with no API key.
-SUPPORTED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "ollama")
+# ``build_chat_model``. ``claude_code`` runs `claude -p` on the Claude Code
+# subscription (no API key); ``ollama`` runs a model locally (no API key).
+SUPPORTED_PROVIDERS: tuple[str, ...] = ("claude_code", "anthropic", "openai", "ollama")
 
 # The env var each keyed provider reads its credential from by default. Namespaced
 # with ``PHILEAS_`` so Phileas's key never collides with the host agent's generic
@@ -77,6 +78,7 @@ def default_api_key_env(provider: str) -> str | None:
 # others are common current models. A model set by hand that isn't listed is
 # preserved by the picker (it keeps the current value alongside these).
 _MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
+    "claude_code": ("sonnet", "haiku", "opus"),
     "anthropic": ("claude-haiku-4-5", "claude-sonnet-4-6", "claude-sonnet-5", "claude-opus-4-8"),
     "openai": ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"),
     "ollama": ("llama3.2", "llama3.1", "qwen2.5", "mistral"),
@@ -126,6 +128,12 @@ def build_chat_model(
     provider = config.provider
     api_key = secrets.resolve_key(home, config.api_key_env)
 
+    if provider == "claude_code":
+        from phileas.llm.claude_code_chat import PhileasClaudeCodeChat
+
+        # Keyless: auth is the Claude Code CLI's own (subscription). No max_tokens
+        # flag on the CLI, so the prompt bounds the output instead.
+        return PhileasClaudeCodeChat(model=config.model)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 

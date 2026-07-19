@@ -3,7 +3,7 @@
 Each case seeds an isolated store (HOME pinned by the autouse fixture, so the
 profile resolves under a fresh XDG home) with a handful of memories that differ
 in type, status, recency, and origin, then drives the CLI through ``CliRunner``.
-The origin split keys off ``source_event_id``: a real id is a sourced memory, a
+The origin split keys off ``source_id``: a real id is a sourced memory, a
 NULL one is unsourced (derived from other memories, or legacy).
 """
 
@@ -47,7 +47,7 @@ def _seed():
             content="alpha recent sourced",
             memory_type="event",
             status="active",
-            source_event_id="evt-real-1",
+            source_id="evt-real-1",
             created_at=_NOW,
         )
     )
@@ -56,7 +56,7 @@ def _seed():
             content="bravo recent unsourced",
             memory_type="profile",
             status="active",
-            source_event_id=None,
+            source_id=None,
             created_at=_NOW - timedelta(minutes=1),
         )
     )
@@ -65,7 +65,7 @@ def _seed():
             content="charlie old sourced",
             memory_type="knowledge",
             status="active",
-            source_event_id="evt-real-2",
+            source_id="evt-real-2",
             created_at=_NOW - timedelta(days=400),
         )
     )
@@ -74,7 +74,7 @@ def _seed():
             content="delta archived",
             memory_type="reflection",
             status="archived",
-            source_event_id=None,
+            source_id=None,
             created_at=_NOW,
         )
     )
@@ -156,7 +156,7 @@ def test_json_output_shape():
         "type",
         "status",
         "source",
-        "source_event_id",
+        "source_id",
         "created_at",
         "content",
     }

@@ -65,17 +65,21 @@ class DayCount(BaseModel):
 
 
 class IngestionHealth(BaseModel):
-    events_received_1h: int
-    events_received_24h: int
-    events_total: int
-    events_pending: int = 0
-    events_failed: int = 0
+    sources_ingested_1h: int
+    sources_ingested_24h: int
+    sources_total: int
+    sources_ready: int = 0
+    sources_failed: int = 0
 
 
-class IngestionEvent(BaseModel):
+class IngestionSource(BaseModel):
     id: str
-    received_at: str
-    text_preview: str
+    client_key: str | None = None
+    kind: str | None = None
+    label: str | None = None
+    turn_count: int = 0
+    extraction_status: str
+    last_activity_at: str
 
 
 class IdList(BaseModel):
@@ -83,10 +87,10 @@ class IdList(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    text: str
-    thread_id: str | None = None
-    attribution: str | None = None
-    source_kind: str | None = None
+    """A whole session in the unified ingestion format."""
+
+    payload: dict
+    mark_ready: bool = True
 
 
 # -- Auth --------------------------------------------------------------------
@@ -162,8 +166,8 @@ def create_app(engine: MemoryEngine, dispatch=None) -> FastAPI:
         @app.post("/ingest", dependencies=[auth])
         async def ingest_endpoint(body: IngestRequest) -> dict:
             # The typed capture surface: routes through the same dispatch as the
-            # CLI/MCP `ingest`, so the worker gets notified the same way.
-            return await anyio.to_thread.run_sync(dispatch, "ingest", body.model_dump(exclude_none=True))
+            # CLI/MCP `ingest_source`, so the worker gets notified the same way.
+            return await anyio.to_thread.run_sync(dispatch, "ingest_source", body.model_dump(exclude_none=True))
 
     # -- Memories read group (the direct-SQLite paths web must stop using) ---
 
@@ -189,16 +193,16 @@ def create_app(engine: MemoryEngine, dispatch=None) -> FastAPI:
     def ingestion_health():
         return db.web_ingestion_health()
 
-    @app.get("/ingestion/events", response_model=list[IngestionEvent], dependencies=[auth])
-    def ingestion_events(limit: int = 50):
-        return db.web_ingestion_events(limit)
+    @app.get("/ingestion/sources", response_model=list[IngestionSource], dependencies=[auth])
+    def ingestion_sources(limit: int = 50):
+        return db.web_ingestion_sources(limit)
 
-    @app.get("/ingestion/events/{event_id}", dependencies=[auth])
-    def ingestion_event(event_id: str):
-        event = db.web_ingestion_event(event_id)
-        if event is None:
-            raise HTTPException(status_code=404, detail="event not found")
-        return event
+    @app.get("/ingestion/sources/{source_id}", dependencies=[auth])
+    def ingestion_source(source_id: str):
+        src = db.web_ingestion_source(source_id)
+        if src is None:
+            raise HTTPException(status_code=404, detail="source not found")
+        return src
 
     # The remaining _dispatch groups port the same way, each as its own router:
     #   graph_read / graph_write → /graph/*    (broker the KuzuDB write lock)

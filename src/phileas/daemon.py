@@ -44,7 +44,7 @@ _reinforce_queue: deque[dict] | None = None
 # Push-on-write trigger, initialized by start() when sync.push_on_write is set.
 _sync_pusher: SyncPusher | None = None
 
-# Observer extraction worker, initialized by start() when extraction.mode is "api".
+# Extraction worker, initialized by start() when extraction is enabled.
 _extraction_worker: ExtractionWorker | None = None
 
 # Dispatch methods that mutate the canonical (synced) store and should arm a
@@ -577,14 +577,14 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
 
     threading.Thread(target=_reconcile_loop, daemon=True, name="phileas-reconcile").start()
 
-    # -- Observer extraction worker (background thread) -------------------
-    # Distills ingested turns into memories with Phileas's own key, on a
-    # debounced per-thread window. Started only in the "api" extraction mode, so a
-    # default (client) install is unaffected; an "api"-but-keyless box leaves turns
-    # pending and visible rather than losing them.
+    # -- Extraction worker (background thread) ---------------------------
+    # Distills ready sessions into memories whole, using the configured model
+    # (by default `claude -p` on the Claude Code subscription). Started whenever
+    # extraction is enabled; an enabled-but-keyless box leaves ready sources
+    # queued and visible rather than losing them.
     global _extraction_worker
     _extraction_worker = None
-    if config.extraction.mode == "api":
+    if config.extraction.enabled:
         from phileas.extraction_worker import ExtractionWorker
         from phileas.llm import LLMClient
 
@@ -596,19 +596,47 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
             "extraction worker started",
             extra={"op": "extraction", "data": {"model": config.llm.model, "available": client.available}},
         )
-        # Warn on drift: the worker will distill, but a Stop hook still wired with
-        # the memorize nudge means the live model also writes — double extraction.
-        try:
-            from phileas.hook_sync import hooks_status
 
-            if hooks_status(config.profile).get("stop_memorize"):
-                log.warning(
-                    "extraction mode is 'api' but the Stop memorize hook is still wired; "
-                    "run `phileas hooks sync` to avoid double extraction",
-                    extra={"op": "extraction"},
-                )
-        except Exception:  # pragma: no cover — drift check must never block start
-            pass
+        # -- Idle sweep (backstop for sessions that never ended cleanly) ---
+        # A session whose terminal was killed never fires SessionEnd, so its
+        # transcript would never become a source. This sweep ingests any transcript
+        # quiet past the idle window that isn't already distilled at its size.
+        _IDLE_SWEEP_INTERVAL_SEC = 300
+        _IDLE_SECONDS = 600
+
+        def _idle_sweep_loop():
+            import time
+
+            from phileas import sessions
+
+            while True:
+                time.sleep(_IDLE_SWEEP_INTERVAL_SEC)
+                try:
+                    now = time.time()
+                    for path in sessions.projects_root().glob("*/*.jsonl"):
+                        try:
+                            if now - path.stat().st_mtime < _IDLE_SECONDS:
+                                continue
+                            sid = path.stem
+                            existing = engine.db.get_source_by_client_key(f"{sessions.CLIENT_PREFIX}{sid}")
+                            payload = sessions.payload_from_path(sid, path)
+                            turn_count = len(payload["turns"])
+                            if turn_count == 0:
+                                continue
+                            already_done = (
+                                existing is not None
+                                and existing.extraction_status == "extracted"
+                                and existing.extracted_through >= turn_count
+                            )
+                            if already_done:
+                                continue
+                            engine.ingest_source(payload, mark_ready=True)
+                        except Exception:
+                            continue
+                except Exception as e:
+                    log.debug("idle sweep failed", extra={"op": "extraction", "data": {"error": str(e)}})
+
+        threading.Thread(target=_idle_sweep_loop, daemon=True, name="phileas-idle-sweep").start()
 
     # Run uvicorn on a worker thread; the main thread parks on stop_event so it
     # can tear down safely after SIGTERM/SIGINT. uvicorn skips installing its
@@ -678,7 +706,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         # Ensure backward compat: old callers pass only memory_id + content
         return engine.update(**params)
     elif method == "list_proposals":
-        return engine.list_proposals(status=params.get("status", "pending"), thread_id=params.get("thread_id"))
+        return engine.list_proposals(status=params.get("status", "pending"), source_id=params.get("source_id"))
     elif method == "resolve_proposal":
         # One method, three actions, so the CLI and web share a single endpoint.
         action = params.get("action")
@@ -713,14 +741,6 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         # loops. Re-read from disk so the response echoes the saved values, and
         # flag that a restart is what actually applies them.
         fresh = load_config(home=engine.config.home, profile=engine.config.profile)
-        # An extraction-mode change also has a client-side effect: the Claude Code
-        # Stop hook is wired with or without the memorize nudge. Re-wire it here
-        # (best-effort, same user as the wizard's install) so the web settings page
-        # applies the whole change; a no-op where no Claude Code runs (e.g. the box).
-        if params.get("section") == "extraction":
-            from phileas.hook_sync import install_hooks
-
-            install_hooks(fresh.profile, memorize=fresh.extraction.mode == "client")
         return {"config": config_snapshot(fresh), "restart_required": True}
     elif method == "config_set_secret":
         from phileas import secrets
@@ -796,36 +816,39 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return import_bundle(engine, params["bundle"])
     elif method == "auto_reconcile":
         return engine.auto_reconcile()
-    elif method == "ingest":
-        # Store the raw turn as an event in its conversation thread, then notify the
-        # extraction worker. Marked "pending" only in the "api" mode, so a client-mode
-        # install behaves as before; the worker distills the window later.
-        text = params.get("text", "")
-        if not text:
-            return {"queued": False, "reason": "empty text"}
-        from phileas.models import Event
-
-        attribution = params.get("attribution")
-        if attribution not in ("self", "assistant", "source"):
-            attribution = None
-        # A turn can arrive keyed by client identity rather than a known thread id
-        # (the capture hooks pass client_key, not thread_id). Resolve it to the
-        # session's thread, get-or-create, so a missed SessionStart can't fragment
-        # or drop the turn.
-        thread_id = params.get("thread_id")
-        if thread_id is None and params.get("client_key"):
-            thread_id = engine.start_thread(client_key=params["client_key"], source_kind="claude_code")["thread_id"]
-        event = Event(
-            text=text,
-            source_kind=params.get("source_kind", "claude_code"),
-            thread_id=thread_id,
-            attribution=attribution,
-            extraction_status="pending" if engine.config.extraction.mode == "api" else "extracted",
-        )
-        engine.save_event(event)
+    elif method == "ingest_source":
+        # Upsert a whole session as one source (get-or-create on client_key) and,
+        # when it's done, mark it ready so the extraction worker distills it whole.
+        payload = params.get("payload")
+        if not isinstance(payload, dict) or not payload.get("turns"):
+            return {"queued": False, "reason": "payload has no turns"}
+        result = engine.ingest_source(payload, mark_ready=params.get("mark_ready", True))
         if _extraction_worker is not None:
-            _extraction_worker.notify(event.thread_id)
-        return {"queued": True, "event_id": event.id, "thread_id": event.thread_id}
+            _extraction_worker.notify(result["source_id"])
+        return {"queued": True, **result}
+    elif method == "retry_sources":
+        # Return every failed session to 'ready' so the worker re-distills it.
+        failed = [r[0] for r in engine.db.conn.execute("SELECT id FROM sources WHERE extraction_status = 'failed'")]
+        for sid in failed:
+            engine.db.set_source_status(sid, "ready")
+        if _extraction_worker is not None and failed:
+            _extraction_worker.notify()
+        return {"queued": len(failed)}
+    elif method == "ingest_session":
+        # The SessionEnd hook's entry point: read the session's transcript, normalize
+        # it to the unified payload, and ingest it as one ready source.
+        from phileas import sessions
+
+        session_id = params.get("session_id")
+        if not session_id:
+            return {"queued": False, "reason": "no session_id"}
+        payload = sessions.load_transcript_payload(session_id)
+        if payload is None:
+            return {"queued": False, "reason": "no transcript"}
+        result = engine.ingest_source(payload, mark_ready=params.get("mark_ready", True))
+        if _extraction_worker is not None:
+            _extraction_worker.notify(result["source_id"])
+        return {"queued": True, **result}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.
@@ -981,10 +1004,10 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         return engine.db.web_days_with_counts(params.get("limit", 60), params.get("tz_offset_minutes"))
     elif method == "ingestion_health":
         return engine.db.web_ingestion_health()
-    elif method == "ingestion_events":
-        return engine.db.web_ingestion_events(params.get("limit", 50))
-    elif method == "ingestion_event":
-        return engine.db.web_ingestion_event(params["id"])
+    elif method == "ingestion_sources":
+        return engine.db.web_ingestion_sources(params.get("limit", 50))
+    elif method == "ingestion_source":
+        return engine.db.web_ingestion_source(params["id"])
     elif method in ("metrics_traces", "metrics_trace", "metrics_compare", "metrics_aggregate"):
         from phileas.stats import queries as stats_queries
 

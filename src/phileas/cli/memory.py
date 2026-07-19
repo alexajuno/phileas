@@ -83,7 +83,7 @@ def queue_show(proposal_id: str) -> None:
         console.print(f"  why       {match['source_text']}")
     if match.get("entities"):
         console.print(f"  entities  {', '.join(e.get('name', '?') for e in match['entities'])}")
-    console.print(f"  thread    {match.get('thread_id') or '(none)'}")
+    console.print(f"  source    {match.get('source_id') or '(none)'}")
 
 
 @queue_group.command("approve")

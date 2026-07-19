@@ -29,17 +29,20 @@ def _engine(path: Path) -> MemoryEngine:
     )
 
 
-def _seed(eng: MemoryEngine) -> dict:
+def _seed(eng: MemoryEngine) -> str:
     ef = tool_runner.no_entities
-    ev = tool_runner.ingest_text(eng, ef, text="user loves sailing on weekends")
+    sid = eng.ingest_source(
+        {"kind": "test", "turns": [{"i": 0, "role": "user", "text": "user loves sailing on weekends"}]},
+        mark_ready=False,
+    )["source_id"]
     tool_runner.memorize(
         eng,
         ef,
         content="User loves sailing on weekends",
-        source_event_id=ev["event_id"],
+        source_id=sid,
         entities=[{"name": "sailing", "type": "Activity"}],
     )
-    return ev
+    return sid
 
 
 # -- run_mcp: the single execution path --------------------------------------
@@ -58,7 +61,7 @@ def test_run_mcp_read_family_and_specials(tmp_dir: Path):
     _seed(eng)
     ef = tool_runner.no_entities
     assert "sailing" in tool_runner.run_mcp(eng, ef, "about", {"name": "sailing"})
-    # recall_recent and get_thread_memories are special-cased in run_mcp
+    # recall_recent and get_source_memories are special-cased in run_mcp
     assert isinstance(tool_runner.run_mcp(eng, ef, "recall_recent", {"days": 7}), str)
     assert isinstance(tool_runner.run_mcp(eng, ef, "find_entities", {"query": "sail"}), str)
 

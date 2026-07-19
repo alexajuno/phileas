@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from phileas import daemon, secrets
-from phileas.config import load_config
+from phileas.config import load_config, update_user_config
 
 _ENV = "PHILEAS_ANTHROPIC_API_KEY"
 
@@ -22,6 +22,10 @@ _ENV = "PHILEAS_ANTHROPIC_API_KEY"
 @pytest.fixture
 def engine(tmp_path, monkeypatch):
     monkeypatch.delenv(_ENV, raising=False)
+    # The secret path keys on the LLM provider's api_key_env (re-read from disk),
+    # and the default provider (claude_code) is keyless, so persist a keyed provider
+    # so the default env-var name resolves to one that needs a key.
+    update_user_config(tmp_path, "llm", {"provider": "anthropic", "api_key_env": _ENV})
     return SimpleNamespace(config=load_config(home=tmp_path))
 
 

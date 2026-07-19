@@ -24,7 +24,7 @@ from datetime import timedelta
 from typing import Callable
 
 from phileas import recent
-from phileas.db import clean_source_event_id
+from phileas.db import clean_source_id
 from phileas.recall_format import (
     ABOUT_MAX,
     POINTER_CONTENT_CHARS,
@@ -80,16 +80,16 @@ def recall_recent(
     entities_fn: EntitiesFn,
     *,
     days: int = 7,
-    max_threads: int = recent.DEFAULT_MAX_THREADS,
+    max_threads: int = recent.DEFAULT_MAX_SOURCES,
     max_chars: int = recent.DEFAULT_MAX_CHARS,
 ) -> ToolResult:
-    """Recent activity as a thread snapshot — the newest conversations, one line each.
+    """Recent activity as a session snapshot — the newest sessions, one line each.
 
-    Groups the gather window's memories by their conversation thread, ranks
-    threads newest first, and keeps the top ones under a budget. A single busy
-    session collapses to one line (its latest reflection, or latest memory)
-    carrying the thread's memory count and handle, so one burst can't drown the
-    snapshot and the size is bounded by the budget rather than by ``days``.
+    Groups the gather window's memories by their source session, ranks sessions
+    newest first, and keeps the top ones under a budget. A single busy session
+    collapses to one line (its latest reflection, or latest memory) carrying the
+    session's memory count and handle, so one burst can't drown the snapshot and
+    the size is bounded by the budget rather than by ``days``.
     """
     end = _date.today()
     start = end - timedelta(days=max(days, MIN_GATHER_DAYS))
@@ -97,37 +97,36 @@ def recall_recent(
     if not items:
         return {"items": [], "text": f"No memories found in the last {days} day(s)."}
 
-    event_thread = engine.db.get_thread_ids_for_events([it.get("source_event_id") for it in items])
     clip = POINTER_CONTENT_CHARS
-    res = recent.group_recent_threads(items, event_thread, max_threads=max_threads, max_chars=max_chars, clip=clip)
-    threads = res["threads"]
+    res = recent.group_recent_sources(items, max_sources=max_threads, max_chars=max_chars, clip=clip)
+    sources = res["sources"]
 
-    # Entity tags only for the representative of each shown thread.
-    reps = [s["rep"] for s in threads]
+    # Entity tags only for the representative of each shown session.
+    reps = [s["rep"] for s in sources]
     ents = entities_fn(reps)
     lines = [
-        f"Recent threads (newest first — {res['shown']} of {res['total_threads']}; "
-        "expand any with get_thread_memories(<id>)):"
+        f"Recent sessions (newest first — {res['shown']} of {res['total_sources']}; "
+        "expand any with get_source_memories(<id>)):"
     ]
-    lines.extend(recent.render_thread_line(s, ents, clip=clip) for s in threads)
+    lines.extend(recent.render_source_line(s, ents, clip=clip) for s in sources)
     output = "\n".join(lines)
 
     bounds = {
-        "threads_total": res["total_threads"],
-        "threads_shown": res["shown"],
+        "sources_total": res["total_sources"],
+        "sources_shown": res["shown"],
         "memories_in_window": len(items),
         "output_chars": len(output),
     }
-    return {"items": reps, "text": output, "bounds": bounds, "threads": threads}
+    return {"items": reps, "text": output, "bounds": bounds, "sources": sources}
 
 
-def get_thread_memories(engine, entities_fn: EntitiesFn, *, thread_id: str) -> ToolResult:
-    """The memories of one conversation thread, newest first — the snapshot drill-in."""
-    items = engine.get_thread_memories(thread_id)
+def get_source_memories(engine, entities_fn: EntitiesFn, *, source_id: str) -> ToolResult:
+    """The memories of one session, newest first — the snapshot drill-in."""
+    items = engine.get_source_memories(source_id)
     if not items:
-        return {"items": [], "text": f"No memories found for thread {id8(thread_id)}."}
+        return {"items": [], "text": f"No memories found for source {id8(source_id)}."}
     clip = POINTER_CONTENT_CHARS
-    lines = [f"{len(items)} memory(ies) in thread {id8(thread_id)} (newest first):"]
+    lines = [f"{len(items)} memory(ies) in source {id8(source_id)} (newest first):"]
     lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
     return {"items": items, "text": "\n".join(lines)}
 
@@ -214,17 +213,18 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
         f"  created={result['created_at']}  updated={result['updated_at']}",
         f"  daily_ref={result.get('daily_ref') or '—'}",
     ]
-    # Provenance: the raw turn this memory was distilled from, and the thread it
-    # sits in. thread(thread_id) reads back the whole conversation.
-    st = result.get("source_turn")
-    if st:
-        snippet = " ".join((st.get("text") or "").split())
-        if len(snippet) > 240:
-            snippet = snippet[:239].rstrip() + "…"
-        lines.append(f"  from turn [{id8(st['event_id'])}]: {snippet}")
-        lines.append(f"  thread={result.get('thread_id') or '—'}  (call thread() on it for the full conversation)")
+    # Provenance: the session this memory was distilled from. source(source_id)
+    # reads back the whole session.
+    src = result.get("source")
+    if src:
+        label = src.get("label") or src.get("client_key") or src.get("kind") or "session"
+        turns = src.get("turn_count", 0)
+        lines.append(
+            f"  from source [{id8(src['source_id'])}]: {label} ({turns} turn(s))  "
+            "(call source() on it for the full session)"
+        )
     else:
-        lines.append(f"  source_event_id={result.get('source_event_id') or '—'}")
+        lines.append(f"  source_id={result.get('source_id') or '—'}")
     lines.append(f"  entities: {ent_names or '—'}")
     # Scoping (AA-119): only render when present — an unscoped memory is
     # globally valid and the line would be noise on the vast majority.
@@ -254,27 +254,32 @@ def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
     return {"items": [result], "text": "\n".join(lines)}
 
 
-def thread(engine, entities_fn: EntitiesFn, *, thread_id: str) -> ToolResult:
-    result = engine.thread(thread_id)
+def source(engine, entities_fn: EntitiesFn, *, source_id: str) -> ToolResult:
+    result = engine.source(source_id)
     if result is None:
-        return {"items": [], "text": f"Thread {thread_id} not found."}
+        return {"items": [], "text": f"Source {source_id} not found."}
 
     turns = result["turns"]
-    head = f"Thread {result['thread_id']}"
+    head = f"Source {result['source_id']}"
     if result.get("label"):
         head += f" — {result['label']}"
-    head += f" ({len(turns)} turn(s)):"
+    elif result.get("client_key"):
+        head += f" — {result['client_key']}"
+    head += f" ({len(turns)} turn(s), {result.get('extraction_status')}):"
     lines = [head]
-    items: list[dict] = []
     for n, turn in enumerate(turns, 1):
-        when = (turn.get("received_at") or "")[:19]
+        when = (turn.get("ts") or "")[:19]
+        role = turn.get("role") or "?"
         lines.append("")
-        lines.append(f"── turn {n} · [{id8(turn['event_id'])}] · {when} ──")
-        lines.append(turn["text"])
-        for m in turn["memories"]:
+        lines.append(f"── turn {n} · {role} · {when} ──")
+        lines.append(turn.get("text", ""))
+    mems = result.get("memories", [])
+    if mems:
+        lines.append("")
+        lines.append(f"memories distilled ({len(mems)}):")
+        for m in mems:
             lines.append(f"    → [{id8(m['id'])}] [{m['type']}] {m['content']}")
-            items.append(m)
-    return {"items": items, "text": "\n".join(lines)}
+    return {"items": mems, "text": "\n".join(lines)}
 
 
 def scopes(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
@@ -338,7 +343,7 @@ TOOLS: dict[str, Callable[..., ToolResult]] = {
     "about": about,
     "serendipity": serendipity,
     "hydrate": hydrate,
-    "thread": thread,
+    "source": source,
     "find_entities": find_entities,
     "scopes": scopes,
 }
@@ -385,22 +390,33 @@ RECONCILE_MAX_PAIRS = 40
 TOOL_WRITE_NAMES = frozenset({"memorize", "memorize_batch", "forget", "update", "resolve_contradiction"})
 
 
-def _resolve_event_id(engine, source_event_id: str | None) -> str | None:
-    """Resolve a memory's provenance to a real event id, or None.
+def _resolve_source_id(engine, source_id: str | None) -> str | None:
+    """Resolve a memory's provenance to a real source id, or None.
 
-    A supplied id must reference a captured turn, else this raises pointing at
-    ingest_text — the capture step that mints the id — so a typo or hallucinated
-    id is refused. Omitting it resolves to None: a memory with no single source,
-    such as a reflection or rollup derived from other memories.
+    A supplied id must reference a captured session, else this raises so a typo or
+    hallucinated id is refused. Omitting it resolves to None: a memory with no
+    single source, such as a reflection or rollup derived from other memories.
     """
-    sid = clean_source_event_id(source_event_id)
-    if sid is not None and engine.db.get_event(sid) is None:
+    sid = clean_source_id(source_id)
+    if sid is not None and engine.db.get_source(sid) is None:
         raise ValueError(
-            f"source_event_id {sid!r} does not exist. Capture the source with "
-            "ingest_text(...) and pass the event_id it returns, or omit it for a "
-            "memory derived from other memories."
+            f"source_id {sid!r} does not exist. Omit it for a memory derived from "
+            "other memories, or ingest the session it came from first."
         )
     return sid
+
+
+def _manual_source(engine, text: str) -> str:
+    """Capture a human-supplied source body (a decision's reasoning, etc.) as a
+    one-turn source and return its id, so a manual memory can hang off it.
+
+    Not queued for the extraction worker: the memory being written *is* the
+    distillation, so re-distilling would only duplicate it.
+    """
+    payload = {"kind": "manual", "turns": [{"i": 0, "role": "self", "text": text}]}
+    source_id = engine.ingest_source(payload, mark_ready=False)["source_id"]
+    engine.db.set_source_status(source_id, "extracted")
+    return source_id
 
 
 def _contradiction_menu(contradiction: dict | None) -> str:
@@ -459,7 +475,7 @@ def memorize(
     entities_fn: EntitiesFn,
     *,
     content: str,
-    source_event_id: str | None = None,
+    source_id: str | None = None,
     source_text: str | None = None,
     memory_type: str = "knowledge",
     daily_ref: str | None = None,
@@ -474,13 +490,11 @@ def memorize(
     _reject_tool_markup(content=content)
     # The pointer/body split for a human-initiated write: when the caller hands
     # over verbatim source (a decision's reasoning, the alternatives passed over),
-    # capture it as its own event and hang the memory off it. The event is born
-    # "extracted", so the observer worker never re-distills it into a duplicate.
-    # `content` is the pointer recall surfaces; this event is the body hydrate →
-    # thread drills into.
-    if source_text and source_event_id is None:
-        source_event_id = ingest_text(engine, entities_fn, text=source_text)["event_id"]
-    source_event_id = _resolve_event_id(engine, source_event_id)
+    # capture it as a one-turn source and hang the memory off it. `content` is the
+    # pointer recall surfaces; this source is the body hydrate → source drills into.
+    if source_text and source_id is None:
+        source_id = _manual_source(engine, source_text)
+    source_id = _resolve_source_id(engine, source_id)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
     parsed_relationships = json.loads(relationships) if isinstance(relationships, str) else relationships
     parsed_contexts = json.loads(contexts) if isinstance(contexts, str) else contexts
@@ -492,7 +506,7 @@ def memorize(
         daily_ref=daily_ref,
         entities=parsed_entities,
         relationships=parsed_relationships,
-        source_event_id=source_event_id,
+        source_id=source_id,
         contexts=parsed_contexts,
         child_ids=parsed_children,
     )
@@ -511,7 +525,7 @@ def memorize_batch(
     entities_fn: EntitiesFn,
     *,
     memories: list | str,
-    source_event_id: str | None = None,
+    source_id: str | None = None,
 ) -> str:
     items = json.loads(memories) if isinstance(memories, str) else memories
     if not items:
@@ -524,7 +538,7 @@ def memorize_batch(
     for i, mem in enumerate(items):
         if mem.get("content"):
             _reject_tool_markup(content=mem.get("content"))
-            validated[i] = _resolve_event_id(engine, mem.get("source_event_id") or source_event_id)
+            validated[i] = _resolve_source_id(engine, mem.get("source_id") or source_id)
 
     results = []
     for i, mem in enumerate(items):
@@ -549,7 +563,7 @@ def memorize_batch(
             daily_ref=mem.get("daily_ref"),
             entities=parsed_entities,
             relationships=parsed_relationships,
-            source_event_id=validated[i],
+            source_id=validated[i],
             # Bulk writes aren't a place to act on a per-item resolve menu;
             # surface conflicts via the single-memory `memorize` path instead.
             detect_conflict=False,
@@ -809,38 +823,16 @@ def status(engine, entities_fn: EntitiesFn) -> str:
     return "\n".join(lines)
 
 
-def start_thread(
-    engine,
-    entities_fn: EntitiesFn,
-    *,
-    label: str | None = None,
-    client_key: str | None = None,
-    source_kind: str = "agent",
-) -> dict:
-    return engine.start_thread(label=label, source_kind=source_kind, client_key=client_key)
+def ingest_source(engine, entities_fn: EntitiesFn, *, payload: dict, mark_ready: bool = True) -> dict:
+    """Upsert a whole session (unified-format payload) as one source.
 
-
-def ingest_text(
-    engine,
-    entities_fn: EntitiesFn,
-    *,
-    text: str,
-    thread_id: str | None = None,
-    source_kind: str = "agent",
-) -> dict:
-    from phileas.models import Event
-
-    text = (text or "").strip()
-    if not text:
-        raise ValueError("ingest_text requires non-empty verbatim text.")
-    event = Event(text=text, source_kind=source_kind, thread_id=thread_id)
-    engine.save_event(event)
-    return {
-        "event_id": event.id,
-        "thread_id": event.thread_id,
-        "received_at": event.received_at.isoformat(),
-        "source_kind": event.source_kind,
-    }
+    ``payload`` is ``{client_key, kind, cwd, started_at, ended_at, turns: [...]}``.
+    Get-or-create on ``client_key``, so a resumed session updates the source it
+    already opened. ``mark_ready`` queues it for the extraction worker.
+    """
+    if not isinstance(payload, dict) or not payload.get("turns"):
+        raise ValueError("ingest_source requires a payload with a non-empty 'turns' list.")
+    return engine.ingest_source(payload, mark_ready=mark_ready)
 
 
 def _trace_recent(engine, items: list[dict], days: int, latency_ms: float, bounds: dict | None = None) -> None:
@@ -921,13 +913,13 @@ def propose_memory(
     entities: list | str | None = None,
     relationships: list | str | None = None,
     source_text: str | None = None,
-    thread_id: str | None = None,
+    source_id: str | None = None,
 ) -> str:
     """Enqueue one candidate memory for the user to review; store nothing yet.
 
-    The manual capture mode's write path. ``thread_id`` (injected by the capture
-    hook) anchors the proposal to the conversation, so approval can expand that
-    thread's turns into the memory's provenance.
+    The manual capture write path. ``source_id`` (injected by the capture hook)
+    anchors the proposal to the session, so approval carries that session as the
+    memory's provenance.
     """
     _reject_tool_markup(content=content)
     parsed_entities = json.loads(entities) if isinstance(entities, str) else entities
@@ -938,7 +930,7 @@ def propose_memory(
         entities=parsed_entities,
         relationships=parsed_relationships,
         source_text=source_text,
-        thread_id=thread_id,
+        source_id=source_id,
     )
     return f"Proposed [{out['id'][:8]}] [{memory_type}] {content} — awaiting review (phileas memory queue list)"
 
@@ -964,8 +956,7 @@ MCP_ACTIONS: dict[str, Callable[..., object]] = {
     "mark_distinct": mark_distinct,
     "alias": alias,
     "status": status,
-    "start_thread": start_thread,
-    "ingest_text": ingest_text,
+    "ingest_source": ingest_source,
 }
 
 
@@ -993,8 +984,8 @@ def run_mcp(engine, entities_fn: EntitiesFn, name: str, params: dict | None = No
             result.get("bounds"),
         )
         return result["text"]
-    if name == "get_thread_memories":
-        return get_thread_memories(engine, entities_fn, **params)["text"]
+    if name == "get_source_memories":
+        return get_source_memories(engine, entities_fn, **params)["text"]
     if name in TOOL_NAMES:
         return run(engine, entities_fn, name, params)["text"]
     raise ValueError(f"Unknown MCP tool: {name}")

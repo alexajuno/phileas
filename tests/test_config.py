@@ -343,64 +343,61 @@ class TestLegacyFallback:
 
 
 class TestExtractionConfig:
-    """The ``[extraction]`` section selects the memorization strategy."""
+    """The ``[extraction]`` section toggles automatic distillation."""
 
-    def test_default_mode_is_manual(self, tmp_path):
+    def test_default_is_enabled(self, tmp_path):
         cfg = load_config(home=tmp_path)
-        assert cfg.extraction.mode == "manual"
+        assert cfg.extraction.enabled is True
 
     def test_toml_override(self, tmp_path):
         (tmp_path / "config.toml").write_text(
             textwrap.dedent("""\
             [extraction]
-            mode = "api"
+            enabled = false
         """)
         )
         cfg = load_config(home=tmp_path)
-        assert cfg.extraction.mode == "api"
+        assert cfg.extraction.enabled is False
 
-    def test_api_extraction_active_requires_mode_and_key(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
-        (tmp_path / "config.toml").write_text('[extraction]\nmode = "api"\n')
+    def test_extraction_active_with_keyless_default(self, tmp_path):
+        # The default provider (claude_code) is keyless, so enabled extraction is
+        # active without any key set.
         cfg = load_config(home=tmp_path)
-        assert cfg.api_extraction_active is False  # api mode but no key
-        monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
-        assert load_config(home=tmp_path).api_extraction_active is True
+        assert cfg.extraction_active is True
 
-    def test_api_extraction_active_via_stored_key(self, tmp_path, monkeypatch):
-        from phileas import secrets
+    def test_extraction_active_requires_enabled(self, tmp_path):
+        (tmp_path / "config.toml").write_text("[extraction]\nenabled = false\n")
+        assert load_config(home=tmp_path).extraction_active is False
 
+    def test_extraction_active_requires_key_for_keyed_provider(self, tmp_path, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
-        (tmp_path / "config.toml").write_text('[extraction]\nmode = "api"\n')
-        assert load_config(home=tmp_path).api_extraction_active is False
-        secrets.store_key(tmp_path, "PHILEAS_ANTHROPIC_API_KEY", "sk-stored")
-        assert load_config(home=tmp_path).api_extraction_active is True
-
-    def test_client_mode_is_never_api_active(self, tmp_path, monkeypatch):
+        (tmp_path / "config.toml").write_text(
+            '[llm]\nprovider = "anthropic"\napi_key_env = "PHILEAS_ANTHROPIC_API_KEY"\n'
+        )
+        assert load_config(home=tmp_path).extraction_active is False  # keyed provider, no key
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
-        cfg = load_config(home=tmp_path)  # default client mode
-        assert cfg.api_extraction_active is False
+        assert load_config(home=tmp_path).extraction_active is True
 
 
 class TestLLMConfig:
-    """The ``[llm]`` section configures the model the ``api`` path uses."""
+    """The ``[llm]`` section configures the model the extraction worker uses."""
 
     def test_defaults(self, tmp_path):
         cfg = load_config(home=tmp_path)
-        assert cfg.llm.provider == "anthropic"
-        assert cfg.llm.model == "claude-haiku-4-5-20251001"
-        assert cfg.llm.api_key_env == "PHILEAS_ANTHROPIC_API_KEY"
+        assert cfg.llm.provider == "claude_code"
+        assert cfg.llm.model == "sonnet"
+        assert cfg.llm.api_key_env == ""
 
     def test_key_reachable_tracks_env_presence(self, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
-        cfg = LLMConfig()
+        cfg = LLMConfig(provider="anthropic", api_key_env="PHILEAS_ANTHROPIC_API_KEY")
         assert key_reachable(cfg, None) is False
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
         assert key_reachable(cfg, None) is True
 
     def test_key_reachable_honors_custom_key_env(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        cfg = LLMConfig(api_key_env="PHILEAS_ANTHROPIC_API_KEY")
+        cfg = LLMConfig(provider="anthropic", api_key_env="PHILEAS_ANTHROPIC_API_KEY")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-wrong")
         assert key_reachable(cfg, None) is False  # the generic var doesn't count
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-right")
@@ -410,7 +407,7 @@ class TestLLMConfig:
         from phileas import secrets
 
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
-        cfg = LLMConfig()
+        cfg = LLMConfig(provider="anthropic", api_key_env="PHILEAS_ANTHROPIC_API_KEY")
         assert key_reachable(cfg, tmp_path) is False
         secrets.store_key(tmp_path, cfg.api_key_env, "sk-stored")
         assert key_reachable(cfg, tmp_path) is True  # reachable via the 0600 file
@@ -418,6 +415,8 @@ class TestLLMConfig:
     def test_keyless_provider_reachable_without_key(self, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         assert key_reachable(LLMConfig(provider="ollama", model="llama3.1"), None) is True
+        assert key_reachable(LLMConfig(provider="claude_code", model="sonnet"), None) is True
+        assert provider_needs_key("claude_code") is False
         assert provider_needs_key("ollama") is False
         assert provider_needs_key("anthropic") is True
 
@@ -431,7 +430,7 @@ class TestLLMConfig:
         cfg = load_config(home=tmp_path)
         assert cfg.llm.model == "claude-sonnet-4-6"
         # Untouched fields stay at defaults.
-        assert cfg.llm.provider == "anthropic"
+        assert cfg.llm.provider == "claude_code"
 
     def test_stale_nested_operations_table_ignored(self, tmp_path):
         """A pre-existing ``[llm.operations]`` subtable loads cleanly (dropped)."""
@@ -543,27 +542,38 @@ class TestDiscoverProfiles:
 class TestConfigSnapshot:
     """``config_snapshot`` — the JSON view a settings UI reads."""
 
+    @staticmethod
+    def _use_anthropic():
+        """Point the config at a keyed provider so key presence is meaningful (the
+        default provider is keyless)."""
+        home = resolve_home()
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "config.toml").write_text('[llm]\nprovider = "anthropic"\napi_key_env = "PHILEAS_ANTHROPIC_API_KEY"\n')
+
     def test_reports_sections_path_and_secret_presence(self, _isolate_home, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("PHILEAS_SYNC_TOKEN", raising=False)
+        self._use_anthropic()
         cfg = load_config()
         snap = config_snapshot(cfg)
         assert set(snap["sections"]) == {"extraction", "sync", "llm"}
         assert snap["config_path"] == str(cfg.config_path)
-        assert snap["sections"]["extraction"]["mode"] == cfg.extraction.mode
+        assert snap["sections"]["extraction"]["enabled"] == cfg.extraction.enabled
         assert snap["sections"]["llm"]["model"] == cfg.llm.model
-        assert snap["choices"]["modes"] == ["client", "api", "manual"]
+        assert "modes" not in snap["choices"]  # the mode enum is gone
+        assert "claude_code" in snap["choices"]["providers"]
         assert "anthropic" in snap["choices"]["providers"]
-        assert cfg.llm.model in snap["choices"]["models"]
         # Each provider maps to its default key env var; a keyless one maps to None.
         assert snap["choices"]["provider_key_env"]["anthropic"] == "PHILEAS_ANTHROPIC_API_KEY"
         assert snap["choices"]["provider_key_env"]["openai"] == "PHILEAS_OPENAI_API_KEY"
         assert snap["choices"]["provider_key_env"]["ollama"] is None
+        assert snap["choices"]["provider_key_env"]["claude_code"] is None
         # Each provider offers a non-empty model set fitting that provider.
         by_provider = snap["choices"]["models_by_provider"]
         assert any("claude" in m for m in by_provider["anthropic"])
         assert any("gpt" in m for m in by_provider["openai"])
         assert any("llama" in m for m in by_provider["ollama"])
+        assert "sonnet" in by_provider["claude_code"]
         assert snap["secrets"]["llm_api_key_set"] is False
         assert snap["secrets"]["llm_api_key_source"] is None
         assert snap["secrets"]["sync_token_set"] is False
@@ -578,6 +588,7 @@ class TestConfigSnapshot:
         token_canary = "LEAKCANARY-SYNC-9f3a"
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", key_canary)
         monkeypatch.setenv("PHILEAS_SYNC_TOKEN", token_canary)
+        self._use_anthropic()
         snap = config_snapshot(load_config())
         assert snap["secrets"]["llm_api_key_set"] is True
         assert snap["secrets"]["llm_api_key_source"] == "env"
@@ -591,6 +602,7 @@ class TestConfigSnapshot:
 
         key_canary = "LEAKCANARY-STORED-9f3a"
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
+        self._use_anthropic()
         cfg = load_config()
         secrets.store_key(cfg.home, cfg.llm.api_key_env, key_canary)
         snap = config_snapshot(load_config())
@@ -617,10 +629,10 @@ class TestValidateConfigUpdate:
         with pytest.raises(ValueError, match="true or false"):
             validate_config_update("sync", {"push_on_write": "yes"})
 
-    def test_extraction_mode_enum_checked(self):
-        assert validate_config_update("extraction", {"mode": "api"}) == {"mode": "api"}
-        with pytest.raises(ValueError, match="extraction.mode must be one of"):
-            validate_config_update("extraction", {"mode": "banana"})
+    def test_extraction_enabled_is_a_bool(self):
+        assert validate_config_update("extraction", {"enabled": False}) == {"enabled": False}
+        with pytest.raises(ValueError, match="true or false"):
+            validate_config_update("extraction", {"enabled": "banana"})
 
     def test_optional_string_clears_on_empty(self):
         assert validate_config_update("sync", {"push_command": "  "}) == {"push_command": None}
@@ -634,15 +646,15 @@ class TestApplyConfigUpdate:
     def test_round_trips_through_load(self, _isolate_home):
         home = _xdg_home(_isolate_home)
         home.mkdir(parents=True)
-        apply_config_update(home, "extraction", {"mode": "api"})
+        apply_config_update(home, "extraction", {"enabled": False})
         apply_config_update(home, "llm", {"model": "claude-sonnet-4-6"})
         cfg = load_config(home=home)
-        assert cfg.extraction.mode == "api"
+        assert cfg.extraction.enabled is False
         assert cfg.llm.model == "claude-sonnet-4-6"
 
     def test_invalid_edit_writes_nothing(self, _isolate_home):
         home = _xdg_home(_isolate_home)
         home.mkdir(parents=True)
         with pytest.raises(ValueError):
-            apply_config_update(home, "extraction", {"mode": "banana"})
+            apply_config_update(home, "extraction", {"enabled": "banana"})
         assert not (home / "config.toml").exists()

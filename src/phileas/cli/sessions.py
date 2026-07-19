@@ -129,9 +129,9 @@ def _render(view: core.SessionView, *, full: bool, only_recalls: bool, only_stor
         + (f"  ·  [dim]{escape(view.project)}[/dim]" if view.project else "")
         + (f"  ·  {_daterange(view.started_at, view.ended_at)}" if view.started_at else "")
     )
-    thread = f"thread {view.thread_id[:8]} · " if view.thread_id else ""
+    src = f"source {view.source_id[:8]} · " if view.source_id else ""
     console.print(
-        f"[dim]{thread}{len(view.turns)} turns · {view.n_recalls} recalls · {view.n_stored} stored · {tag}[/dim]\n"
+        f"[dim]{src}{len(view.turns)} turns · {view.n_recalls} recalls · {view.n_stored} stored · {tag}[/dim]\n"
     )
 
     for turn in view.turns:

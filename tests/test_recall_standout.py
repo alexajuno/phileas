@@ -41,7 +41,7 @@ class _StubVector:
     def search(self, query, top_k=None):
         return list(self._semantic)
 
-    def search_events(self, query, top_k=None):
+    def search_sources(self, query, top_k=None):
         return []
 
     def get_embeddings(self, ids):

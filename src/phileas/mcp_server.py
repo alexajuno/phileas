@@ -88,10 +88,10 @@ mcp = FastMCP(
         "cross-topic context the task wouldn't retrieve. Opt-in; keep n small.\n"
         "\n"
         "Drill-in ladder (hydrate lazily — each step costs more):\n"
-        "- hydrate(id8): full record of ONE memory — exact timestamps, counts, its source turn "
-        "(the raw it was distilled from) and thread_id, linked entities. The inverse of the pointer trim.\n"
-        "- thread(thread_id): the conversation a memory came from — its raw turns in order, each with "
-        "the memories it produced. Get the thread_id from hydrate. The deepest, most expensive view.\n"
+        "- hydrate(id8): full record of ONE memory — exact timestamps, counts, its source "
+        "(the session it was distilled from) and source_id, linked entities. The inverse of the pointer trim.\n"
+        "- source(source_id): the session a memory came from — its turns in order and the "
+        "memories it produced. Get the source_id from hydrate. The deepest, most expensive view.\n"
         "\n" + _capture_instructions
     ),
 )
@@ -157,7 +157,7 @@ def memorize(
 
     Pointer/body split: `content` is the one-line pointer recall surfaces;
     `source_text` is the full body (the reasoning, the alternatives passed over,
-    what it changes) that `hydrate` → `thread` drills into. Put the decision in
+    what it changes) that `hydrate` → `source` drills into. Put the decision in
     `content`, the "why" in `source_text`.
 
     Tag `entities` with what the memory governs so it is findable later. For a
@@ -173,7 +173,7 @@ def memorize(
     Args:
         content: The memory itself, phrased as a durable one-liner (the pointer).
         source_text: Optional verbatim body — rationale, rejected alternatives,
-            surrounding context. Stored as the memory's source turn; omit for a
+            surrounding context. Stored as the memory's source session; omit for a
             bare fact with no body.
         memory_type: "decision" (default) for a choice-and-why. Also accepts
             "knowledge", "behavior", "reflection", "event", "profile" for other
@@ -215,19 +215,15 @@ def propose_memory(
     memory_type: str = "knowledge",
     entities: list | str | None = None,
     relationships: list | str | None = None,
-    thread_id: str | None = None,
+    source_id: str | None = None,
 ) -> str:
     """Propose one candidate memory for the user to review — the manual capture surface.
 
     Unlike `memorize` (which stores at once), `propose_memory` enqueues a candidate
     that stores nothing until the user approves it in the review queue (`phileas
     memory queue`, or the web dashboard). This is the manual capture pass: at the
-    end of a conversation, review the whole thread and propose the memories worth
+    end of a conversation, review the whole session and propose the memories worth
     keeping, one call each, and let the user validate. Nothing lands unapproved.
-
-    Pass `thread_id` exactly as the `<phileas-capture-hint>` gives it: it anchors
-    the proposal to this conversation, so an approved memory records the thread's
-    turns as its provenance. Omit it only when no hint was provided.
 
     Args:
         content: The candidate memory, phrased as a durable one-liner.
@@ -237,7 +233,7 @@ def propose_memory(
         entities: What the memory is about — a list (or JSON string) of
             {"name","type","description"}, same vocabulary as `memorize`.
         relationships: Optional list/JSON of edges between entities.
-        thread_id: The conversation id from the capture hint; anchors provenance.
+        source_id: Optional session id to anchor the proposal's provenance to.
     """
     return _call(
         "propose_memory",
@@ -247,7 +243,7 @@ def propose_memory(
             "memory_type": memory_type,
             "entities": entities,
             "relationships": relationships,
-            "thread_id": thread_id,
+            "source_id": source_id,
         },
     )
 
@@ -262,7 +258,7 @@ def recall(
     """Retrieve memories relevant to a focused term query.
 
     Hybrid retrieval: keyword (FTS5 OR-match across tokens, ranked by BM25) + semantic + graph
-    entity lookup + raw-text + event-thread fanout. Returns up to top_k POINTER
+    entity lookup + session-text fanout. Returns up to top_k POINTER
     lines (`[id8] [type] date · content · entity tags`) — long content is
     clipped, metadata is trimmed. Call hydrate(id8) for a memory's full detail.
 
@@ -289,18 +285,17 @@ def recall(
 
 
 @mcp.tool()
-def thread(thread_id: str) -> str:
-    """Return a conversation: its raw turns in order, each with the memories it produced.
+def source(source_id: str) -> str:
+    """Return a session: its turns in order and the memories it produced.
 
     Follow a memory back to where it came from — `hydrate` gives you a memory's
-    `thread_id`; pass it here to read the whole surrounding conversation. The raw
-    turns are the spine; memories hang off the turn they were distilled from.
+    `source_id`; pass it here to read the whole session. The turns are the spine;
+    the memories are what was distilled from them.
 
     Args:
-        thread_id: A thread id (from hydrate), or an event id; either resolves
-            to its conversation.
+        source_id: A source id (from hydrate), or a client_key / id prefix.
     """
-    return _call("thread", {"thread_id": thread_id})
+    return _call("source", {"source_id": source_id})
 
 
 @mcp.tool()
@@ -309,8 +304,8 @@ def hydrate(memory_id: str) -> str:
 
     Recall-family tools return *pointers* (`[id8] [type] date · content · entities`)
     to keep the main context cheap. When you need what a pointer trims off —
-    exact timestamps, status/access counts, the full source_event_id
-    (then call `thread` on it for the originating conversation), and linked
+    exact timestamps, status/access counts, the full source_id
+    (then call `source` on it for the originating session), and linked
     entities — pass the pointer's id8 (or the full uuid) here.
 
     Args:
@@ -512,17 +507,17 @@ def expand(memory_id: str) -> str:
 
 
 @mcp.tool()
-def get_thread_memories(thread_id: str) -> str:
-    """List the memories a conversation thread produced, newest first.
+def get_source_memories(source_id: str) -> str:
+    """List the memories a session produced, newest first.
 
-    The cheap drill-in for a `recall_recent` thread line: pass the thread handle
+    The cheap drill-in for a `recall_recent` session line: pass the source handle
     shown there (the `↳<id>`) to see every memory that session produced, without
-    the verbatim turns. Use `thread` instead when you want the raw conversation.
+    the turns. Use `source` instead when you want the whole session.
 
     Args:
-        thread_id: A thread handle, or any event id within it.
+        source_id: A source handle (or client_key) for the session.
     """
-    return _call("get_thread_memories", {"thread_id": thread_id})
+    return _call("get_source_memories", {"source_id": source_id})
 
 
 @mcp.tool()

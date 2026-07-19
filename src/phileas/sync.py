@@ -29,10 +29,11 @@ holds the Kuzu write-lock or the Chroma client). Transport/orchestration
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from phileas.models import Event, MemoryItem
+from phileas.models import MemoryItem, Source
 
 if TYPE_CHECKING:
     from phileas.engine import MemoryEngine
@@ -51,7 +52,7 @@ _MEM_FIELDS = (
     "storage_strength",
     "reinforcement_count",
     "last_reinforced",
-    "source_event_id",
+    "source_id",
     "created_at",
     "updated_at",
 )
@@ -73,9 +74,48 @@ def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
         storage_strength=d.get("storage_strength", 0.5),
         reinforcement_count=d.get("reinforcement_count", 0),
         last_reinforced=_dt(d.get("last_reinforced")),
-        source_event_id=d.get("source_event_id"),
+        source_id=d.get("source_id"),
         created_at=_dt(d["created_at"]),
         updated_at=_dt(d["updated_at"]),
+    )
+
+
+def _source_to_dict(s: Source) -> dict[str, Any]:
+    return {
+        "id": s.id,
+        "client_key": s.client_key,
+        "kind": s.kind,
+        "cwd": s.cwd,
+        "label": s.label,
+        "payload": s.payload,
+        "turn_count": s.turn_count,
+        "started_at": s.started_at.isoformat() if s.started_at else None,
+        "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else None,
+        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+        "extraction_status": s.extraction_status,
+        "extracted_through": s.extracted_through,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    }
+
+
+def _source_from_dict(d: dict[str, Any]) -> Source:
+    payload = d.get("payload")
+    if isinstance(payload, str):
+        payload = json.loads(payload or "{}")
+    return Source(
+        id=d["id"],
+        client_key=d.get("client_key"),
+        kind=d.get("kind") or "claude_code_session",
+        cwd=d.get("cwd"),
+        label=d.get("label"),
+        payload=payload or {},
+        turn_count=d.get("turn_count", 0),
+        started_at=_dt(d.get("started_at")),
+        last_activity_at=_dt(d.get("last_activity_at")) or datetime.now().astimezone(),
+        ended_at=_dt(d.get("ended_at")),
+        extraction_status=d.get("extraction_status", "extracted"),
+        extracted_through=d.get("extracted_through", 0),
+        created_at=_dt(d.get("created_at")) or datetime.now().astimezone(),
     )
 
 
@@ -87,40 +127,30 @@ def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
 def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, Any]:
     """Snapshot a store into a JSON-serializable bundle.
 
-    Reads memory_items (every status — archived rows carry soft-deletes), events,
+    Reads memory_items (every status — archived rows carry soft-deletes), sources,
     and the memory→entity ABOUT edges for the exported memories.
 
     `since` (ISO timestamp) makes the export **incremental**: only memories with
-    ``updated_at > since`` and events with ``received_at > since`` are included.
-    This is safe for deletes too — `forget` bumps ``updated_at``, so an archive
-    falls in the window. Pass ``None`` for a full snapshot (bootstrap). The caller
-    should use a small overlap margin (re-send a few minutes) to absorb clock
+    ``updated_at > since`` and sources with ``last_activity_at > since`` are
+    included. This is safe for deletes too — `forget` bumps ``updated_at``, so an
+    archive falls in the window. Pass ``None`` for a full snapshot (bootstrap). The
+    caller should use a small overlap margin (re-send a few minutes) to absorb clock
     skew between machines; re-sends are idempotent.
     """
     cols = (
         "SELECT id, content, memory_type, status, access_count, "
         "last_accessed, daily_ref, storage_strength, reinforcement_count, last_reinforced, "
-        "source_event_id, created_at, updated_at FROM memory_items"
+        "source_id, created_at, updated_at FROM memory_items"
     )
     if since:
         rows = engine.db.conn.execute(cols + " WHERE updated_at > ?", (since,)).fetchall()
-        events_all = engine.db.get_all_events()
-        events_src = [e for e in events_all if e.received_at.isoformat() > since]
+        sources_src = [s for s in engine.db.get_all_sources() if s.last_activity_at.isoformat() > since]
     else:
         rows = engine.db.conn.execute(cols).fetchall()
-        events_src = engine.db.get_all_events()
+        sources_src = engine.db.get_all_sources()
 
     memories = [{f: row[f] for f in _MEM_FIELDS} for row in rows]
-    events = [
-        {
-            "id": e.id,
-            "text": e.text,
-            "received_at": e.received_at.isoformat(),
-            "source_kind": e.source_kind,
-            "thread_id": e.thread_id,
-        }
-        for e in events_src
-    ]
+    sources = [_source_to_dict(s) for s in sources_src]
 
     # Only the exported memories' links — keep the bundle small.
     all_links = engine.graph.all_about_edges()
@@ -133,7 +163,7 @@ def export_bundle(engine: MemoryEngine, since: str | None = None) -> dict[str, A
     return {
         "version": BUNDLE_VERSION,
         "memories": memories,
-        "events": events,
+        "sources": sources,
         "links": links,
     }
 
@@ -153,8 +183,8 @@ def _delta(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
     tgt_mem = {m["id"]: m["updated_at"] for m in target["memories"]}
     out_mem = [m for m in source["memories"] if m["id"] not in tgt_mem or _newer(m["updated_at"], tgt_mem[m["id"]])]
 
-    tgt_events = {e["id"] for e in target["events"]}
-    out_events = [e for e in source["events"] if e["id"] not in tgt_events]
+    tgt_sources = {s["id"] for s in target.get("sources", [])}
+    out_sources = [s for s in source.get("sources", []) if s["id"] not in tgt_sources]
 
     src_links = source.get("links", {})
     moved_ids = {m["id"] for m in out_mem}
@@ -163,7 +193,7 @@ def _delta(source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
     return {
         "version": BUNDLE_VERSION,
         "memories": out_mem,
-        "events": out_events,
+        "sources": out_sources,
         "links": out_links,
     }
 
@@ -185,25 +215,16 @@ def import_bundle(engine: MemoryEngine, bundle: dict[str, Any]) -> dict[str, int
     """Apply an import bundle to a store, rebuilding the derived backends.
 
     Idempotent: re-running with the same bundle is a no-op (upserts + idempotent
-    graph links). Events are imported before memories so ``source_event_id``
-    references resolve.
+    graph links). Sources are imported before memories so ``source_id`` references
+    resolve.
     """
     if bundle.get("version") != BUNDLE_VERSION:
         raise ValueError(f"unsupported bundle version: {bundle.get('version')!r}")
 
-    n_events = 0
-    for e in bundle.get("events", []):
-        engine.db.save_event(
-            Event(
-                id=e["id"],
-                text=e["text"],
-                received_at=datetime.fromisoformat(e["received_at"]),
-                source_kind=e.get("source_kind", "agent"),
-                thread_id=e.get("thread_id"),
-            )
-        )
-        engine.vector.add_event(e["id"], e["text"])
-        n_events += 1
+    n_sources = 0
+    for s in bundle.get("sources", []):
+        engine.save_source(_source_from_dict(s))
+        n_sources += 1
 
     links = bundle.get("links", {})
     n_mem = 0
@@ -219,4 +240,4 @@ def import_bundle(engine: MemoryEngine, bundle: dict[str, Any]) -> dict[str, int
                 n_linked += 1
         n_mem += 1
 
-    return {"memories": n_mem, "events": n_events, "links": n_linked}
+    return {"memories": n_mem, "sources": n_sources, "links": n_linked}

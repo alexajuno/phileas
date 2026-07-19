@@ -1,7 +1,7 @@
 """``phileas sessions {list,show}`` — the session inspector CLI.
 
 Each case pins HOME to a throwaway dir (the autouse fixture), seeds a phileas
-thread + raw events directly in SQLite, and — for the transcript-spine path —
+source (a whole session) directly in SQLite, and — for the transcript-spine path —
 writes a Claude Code jsonl under the fake ``~/.claude/projects`` so
 ``find_transcript`` locates it. The daemon is never involved; the CLI reads the
 store directly.
@@ -10,6 +10,7 @@ store directly.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -18,7 +19,7 @@ from click.testing import CliRunner
 from phileas.cli import app
 from phileas.config import load_config
 from phileas.db import Database
-from phileas.models import Event, Thread
+from phileas.models import Source
 
 _ISOLATE = {"PHILEAS_PROFILE": None, "PHILEAS_HOME": None}
 _NOW = datetime.now(timezone.utc)
@@ -37,8 +38,10 @@ def _isolate_home(tmp_path, monkeypatch):
 
 def _run(args):
     # Widen the render so the 8-char session id never truncates at the 80-col
-    # default rich falls back to when stdout isn't a tty.
-    return CliRunner().invoke(app, args, env={**_ISOLATE, "COLUMNS": "220"})
+    # default rich falls back to when stdout isn't a tty. NO_COLOR keeps rich from
+    # syntax-highlighting a rendered `recall("q")` call, which would break the
+    # literal-substring assertions with interspersed ANSI codes.
+    return CliRunner().invoke(app, args, env={**_ISOLATE, "COLUMNS": "220", "NO_COLOR": "1"})
 
 
 def _db() -> Database:
@@ -47,23 +50,31 @@ def _db() -> Database:
     return Database(path=cfg.db_path)
 
 
-def _seed_thread(session_id: str, turns: list[tuple[str, str]]) -> str:
-    """Create a ``claude_code:<session_id>`` thread and its raw events.
-    ``turns`` is a list of (attribution, text). Returns the thread id."""
+def _seed_source(session_id: str, turns: list[tuple[str, str]]) -> str:
+    """Create a ``claude_code:<session_id>`` source holding a whole session.
+    ``turns`` is a list of (role, text); the legacy ``self`` role maps to
+    ``user``. Returns the source id."""
     db = _db()
-    thread = Thread(source_kind="claude_code", client_key=f"claude_code:{session_id}", created_at=_NOW)
-    db.save_thread(thread)
-    for i, (attribution, text) in enumerate(turns):
-        db.save_event(
-            Event(
-                text=text,
-                received_at=_NOW + timedelta(seconds=i),
-                source_kind="claude_code",
-                thread_id=thread.id,
-                attribution=attribution,
-            )
-        )
-    return thread.id
+    payload_turns = [
+        {
+            "i": i,
+            "role": "user" if role == "self" else role,
+            "text": text,
+            "ts": (_NOW + timedelta(seconds=i)).isoformat(),
+        }
+        for i, (role, text) in enumerate(turns)
+    ]
+    src = Source(
+        client_key=f"claude_code:{session_id}",
+        kind="claude_code_session",
+        payload={"client_key": f"claude_code:{session_id}", "kind": "claude_code_session", "turns": payload_turns},
+        turn_count=len(payload_turns),
+        started_at=_NOW,
+        created_at=_NOW,
+        extraction_status="extracted",
+    )
+    db.save_source(src)
+    return src.id
 
 
 def _write_transcript(fake_home, session_id: str, entries: list[dict]) -> None:
@@ -77,11 +88,20 @@ def _envelope(inner: str) -> str:
     return json.dumps({"result": inner})
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI codes: rich syntax-highlights a rendered ``recall("q")`` call,
+    interspersing escape codes that would break a literal-substring match."""
+    return _ANSI.sub("", text)
+
+
 # --- list ---------------------------------------------------------------------
 
 
 def test_list_fast_shows_seeded_session():
-    _seed_thread("sess0001-aaaa-bbbb-cccc-000000000001", [("self", "how do I deploy the app tonight")])
+    _seed_source("sess0001-aaaa-bbbb-cccc-000000000001", [("self", "how do I deploy the app tonight")])
     result = _run(["sessions", "list", "--fast"])
     assert result.exit_code == 0
     assert "sess0001" in result.output
@@ -89,7 +109,7 @@ def test_list_fast_shows_seeded_session():
 
 
 def test_list_json_is_structured():
-    _seed_thread("sess0002-aaaa-bbbb-cccc-000000000002", [("self", "a question worth listing")])
+    _seed_source("sess0002-aaaa-bbbb-cccc-000000000002", [("self", "a question worth listing")])
     result = _run(["sessions", "list", "--fast", "--json"])
     assert result.exit_code == 0
     rows = json.loads(result.output)
@@ -108,7 +128,7 @@ def test_list_empty_store_is_graceful():
 
 def test_show_from_transcript_renders_recall_store_reply(_isolate_home):
     sid = "sess0003-aaaa-bbbb-cccc-000000000003"
-    _seed_thread(sid, [("self", "what did I plan tonight")])
+    _seed_source(sid, [("self", "what did I plan tonight")])
     _write_transcript(
         _isolate_home,
         sid,
@@ -178,18 +198,19 @@ def test_show_from_transcript_renders_recall_store_reply(_isolate_home):
     )
 
     result = _run(["sessions", "show", sid])
+    out = _plain(result.output)
     assert result.exit_code == 0
-    assert "transcript ✓" in result.output
-    assert 'recall("tonight plan")' in result.output
-    assert "[aaaaaaaa] [event]" in result.output  # pointer bracket survives markup escaping
-    assert "cycling with ngocnb" in result.output
-    assert "Giao planned cycling" in result.output  # the store
-    assert "You planned to go cycling." in result.output  # the reply
+    assert "transcript ✓" in out
+    assert 'recall("tonight plan")' in out
+    assert "[aaaaaaaa] [event]" in out  # pointer bracket survives markup escaping
+    assert "cycling with ngocnb" in out
+    assert "Giao planned cycling" in out  # the store
+    assert "You planned to go cycling." in out  # the reply
 
 
 def test_show_recalls_only_hides_reply(_isolate_home):
     sid = "sess0004-aaaa-bbbb-cccc-000000000004"
-    _seed_thread(sid, [("self", "topic question")])
+    _seed_source(sid, [("self", "topic question")])
     _write_transcript(
         _isolate_home,
         sid,
@@ -216,9 +237,10 @@ def test_show_recalls_only_hides_reply(_isolate_home):
     )
 
     result = _run(["sessions", "show", sid, "--recalls"])
+    out = _plain(result.output)
     assert result.exit_code == 0
-    assert 'recall("topic")' in result.output
-    assert "a unique reply sentinel" not in result.output
+    assert 'recall("topic")' in out
+    assert "a unique reply sentinel" not in out
 
 
 # --- show: memory.db fallback -------------------------------------------------
@@ -226,7 +248,7 @@ def test_show_recalls_only_hides_reply(_isolate_home):
 
 def test_show_falls_back_to_memory_db_without_transcript():
     sid = "sess0005-aaaa-bbbb-cccc-000000000005"
-    _seed_thread(sid, [("self", "a prompt with no transcript on disk"), ("assistant", "the assistant reply")])
+    _seed_source(sid, [("self", "a prompt with no transcript on disk"), ("assistant", "the assistant reply")])
     result = _run(["sessions", "show", sid])
     assert result.exit_code == 0
     assert "transcript ✗" in result.output

@@ -1,18 +1,9 @@
 """Install and remove the Claude Code capture hooks in ``~/.claude/settings.json``.
 
-The hooks run ``phileas hook <event>`` on session start, on every user prompt,
-and at the end of every assistant turn, so the raw floor is laid down without the
-model having to call a tool. Like the MCP registration, the command is the
-absolute path to the ``phileas`` executable, since Claude Code runs hooks without
-the venv on PATH.
-
-The Stop hook carries the memorize nudge only when installed with ``memorize``:
-that wiring adds Claude Code's ``asyncRewake`` contract so the end-of-turn hint
-wakes the live model in the background. The ``api`` extraction mode installs the
-Stop hook without it (``phileas hook stop --no-memorize``, no ``asyncRewake``), so
-the turn is still ingested but the background worker does the distilling instead.
-The choice is encoded in what lands in ``settings.json`` — the hook never reads
-config to decide.
+The hooks run ``phileas hook <event>`` on every user prompt (a recall nudge) and
+at the end of each session (ingest the whole session as a source). Like the MCP
+registration, the command is the absolute path to the ``phileas`` executable,
+since Claude Code runs hooks without the venv on PATH.
 
 The install is idempotent and additive: it replaces a prior Phileas entry for
 each event and leaves any hooks the user wrote themselves untouched. Uninstall is
@@ -30,20 +21,8 @@ from phileas.config import DEFAULT_PROFILE
 
 # Claude Code hook event -> the ``phileas hook`` subcommand that serves it.
 HOOK_EVENTS = {
-    "SessionStart": "session-start",
     "UserPromptSubmit": "user-prompt",
-    "Stop": "stop",
-}
-
-# The Stop hook's memorize wiring: Claude Code's asyncRewake contract, so the
-# end-of-turn nudge wakes the model in the background — a clean one-line "Phileas:
-# memorize check" notification — instead of blocking the turn on a synchronous
-# decision:"block" JSON reply. Present only when the Stop hook is installed with
-# the nudge (the ``client`` extraction mode).
-STOP_MEMORIZE_FIELDS: dict = {
-    "asyncRewake": True,
-    "rewakeMessage": "<phileas-memorize-hint>",
-    "rewakeSummary": "Phileas: memorize check",
+    "SessionEnd": "session-end",
 }
 
 
@@ -64,8 +43,8 @@ def hook_command(subcommand: str, profile: str = DEFAULT_PROFILE, *, extra_args:
 def _is_phileas_group(group: dict, subcommand: str) -> bool:
     """True when this hook group is one of ours for the given event, so install
     replaces it and uninstall drops it instead of leaving a duplicate. Matches on
-    the command text, not the profile or args, so a re-init repoints capture at the
-    profile being set up and a ``--no-memorize`` Stop entry still matches ``stop``."""
+    the command text, not the profile, so a re-init repoints capture at the profile
+    being set up."""
     if not isinstance(group, dict):
         return False
     return any(
@@ -96,25 +75,9 @@ def _write_settings(path: Path, settings: dict) -> bool:
         return False
 
 
-def _stop_wiring(memorize: bool) -> tuple[str, dict]:
-    """The Stop hook's ``(extra_args, extra_fields)`` for the memorize choice.
-
-    With the nudge, the plain ``stop`` command plus the asyncRewake fields; without
-    it, ``stop --no-memorize`` and no extra fields, so the hook ingests and exits 0.
-    """
-    if memorize:
-        return "", STOP_MEMORIZE_FIELDS
-    return " --no-memorize", {}
-
-
-def install_hooks(profile: str = DEFAULT_PROFILE, *, memorize: bool = True) -> bool:
-    """Wire the three capture hooks into the settings file. Returns False only if
-    the file can't be written.
-
-    ``memorize`` governs the Stop hook: on (the ``client`` mode) wires the nudge;
-    off (the ``api`` mode) installs a Stop hook that ingests the turn but leaves the
-    distilling to the background worker.
-    """
+def install_hooks(profile: str = DEFAULT_PROFILE) -> bool:
+    """Wire the capture hooks into the settings file. Returns False only if the
+    file can't be written."""
     path = settings_path()
     settings = _load_settings(path)
 
@@ -123,10 +86,9 @@ def install_hooks(profile: str = DEFAULT_PROFILE, *, memorize: bool = True) -> b
         hooks = settings["hooks"] = {}
 
     for event, subcommand in HOOK_EVENTS.items():
-        extra_args, extra_fields = _stop_wiring(memorize) if event == "Stop" else ("", {})
         existing = hooks.get(event, [])
         kept = [g for g in existing if not _is_phileas_group(g, subcommand)] if isinstance(existing, list) else []
-        entry = {"type": "command", "command": hook_command(subcommand, profile, extra_args=extra_args), **extra_fields}
+        entry = {"type": "command", "command": hook_command(subcommand, profile)}
         kept.append({"hooks": [entry]})
         hooks[event] = kept
 
@@ -158,28 +120,11 @@ def uninstall_hooks(profile: str = DEFAULT_PROFILE) -> bool:
     return _write_settings(path, settings)
 
 
-def _stop_has_memorize(hooks: dict) -> bool:
-    """True when an installed Phileas Stop hook carries the memorize nudge.
-
-    The nudge is the asyncRewake wiring, so a Stop group we own that has
-    ``asyncRewake`` on any of its entries is a ``client``-mode Stop hook.
-    """
-    for group in hooks.get("Stop", []) if isinstance(hooks.get("Stop"), list) else []:
-        if not _is_phileas_group(group, "stop"):
-            continue
-        for entry in group.get("hooks", []):
-            if isinstance(entry, dict) and entry.get("asyncRewake"):
-                return True
-    return False
-
-
 def hooks_status(profile: str = DEFAULT_PROFILE) -> dict:
-    """Report which Phileas capture hooks are installed and the Stop nudge state.
+    """Report which Phileas capture hooks are installed.
 
-    ``installed`` maps each event to whether a Phileas hook is present;
-    ``stop_memorize`` is True/False for the Stop nudge, or None when no Phileas Stop
-    hook is installed. A caller compares ``stop_memorize`` against the configured
-    ``extraction.mode`` to detect drift."""
+    ``installed`` maps each event to whether a Phileas hook is present.
+    """
     path = settings_path()
     settings = _load_settings(path)
     hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
@@ -192,5 +137,4 @@ def hooks_status(profile: str = DEFAULT_PROFILE) -> dict:
     return {
         "settings_path": str(path),
         "installed": installed,
-        "stop_memorize": _stop_has_memorize(hooks) if installed["Stop"] else None,
     }

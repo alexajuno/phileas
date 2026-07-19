@@ -2,7 +2,7 @@
 
 Usage:
     phileas status
-    phileas ingest "I moved to Bangkok last month"
+    phileas ingest <session_id>
     phileas recall "what languages"
 """
 
@@ -26,18 +26,18 @@ from phileas.cli.commands import (
     reconcile,
     resolve_cmd,
     restart_cmd,
-    retry_events,
+    retry_sources,
     scope_cmd,
     scopes,
     serendipity,
     serve,
+    source,
     start,
     status,
     stop_cmd,
     sync_export_cmd,
     sync_import_cmd,
     sync_plan_cmd,
-    thread,
     timeline,
     usage,
 )
@@ -91,7 +91,7 @@ app.add_command(timeline)
 app.add_command(about)
 app.add_command(serendipity)
 app.add_command(hydrate)
-app.add_command(thread)
+app.add_command(source)
 app.add_command(find_entities)
 app.add_command(scope_cmd)
 app.add_command(scopes)
@@ -110,7 +110,7 @@ app.add_command(profile_group)
 app.add_command(hook_group)
 app.add_command(hooks_group)
 app.add_command(memory_group)
-app.add_command(retry_events)
+app.add_command(retry_sources)
 app.add_command(reconcile)
 app.add_command(consolidate)
 app.add_command(sync_export_cmd)

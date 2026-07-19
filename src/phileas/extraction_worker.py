@@ -1,28 +1,26 @@
-"""Background worker that distills pending events into memories.
+"""Background worker that distills ready sessions into memories.
 
-The daemon constructs one worker after the engine loads and starts it only in the
-``api`` extraction mode. Capture and distillation are decoupled in time: ingest saves a
-turn as ``pending`` and notifies the worker, which batches a thread's pending
-turns and flushes them once the thread has been quiet for the debounce window
-(or has buffered past the max-buffer cap). A flush builds an attribution-tagged
-transcript, extracts memories with Phileas's own model, and writes them with
-``engine.memorize``.
+The daemon constructs one worker after the engine loads and starts it. Capture
+and distillation are decoupled in time: a session is ingested as one source and
+marked ``ready`` when it is done (the SessionEnd hook, or the daemon's idle
+sweep), and the worker drains the ready queue. A flush builds a transcript from
+the session's turns past its high-water mark, extracts memories with Phileas's
+own model, and writes them with ``engine.memorize`` tagged to the source. Because
+extraction is whole-session, a resumed session re-distills only its new turns.
 
-No key (``available`` False) leaves a thread's turns ``pending`` and logs once,
-so a keyless or credit-dry box accumulates a visible, recoverable backlog rather
-than losing turns silently. Extraction errors retry a few times, then mark the
-window ``failed`` so a poisoned turn cannot wedge the queue.
+No key (``available`` False) leaves ready sources untouched and logs once, so a
+keyless or credit-dry box accumulates a visible, recoverable backlog rather than
+losing sessions silently. Extraction errors retry a few times, then mark the
+source ``failed`` so a poisoned session cannot wedge the queue.
 
-The clock is injectable, so the debounce and max-buffer timing are unit-testable
-offline with a controllable ``now`` and a fake client.
+The poll interval is injectable, so the loop is unit-testable offline with a fake
+client by calling ``tick`` directly.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from phileas.llm import extract_memories
@@ -30,76 +28,61 @@ from phileas.llm import extract_memories
 if TYPE_CHECKING:
     from phileas.engine import MemoryEngine
     from phileas.llm import LLMClient
-    from phileas.models import Event
+    from phileas.models import Source
 
 log = logging.getLogger("phileas.extraction")
 
-# Per-thread extraction timing. Fixed rather than configurable: turns buffer and
-# a thread flushes once it has been quiet for DEBOUNCE_SECONDS, with
-# MAX_BUFFER_SECONDS the cap that keeps a long, still-active conversation from
-# starving. These are never hand-tuned, so they live here next to the loop that
-# reads them rather than in config.
-DEBOUNCE_SECONDS = 8.0
-MAX_BUFFER_SECONDS = 120.0
+# How often the worker drains the ready queue, and how many sessions it distills
+# per pass. Fixed rather than configurable: readiness is decided upstream (the
+# SessionEnd hook / idle sweep), so this is just the drain cadence.
+POLL_SECONDS = 2.0
+BATCH = 5
 
 
-def build_transcript(events: list[Event]) -> str:
-    """Render a thread's pending turns as an attribution-tagged transcript.
+def build_transcript(turns: list[dict]) -> str:
+    """Render a session's turns as a role-tagged transcript, oldest first.
 
-    Each line is ``<attribution>: <text>``, oldest first. A turn with no
-    attribution is labeled ``self`` (the ingest default), so the observer prompt
-    always sees a tagged speaker.
+    Each line is ``<role>: <text>``. A turn with no role is labeled ``user``, so
+    the extraction prompt always sees a tagged speaker.
     """
-    return "\n".join(f"{event.attribution or 'self'}: {event.text}" for event in events)
+    return "\n".join(f"{turn.get('role') or 'user'}: {turn.get('text', '')}" for turn in turns)
 
 
 class ExtractionWorker:
-    """Debounced per-thread extraction loop. See module docstring."""
+    """Drains the ``ready`` source queue, distilling each session. See module docstring."""
 
     def __init__(
         self,
         engine: MemoryEngine,
         client: LLMClient,
         *,
-        debounce_s: float = DEBOUNCE_SECONDS,
-        max_buffer_s: float = MAX_BUFFER_SECONDS,
         max_retries: int = 3,
-        poll_s: float = 1.0,
-        clock: Callable[[], float] = time.monotonic,
+        poll_s: float = POLL_SECONDS,
+        batch: int = BATCH,
     ) -> None:
         self._engine = engine
         self._client = client
-        self._debounce_s = debounce_s
-        self._max_buffer_s = max_buffer_s
         self._max_retries = max_retries
         self._poll_s = poll_s
-        self._clock = clock
-        self._lock = threading.Lock()
-        self._last_event: dict[str, float] = {}  # thread_id -> last turn arrival
-        self._first_seen: dict[str, float] = {}  # thread_id -> window start (max-buffer cap)
+        self._batch = batch
         self._retries: dict[str, int] = {}
         self._warned_unavailable = False
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     def seed(self) -> None:
-        """Reseed the dirty map from threads with pending turns.
+        """Return any source stuck 'extracting' (a crash mid-flush) to 'ready'.
 
-        On daemon start this picks up turns buffered before a restart, so they
-        still flush instead of stalling unseen.
+        On daemon start this recovers a session interrupted mid-distillation so it
+        is retried instead of stalling in a held state.
         """
-        now = self._clock()
-        with self._lock:
-            for thread_id in self._engine.db.pending_thread_ids():
-                self._last_event.setdefault(thread_id, now)
-                self._first_seen.setdefault(thread_id, now)
+        recovered = self._engine.db.reset_extracting_sources()
+        if recovered:
+            log.info("recovered interrupted extractions", extra={"op": "extraction", "data": {"count": len(recovered)}})
 
-    def notify(self, thread_id: str) -> None:
-        """Mark a thread dirty after a turn lands on it."""
-        now = self._clock()
-        with self._lock:
-            self._last_event[thread_id] = now
-            self._first_seen.setdefault(thread_id, now)
+    def notify(self, source_id: str | None = None) -> None:
+        """Signal that a source became ready. The DB status is the queue, so this
+        is a no-op kept for call-site parity; the poll loop picks it up."""
 
     def start(self, name: str = "phileas-extraction") -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name=name)
@@ -114,100 +97,73 @@ class ExtractionWorker:
             if self._stop.is_set():
                 break
             try:
-                self.tick(self._clock())
+                self.tick()
             except Exception as e:
                 log.debug("extraction tick failed", extra={"op": "extraction", "data": {"error": str(e)}})
 
-    def tick(self, now: float) -> None:
-        """Flush every thread due at ``now`` (quiet past debounce, or past the cap)."""
-        for thread_id in self._due(now):
-            self.flush(thread_id, now)
-
-    def _due(self, now: float) -> list[str]:
-        with self._lock:
-            return [
-                thread_id
-                for thread_id, last in self._last_event.items()
-                if now - last >= self._debounce_s or now - self._first_seen.get(thread_id, last) >= self._max_buffer_s
-            ]
-
-    def flush(self, thread_id: str, now: float) -> None:
-        """Distill one thread's pending turns into memories.
-
-        Leaves the turns pending (and the thread dirty) when the client is
-        unavailable, so nothing is lost. On success marks the window extracted;
-        after ``max_retries`` failed attempts marks it failed and drops it.
-        """
+    def tick(self) -> None:
+        """Distill every session currently marked ready (up to the batch cap)."""
         if not self._client.available:
             if not self._warned_unavailable:
-                log.warning("extraction client unavailable; turns stay pending", extra={"op": "extraction"})
+                log.warning("extraction client unavailable; ready sources stay queued", extra={"op": "extraction"})
                 self._warned_unavailable = True
             return
+        self._warned_unavailable = False
+        for source in self._engine.db.get_ready_sources(limit=self._batch):
+            self.flush(source)
 
-        with self._lock:
-            flush_mark = self._last_event.get(thread_id)
+    def flush(self, source: Source) -> None:
+        """Distill one session's new turns into memories.
 
-        events = self._engine.db.get_pending_events_for_thread(thread_id)
-        if not events:
-            self._forget(thread_id, flush_mark)
+        Extracts only ``turns[extracted_through:]`` so a resumed session does not
+        re-distill what it already produced. On success marks the source extracted
+        at the new high-water mark; after ``max_retries`` failed attempts marks it
+        failed and drops it.
+        """
+        turns = (source.payload or {}).get("turns", [])
+        new_turns = turns[source.extracted_through :]
+        if not new_turns:
+            self._engine.db.mark_source_extracted(source.id, len(turns))
             return
 
-        event_ids = [event.id for event in events]
+        self._engine.db.set_source_status(source.id, "extracting")
         try:
-            memories = extract_memories(self._client, build_transcript(events))
-            source_event_id = events[-1].id  # one FK per memory; point at the window's last turn
+            memories = extract_memories(self._client, build_transcript(new_turns))
             for memory in memories:
                 self._engine.memorize(
                     content=memory["content"],
                     memory_type=memory.get("memory_type", "knowledge"),
                     entities=memory.get("entities", []),
                     relationships=memory.get("relationships", []),
-                    source_event_id=source_event_id,
+                    source_id=source.id,
                     detect_conflict=False,
                 )
-            self._engine.db.mark_events_extracted(event_ids)
-            self._forget(thread_id, flush_mark)
+            self._engine.db.mark_source_extracted(source.id, len(turns))
+            self._retries.pop(source.id, None)
             log.info(
                 "extracted",
                 extra={
                     "op": "extraction",
-                    "data": {"thread_id": thread_id, "events": len(event_ids), "memories": len(memories)},
+                    "data": {"source_id": source.id, "turns": len(new_turns), "memories": len(memories)},
                 },
             )
         except Exception as e:
-            self._on_failure(thread_id, event_ids, now, e)
+            self._on_failure(source, e)
 
-    def _on_failure(self, thread_id: str, event_ids: list[str], now: float, error: Exception) -> None:
-        with self._lock:
-            attempts = self._retries.get(thread_id, 0) + 1
-            self._retries[thread_id] = attempts
-            give_up = attempts >= self._max_retries
-            if not give_up:
-                # Wait another debounce before retrying, instead of every poll.
-                self._last_event[thread_id] = now
-        if give_up:
-            self._engine.db.mark_events_failed(event_ids)
-            self._forget(thread_id, None)
+    def _on_failure(self, source: Source, error: Exception) -> None:
+        attempts = self._retries.get(source.id, 0) + 1
+        self._retries[source.id] = attempts
+        if attempts >= self._max_retries:
+            self._engine.db.set_source_status(source.id, "failed")
+            self._retries.pop(source.id, None)
             log.warning(
                 "extraction failed after retries; marked failed",
-                extra={"op": "extraction", "data": {"thread_id": thread_id, "error": str(error)[:200]}},
+                extra={"op": "extraction", "data": {"source_id": source.id, "error": str(error)[:200]}},
             )
         else:
+            # Back to ready so the next tick retries it.
+            self._engine.db.set_source_status(source.id, "ready")
             log.debug(
                 "extraction attempt failed; will retry",
-                extra={"op": "extraction", "data": {"thread_id": thread_id, "attempt": attempts}},
+                extra={"op": "extraction", "data": {"source_id": source.id, "attempt": attempts}},
             )
-
-    def _forget(self, thread_id: str, flush_mark: float | None) -> None:
-        """Drop a finished thread, unless a turn arrived during the flush.
-
-        ``flush_mark`` is the ``last_event`` value observed when the flush began;
-        if it has since advanced, a new turn landed mid-flush, so the thread stays
-        dirty and flushes again. ``None`` forces the drop (a window we gave up on).
-        """
-        with self._lock:
-            if flush_mark is not None and self._last_event.get(thread_id) != flush_mark:
-                return
-            self._last_event.pop(thread_id, None)
-            self._first_seen.pop(thread_id, None)
-            self._retries.pop(thread_id, None)

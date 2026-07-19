@@ -22,8 +22,8 @@ from phileas.cli.formatter import (
     print_success,
     print_warning,
 )
-from phileas.config import EXTRACTION_MODES, load_config
-from phileas.db import Database, clean_source_event_id
+from phileas.config import load_config
+from phileas.db import Database, clean_source_id
 from phileas.engine import MemoryEngine
 from phileas.llm.client import SUPPORTED_PROVIDERS
 from phileas.models import MemoryItem
@@ -72,12 +72,12 @@ def _as_utc(moment: datetime) -> datetime:
 
 
 def _is_sourced(item: MemoryItem) -> bool:
-    """True when a memory traces to a captured turn (a real source event).
+    """True when a memory traces to a captured session (a real source).
 
-    A NULL ``source_event_id`` means no single source: a reflection or rollup
-    derived from other memories, or a legacy row from before turns were tracked.
+    A NULL ``source_id`` means no single source: a reflection or rollup derived
+    from other memories, or a legacy row from before sessions were tracked.
     """
-    return clean_source_event_id(item.source_event_id) is not None
+    return clean_source_id(item.source_id) is not None
 
 
 def _resolve_id(engine: MemoryEngine, short_id: str) -> str | None:
@@ -238,11 +238,11 @@ def hydrate(memory_id: str):
     _run_tool("hydrate", {"memory_id": memory_id})
 
 
-@click.command("thread")
-@click.argument("thread_id")
-def thread(thread_id: str):
-    """A conversation: its raw turns in order, each with the memories it produced."""
-    _run_tool("thread", {"thread_id": thread_id})
+@click.command("source")
+@click.argument("source_id")
+def source(source_id: str):
+    """A session: its turns in order and the memories it produced."""
+    _run_tool("source", {"source_id": source_id})
 
 
 @click.command("scopes")
@@ -485,7 +485,7 @@ def list_cmd(
                     "type": item.memory_type,
                     "status": item.status,
                     "source": "sourced" if _is_sourced(item) else "unsourced",
-                    "source_event_id": item.source_event_id,
+                    "source_id": item.source_id,
                     "created_at": item.created_at.isoformat() if item.created_at else None,
                     "content": item.content,
                 }
@@ -569,27 +569,22 @@ def show(memory_id: str):
 
 
 @click.command()
-@click.argument("text")
-@click.option("--thread", "thread_id", default=None, help="Conversation thread id, to group turns together.")
-@click.option(
-    "--attribution",
-    type=click.Choice(["self", "assistant", "source"]),
-    default="self",
-    help="Whose words these are: self (you), assistant (the AI), source (external material).",
-)
-def ingest(text: str, thread_id: str | None, attribution: str):
-    """Hand a turn to Phileas to remember.
+@click.argument("session_id")
+def ingest(session_id: str):
+    """Ingest a Claude Code session (by id) as one source for distillation.
 
-    Phileas captures the turn and, in the ``api`` extraction mode, distills durable
-    memories from it on its own. Read them back with `phileas recall`.
+    Reads the session's transcript, stores it as one source, and queues it for the
+    extraction worker. This is the manual equivalent of the SessionEnd hook; read
+    the distilled memories back with `phileas recall`.
     """
     try:
-        resp = _daemon_call("ingest", {"text": text, "thread_id": thread_id, "attribution": attribution})
+        resp = _daemon_call("ingest_session", {"session_id": session_id})
         if resp and resp.get("ok"):
             result = resp["result"]
-            print_success(
-                f"Ingested event {result.get('event_id', '')[:8]} (thread {result.get('thread_id', '')[:8]})."
-            )
+            if not result.get("queued"):
+                print_warning(f"Nothing to ingest: {result.get('reason', 'unknown')}.")
+                return
+            print_success(f"Ingested source {result.get('source_id', '')[:8]} ({result.get('turn_count', 0)} turn(s)).")
             return
         print_error("Phileas daemon is not reachable. Start it with `phileas start`.")
         raise SystemExit(1)
@@ -950,15 +945,14 @@ def restart_cmd():
 # ------------------------------------------------------------------
 
 
-@click.command("retry-events")
-@click.argument("event_ids", nargs=-1)
-def retry_events(event_ids: tuple[str, ...]):
-    """Retry failed events (re-run extraction).
+@click.command("retry-sources")
+def retry_sources():
+    """Retry failed sessions (re-queue them for the extraction worker).
 
-    With no args, requeues every event in `failed` state. Pass one or more
-    event-id prefixes to retry specific events. Requires the daemon.
+    Returns every source in `failed` state to `ready` so the worker distills it
+    again. Requires the daemon.
     """
-    resp = _daemon_call("retry_events", {"event_ids": list(event_ids) if event_ids else None})
+    resp = _daemon_call("retry_sources", {})
     if not resp:
         print_error("daemon not running — start it with `phileas start`")
         raise SystemExit(1)
@@ -966,7 +960,7 @@ def retry_events(event_ids: tuple[str, ...]):
         print_error(resp.get("error") or "unknown error")
         raise SystemExit(1)
     result = resp.get("result", {})
-    print_success(f"Requeued {result.get('queued', 0)} event(s); queue depth={result.get('queue_depth', 0)}")
+    print_success(f"Requeued {result.get('queued', 0)} source(s).")
 
 
 @click.command()
@@ -1099,11 +1093,10 @@ def config_show():
     """Print the effective extraction settings and where they resolve from."""
     from phileas import secrets
     from phileas.config import provider_needs_key
-    from phileas.hook_sync import hooks_status
 
     cfg = load_config()
     llm = cfg.llm
-    env_set = bool(os.environ.get(llm.api_key_env))
+    env_set = bool(os.environ.get(llm.api_key_env)) if llm.api_key_env else False
     stored = llm.api_key_env in secrets.load_secrets(cfg.home)
     if not provider_needs_key(llm.provider):
         key_status = f"not needed for {llm.provider}"
@@ -1114,53 +1107,29 @@ def config_show():
     else:
         key_status = "unset — run `phileas config set-key`"
     console.print(f"[bold]Extraction[/bold]  ({cfg.config_path})")
-    console.print(f"  mode         {cfg.extraction.mode}")
+    console.print(f"  enabled      {cfg.extraction.enabled}")
     console.print(f"  provider     {llm.provider}")
     console.print(f"  model        {llm.model}")
-    console.print(f"  api_key_env  {llm.api_key_env}  ({key_status})")
-
-    nudge = hooks_status(cfg.profile)["stop_memorize"]
-    nudge_text = "not installed" if nudge is None else ("on" if nudge else "off")
-    console.print(f"  Stop nudge   {nudge_text}")
+    console.print(f"  api_key_env  {llm.api_key_env or '—'}  ({key_status})")
 
     for section in ("extraction", "llm"):
         override = _project_section_override(section)
         if override is not None:
             print_warning(f"{override} has a [{section}] section and overrides the user config shown above.")
-    expected = cfg.extraction.mode == "client"
-    if nudge is not None and nudge != expected:
-        print_warning(f"The Stop nudge is {nudge_text} but mode is '{cfg.extraction.mode}'. Run `phileas hooks sync`.")
 
 
-@config_cmd.command("mode")
-@click.argument("mode", type=click.Choice(EXTRACTION_MODES))
-def config_mode(mode: str):
-    """Choose the extraction strategy: writes [extraction].mode and re-wires hooks."""
+@config_cmd.command("extraction")
+@click.argument("state", type=click.Choice(["on", "off"]))
+def config_extraction(state: str):
+    """Turn automatic extraction on or off — writes [extraction].enabled."""
     from phileas.config import update_user_config
-    from phileas.hook_sync import install_hooks
 
     cfg = load_config()
-    update_user_config(cfg.home, "extraction", {"mode": mode})
-    print_success(f"Set extraction.mode = {mode}")
-    # Keep the Stop-hook wiring matched to the mode: only client wires the memorize
-    # nudge. api installs capture-only so the background worker distills; manual
-    # installs capture-only too, with the review-first capture pass instead.
-    if install_hooks(cfg.profile, memorize=mode == "client"):
-        console.print("[dim]Re-wired the Claude Code Stop hook to match.[/dim]")
-    else:
-        print_warning("Could not update the Claude Code settings file; run `phileas hooks sync` after fixing it.")
-    if mode == "manual":
-        console.print(
-            "[dim]Capture is now manual: ask Phileas to save what's worth keeping from a session, "
-            "then review with `phileas memory queue list`.[/dim]"
-        )
-    from phileas.config import key_reachable
-
-    if mode == "api" and not key_reachable(cfg.llm, cfg.home):
-        print_warning(
-            f"No key for {cfg.llm.api_key_env}; the worker leaves turns pending and visible until one is reachable. "
-            "Set it with `phileas config set-key`."
-        )
+    enabled = state == "on"
+    update_user_config(cfg.home, "extraction", {"enabled": enabled})
+    print_success(f"Set extraction.enabled = {enabled}")
+    if not enabled:
+        console.print("[dim]Sessions are still captured, but the worker won't distill them until re-enabled.[/dim]")
     if _project_section_override("extraction") is not None:
         print_warning("A project .phileas.toml [extraction] section shadows this write.")
     _apply_config_change(cfg)

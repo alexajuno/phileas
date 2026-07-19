@@ -1,5 +1,5 @@
 """The ``phileas hooks`` admin group installs, removes, and inspects the capture
-hooks, and ``sync`` keeps the Stop nudge matched to the configured extraction mode.
+hooks (UserPromptSubmit for the recall nudge, SessionEnd for ingest).
 
 Each case pins ``HOME`` to a fresh dir so the config it reads and the Claude Code
 settings file it writes both resolve inside the isolated home.
@@ -11,7 +11,6 @@ import pytest
 from click.testing import CliRunner
 
 from phileas.cli import app
-from phileas.config import update_user_config
 from phileas.hook_sync import hooks_status
 
 _ISOLATE = {"PHILEAS_PROFILE": None, "PHILEAS_HOME": None}
@@ -32,41 +31,27 @@ def _run(args):
     return CliRunner().invoke(app, args, env=_ISOLATE)
 
 
-def test_install_wires_the_nudge_by_default():
+def test_install_wires_the_capture_hooks():
     assert _run(["hooks", "install"]).exit_code == 0
-    status = hooks_status()
-    assert status["installed"] == {"SessionStart": True, "UserPromptSubmit": True, "Stop": True}
-    assert status["stop_memorize"] is True
-
-
-def test_install_no_memorize_is_capture_only():
-    assert _run(["hooks", "install", "--no-memorize"]).exit_code == 0
-    assert hooks_status()["stop_memorize"] is False
+    assert hooks_status()["installed"] == {"UserPromptSubmit": True, "SessionEnd": True}
 
 
 def test_uninstall_removes_the_hooks():
     _run(["hooks", "install"])
     assert _run(["hooks", "uninstall"]).exit_code == 0
-    assert hooks_status()["installed"]["Stop"] is False
+    installed = hooks_status()["installed"]
+    assert installed["UserPromptSubmit"] is False
+    assert installed["SessionEnd"] is False
 
 
-def test_sync_matches_the_configured_mode(tmp_path):
-    from phileas.config import resolve_home
-
-    # Configure api mode, wire the (wrong) memorize nudge, then sync to reconcile.
-    update_user_config(resolve_home(), "extraction", {"mode": "api"})
-    _run(["hooks", "install", "--memorize"])
-    assert hooks_status()["stop_memorize"] is True  # drifted
-
+def test_sync_reinstalls_the_hooks():
     assert _run(["hooks", "sync"]).exit_code == 0
-    assert hooks_status()["stop_memorize"] is False  # reconciled to api
+    assert hooks_status()["installed"] == {"UserPromptSubmit": True, "SessionEnd": True}
 
 
-def test_status_flags_drift(tmp_path):
-    from phileas.config import resolve_home
-
-    update_user_config(resolve_home(), "extraction", {"mode": "api"})
-    _run(["hooks", "install", "--memorize"])  # nudge on while mode is api
+def test_status_lists_installed_hooks():
+    _run(["hooks", "install"])
     result = _run(["hooks", "status"])
     assert result.exit_code == 0
-    assert "Drift" in result.output
+    assert "UserPromptSubmit" in result.output
+    assert "SessionEnd" in result.output

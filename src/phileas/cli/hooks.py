@@ -35,25 +35,13 @@ def hook_group() -> None:
     """Claude Code capture hooks. Each reads its payload as JSON on stdin."""
 
 
-@hook_group.command("session-start")
-def session_start() -> None:
-    """Open or resume the thread for this session."""
-    raise SystemExit(_run(capture.handle_session_start))
-
-
 @hook_group.command("user-prompt")
 def user_prompt() -> None:
-    """Store the user's prompt verbatim (attribution: self)."""
+    """Nudge the model to recall relevant memories before answering."""
     raise SystemExit(_run(capture.handle_user_prompt_submit))
 
 
-@hook_group.command("stop")
-@click.option(
-    "--memorize/--no-memorize",
-    default=True,
-    help="Emit the end-of-turn memorize nudge (the client extraction mode). "
-    "--no-memorize ingests the turn only, leaving distillation to the worker.",
-)
-def stop(memorize: bool) -> None:
-    """Store the assistant's turn verbatim (attribution: assistant)."""
-    raise SystemExit(_run(lambda payload: capture.handle_stop(payload, memorize=memorize)))
+@hook_group.command("session-end")
+def session_end() -> None:
+    """Ingest the finished session as one source for distillation."""
+    raise SystemExit(_run(capture.handle_session_end))

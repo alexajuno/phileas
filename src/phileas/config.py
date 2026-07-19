@@ -80,48 +80,34 @@ class SyncConfig:
     pull_command: str | None = None
 
 
-# The three extraction strategies. ``manual`` (the default) captures nothing on
-# its own: the user triggers a ``/phileas`` capture pass, the live model proposes,
-# and memories are stored only once the user approves them in the review queue.
-# ``client`` rides the live Claude Code model per turn via the Stop-hook memorize
-# nudge; ``api`` runs the background ExtractionWorker with Phileas's own key
-# (reserved for imports Phileas was not present for). Exactly one is active, so
-# double extraction is unrepresentable.
-EXTRACTION_MODES: tuple[str, ...] = ("client", "api", "manual")
-
-
 @dataclass
 class ExtractionConfig:
-    """Which strategy distills ingested turns into memories.
+    """Whether the background worker distills ingested sessions into memories.
 
-    ``manual`` (the default) does no automatic extraction: raw turns are still
-    captured, but memories are made only through a user-triggered capture pass
-    where the live model proposes and the user approves in the review queue. Both
-    the Stop nudge and the background worker are off. ``client`` leaves the
-    memorize decision to the live model per turn via the Stop capture hook.
-    ``api`` hands the work to Phileas's own background worker, off the turn's
-    critical path, and marks ingested turns ``pending`` for it to distill. The
-    switch is applied by ``phileas config mode`` (or ``phileas hooks sync``),
-    which starts or stops the worker and wires the Stop hook with or without the
-    memorize nudge; only ``client`` wires the nudge.
+    On (the default), a session marked ``ready`` — done, via the SessionEnd hook
+    or the daemon's idle sweep — is distilled whole by the background worker using
+    the configured model. Off leaves ready sessions untouched (captured but not
+    distilled), so a user can pause automatic extraction without losing sessions.
     """
 
-    mode: str = "manual"
+    enabled: bool = True
 
 
-# Providers that run a model locally and need no API key. For these,
-# A keyless provider is reachable without any credential, so a laptop can distill
-# against a local Ollama model with no key set.
-_KEYLESS_PROVIDERS = frozenset({"ollama"})
+# Providers that authenticate without a Phileas-held API key. ``claude_code``
+# rides the Claude Code CLI's own subscription auth; ``ollama`` runs locally. A
+# keyless provider is reachable without any credential, so extraction can run
+# against the subscription or a local model with no key set.
+_KEYLESS_PROVIDERS = frozenset({"claude_code", "ollama"})
 
 
 @dataclass
 class LLMConfig:
-    """How the ``api`` extraction path talks to a model.
+    """How the extraction worker talks to a model.
 
     This is Phileas's own model call, not the MCP client's model. Phileas uses it
-    to distill ingested turns into memories when ``extraction.mode`` is ``api``.
-    For a keyed provider the key never lives in config: it is read at call time
+    to distill ingested sessions into memories. The default provider,
+    ``claude_code``, runs `claude -p` on the Claude Code subscription and needs no
+    key. For a keyed provider the key never lives in config: it is read at call time
     from the env var named by ``api_key_env``, the same way the sync and API
     bearer secrets stay out of a committed ``config.toml``. The default var is
     namespaced (``PHILEAS_ANTHROPIC_API_KEY``), not the generic
@@ -140,9 +126,9 @@ class LLMConfig:
     ``extraction_worker.py``).
     """
 
-    provider: str = "anthropic"
-    model: str = "claude-haiku-4-5-20251001"
-    api_key_env: str = "PHILEAS_ANTHROPIC_API_KEY"
+    provider: str = "claude_code"
+    model: str = "sonnet"
+    api_key_env: str = ""
 
 
 def provider_needs_key(provider: str) -> bool:
@@ -209,16 +195,17 @@ class PhileasConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property
-    def api_extraction_active(self) -> bool:
-        """True when the background worker is the chosen path and its key is reachable.
+    def extraction_active(self) -> bool:
+        """True when automatic extraction is on and the model can authenticate.
 
-        This is the runtime "will the api path actually extract right now" gate:
-        ``extraction.mode`` is ``api`` *and* the LLM key is set. Mode ``api`` with
-        no key still starts the worker (turns pile up ``pending`` and stay visible),
-        so the worker's start gate is ``mode == "api"`` alone; this stricter check
-        is what a settings UI reports as "extraction available".
+        The runtime "will the worker actually distill right now" gate: extraction
+        is enabled *and* the provider's credential is reachable (always true for a
+        keyless provider like ``claude_code``, which uses the CLI's own auth). The
+        worker still starts when enabled with no key (ready sources pile up and
+        stay visible); this stricter check is what a settings UI reports as
+        "extraction available".
         """
-        return self.extraction.mode == "api" and key_reachable(self.llm, self.home)
+        return self.extraction.enabled and key_reachable(self.llm, self.home)
 
     # -- Derived paths --
 
@@ -528,14 +515,14 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
     Reports the effective values (what a freshly loaded config resolves to),
     the user ``config.toml`` path they write to, secret *presence* — whether the
     LLM key and sync token are reachable, never their values — and the offered
-    ``choices`` (extraction modes, providers, models) so a settings UI can render
-    those fields as pickers driven by core rather than a hardcoded list. The key
+    ``choices`` (providers, models) so a settings UI can render those fields as
+    pickers driven by core rather than a hardcoded list. The key
     value stays out of ``config.toml`` by design: the UI shows a reachable status
     and where it resolves from (the environment, or the profile's stored secrets
     file), never an editable value. ``llm_api_key_source`` is ``"env"`` when the
     environment carries it (which wins), ``"stored"`` when only the secrets file
-    does, else ``None``. ``llm_available`` is the "will the api path actually
-    extract" status: the ``api`` mode is chosen *and* the key is reachable.
+    does, else ``None``. ``llm_available`` is the "will the worker actually
+    extract" status: extraction is enabled *and* the model's credential is reachable.
 
     ``choices.provider_key_env`` maps each provider to its default key env var
     (``None`` for a keyless one), so a UI can repoint ``api_key_env`` when the
@@ -571,7 +558,6 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
         "config_path": str(cfg.config_path),
         "sections": {name: asdict(getattr(cfg, name)) for name in _EDITABLE_SECTIONS},
         "choices": {
-            "modes": list(EXTRACTION_MODES),
             "providers": list(SUPPORTED_PROVIDERS),
             "models": known_models(),
             "models_by_provider": {p: models_for_provider(p) for p in SUPPORTED_PROVIDERS},
@@ -584,7 +570,7 @@ def config_snapshot(cfg: PhileasConfig) -> dict[str, Any]:
             "llm_keys": llm_keys,
             "sync_token_set": bool(os.environ.get("PHILEAS_SYNC_TOKEN")),
         },
-        "llm_available": cfg.api_extraction_active,
+        "llm_available": cfg.extraction_active,
     }
 
 
@@ -649,8 +635,6 @@ def validate_config_update(section: str, values: dict[str, Any]) -> dict[str, An
         if key not in known:
             raise ValueError(f"unknown key {section}.{key}")
         clean = _coerce_config_value(f"{section}.{key}", getattr(defaults, key), value)
-        if section == "extraction" and key == "mode" and clean not in EXTRACTION_MODES:
-            raise ValueError(f"extraction.mode must be one of {', '.join(EXTRACTION_MODES)}")
         cleaned[key] = clean
     return cleaned
 

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from phileas.config import resolve_home
-from phileas.models import Event, MemoryItem, Thread
+from phileas.models import MemoryItem, Source
 from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, delta_storage, retrieval_strength
 
 log = logging.getLogger(__name__)
@@ -73,26 +73,34 @@ def _fts_match_query(query: str) -> str | None:
 
 DEFAULT_DB_PATH = resolve_home() / "memory.db"
 
-# Sentinel thread id. A turn whose conversation was never recorded points here,
-# so thread_id is never null and a thread -> event drill-down resolves to a row.
-# "unknown" reads as exactly that: origin not recorded.
-UNKNOWN_EVENT_ID = "unknown"
-UNKNOWN_THREAD_ID = "unknown"
+# Sentinel source id. A memory whose originating session was never recorded points
+# here, so source_id is never a dangling reference and a source -> memories
+# drill-down resolves to a row. "unknown" reads as exactly that: origin not recorded.
+UNKNOWN_SOURCE_ID = "unknown"
 
 
-def clean_source_event_id(value: str | None) -> str | None:
-    """Normalize a memory's source-event reference for storage.
+def clean_source_id(value: str | None) -> str | None:
+    """Normalize a memory's source reference for storage.
 
-    A memory either traces to one captured turn (a real event id) or has no single
-    source, which is NULL: a reflection or rollup derived from other memories, or a
-    legacy row from before turns were tracked. Empty strings and the legacy
-    ``UNKNOWN_EVENT_ID`` sentinel collapse to NULL too, so the placeholder never
-    lands on a memory's provenance again.
+    A memory either traces to one captured session (a real source id) or has no
+    single source, which is NULL: a reflection or rollup derived from other
+    memories, or a legacy row from before sessions were tracked. Empty strings and
+    the ``UNKNOWN_SOURCE_ID`` sentinel collapse to NULL too, so the placeholder
+    never lands on a memory's provenance again.
     """
     sid = (value or "").strip()
-    if not sid or sid == UNKNOWN_EVENT_ID:
+    if not sid or sid == UNKNOWN_SOURCE_ID:
         return None
     return sid
+
+
+def _attr_to_role(attribution: str | None) -> str:
+    """Map a legacy event attribution to a unified-format turn role.
+
+    ``self`` was the user's own words, so it becomes ``user``; ``assistant`` and
+    ``source`` carry over. An untagged legacy turn defaults to ``user``.
+    """
+    return {"self": "user", "assistant": "assistant", "source": "source"}.get(attribution or "", "user")
 
 
 SCHEMA = """
@@ -104,7 +112,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     daily_ref TEXT,
-    source_event_id TEXT REFERENCES events(id),
+    source_id TEXT REFERENCES sources(id),
     storage_strength REAL NOT NULL DEFAULT 0.5,
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
@@ -112,53 +120,50 @@ CREATE TABLE IF NOT EXISTS memory_items (
     updated_at TEXT NOT NULL
 );
 
--- A raw turn. ``source_kind`` records the surface that captured it, so health
--- can track per-source recency. ``thread_id`` is the conversation it belongs
--- to: a thread is the ordered run of turns sharing this id. ``attribution`` is
--- whose words the segment is (self/other/source); ``extraction_status`` is the
--- distillation queue state, 'extracted' unless ingest marks a turn 'pending'.
-CREATE TABLE IF NOT EXISTS events (
+-- A whole ingested session, distilled into memories as a unit. ``payload`` is the
+-- unified-format transcript (``{client_key, kind, cwd, started_at, ended_at,
+-- turns: [...]}``) held as one JSON blob, since a session is always read and
+-- written whole. ``client_key`` is the producing session's stable identity, so an
+-- upsert is get-or-create on it and a resumed session updates the row it already
+-- opened. ``extraction_status`` is the distillation lifecycle (open/ready/
+-- extracting/extracted/failed); ``extracted_through`` is the high-water mark of
+-- turns already distilled, so a resume re-extracts only its new turns.
+CREATE TABLE IF NOT EXISTS sources (
     id TEXT PRIMARY KEY,
-    text TEXT NOT NULL,
-    received_at TEXT NOT NULL,
-    source_kind TEXT,
-    thread_id TEXT NOT NULL,
-    attribution TEXT,
-    extraction_status TEXT NOT NULL DEFAULT 'extracted'
-);
-
-CREATE TABLE IF NOT EXISTS threads (
-    id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    source_kind TEXT,
+    client_key TEXT,
+    kind TEXT,
+    cwd TEXT,
     label TEXT,
-    client_key TEXT
+    payload TEXT NOT NULL DEFAULT '{}',
+    turn_count INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT,
+    last_activity_at TEXT,
+    ended_at TEXT,
+    extraction_status TEXT NOT NULL DEFAULT 'open',
+    extracted_through INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
 );
 
--- A client's stable conversation key maps to at most one thread, so a resumed
--- or compacted session re-attaches to the thread it already opened. Partial so
--- threads opened without a key (no continuity) don't collide on NULL.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_client_key
-    ON threads(client_key) WHERE client_key IS NOT NULL;
+-- A client's stable session key maps to at most one source, so a resumed or
+-- compacted session re-attaches to the source it already opened. Partial so
+-- sources opened without a key (no continuity) don't collide on NULL.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_client_key
+    ON sources(client_key) WHERE client_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sources_status ON sources(extraction_status);
 
--- A memory's provenance is a SET of raw turns, not a single one: it may be
--- distilled from one turn, a span, or a whole conversation. This join holds that
--- set (many-to-many memory <-> event). A memory's thread(s) are derived from it
--- (DISTINCT events.thread_id over its source events), so no thread_id is stored
--- on memory_items. The legacy memory_items.source_event_id is the degenerate
--- one-element case, backfilled into this table.
+-- A memory's provenance is the SET of sessions it was distilled from — usually
+-- one, but a rollup can span several. This join holds that set (many-to-many
+-- memory <-> source). ``memory_items.source_id`` is the degenerate one-element
+-- case, the memory's primary source, mirrored into this table.
 CREATE TABLE IF NOT EXISTS memory_sources (
     memory_id TEXT NOT NULL REFERENCES memory_items(id),
-    event_id TEXT NOT NULL REFERENCES events(id),
-    PRIMARY KEY (memory_id, event_id)
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    PRIMARY KEY (memory_id, source_id)
 );
-CREATE INDEX IF NOT EXISTS idx_memory_sources_event ON memory_sources(event_id);
 
 CREATE INDEX IF NOT EXISTS idx_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_items_type ON memory_items(memory_type);
 CREATE INDEX IF NOT EXISTS idx_items_daily_ref ON memory_items(daily_ref);
-CREATE INDEX IF NOT EXISTS idx_events_received ON events(received_at);
-CREATE INDEX IF NOT EXISTS idx_events_thread ON events(thread_id, received_at);
 
 -- Reconciliation judgments that stuck: entity pairs a judge ruled distinct.
 -- ``reconcile`` filters these out so every run surfaces only unjudged pairs,
@@ -190,12 +195,11 @@ CREATE TABLE IF NOT EXISTS consolidation_queue (
 CREATE INDEX IF NOT EXISTS idx_consqueue_status ON consolidation_queue(status);
 
 -- Candidate memories awaiting the user's review before they become real
--- memories. In the manual capture mode the live model enqueues here (via
--- propose_memory); the user approves / edits / rejects through `phileas memory
--- queue` or the web, and an approved row is materialized through engine.memorize.
--- Holds the full memory payload (entities / relationships as JSON) plus the
--- thread it was distilled from, so approval can expand that thread's turns into
--- memory_sources.
+-- memories. The live model enqueues here (via propose_memory); the user approves
+-- / edits / rejects through `phileas memory queue` or the web, and an approved
+-- row is materialized through engine.memorize. Holds the full memory payload
+-- (entities / relationships as JSON) plus the source it was distilled from, so
+-- approval attaches that source as the memory's provenance.
 CREATE TABLE IF NOT EXISTS memory_proposals (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
@@ -203,7 +207,7 @@ CREATE TABLE IF NOT EXISTS memory_proposals (
     memory_type TEXT NOT NULL DEFAULT 'knowledge',
     entities TEXT NOT NULL DEFAULT '[]',
     relationships TEXT NOT NULL DEFAULT '[]',
-    thread_id TEXT,
+    source_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL,
     resolved_at TEXT
@@ -221,13 +225,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     tokenize = 'unicode61'
 );
 
--- Sentinel thread and event for turns whose conversation was never recorded: an
--- event with an unrecorded thread points at the 'unknown' thread, so a NOT NULL
--- thread_id always resolves to a row and a thread -> event drill-down holds.
-INSERT OR IGNORE INTO threads (id, created_at, source_kind, label)
-    VALUES ('unknown', '1970-01-01T00:00:00+00:00', 'unknown', 'unknown provenance');
-INSERT OR IGNORE INTO events (id, text, received_at, source_kind, thread_id)
-    VALUES ('unknown', '', '1970-01-01T00:00:00+00:00', 'unknown', 'unknown');
+-- Sentinel source for memories whose originating session was never recorded, so
+-- a memory.source_id always resolves to a row and a source -> memories drill-down
+-- holds.
+INSERT OR IGNORE INTO sources (id, kind, label, payload, turn_count, extraction_status, created_at)
+    VALUES ('unknown', 'unknown', 'unknown provenance', '{}', 0, 'extracted', '1970-01-01T00:00:00+00:00');
 """
 
 
@@ -242,24 +244,13 @@ class Database:
         self._reconcile_fts()
 
     def _migrate(self) -> None:
-        """Add columns introduced after a database was first created.
+        """Bring a database created under an older schema forward, idempotently.
 
         The schema is CREATE TABLE IF NOT EXISTS, which never alters an existing
-        table, and ``extraction_status`` has to be filterable (the worker selects
-        ``WHERE extraction_status='pending'``), so a pre-existing events table must
-        actually gain the column. Each ALTER is column-guarded, so this is
-        idempotent; existing rows backfill to 'extracted', leaving turns captured
-        before the observer pipeline out of the worker's queue.
+        table, so a column added later has to be ALTERed in by hand and a renamed
+        model migrated. Each step is guarded on the old shape, so running this on
+        an already-current database is a no-op.
         """
-        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(events)")}
-        if "attribution" not in cols:
-            self.conn.execute("ALTER TABLE events ADD COLUMN attribution TEXT")
-        if "extraction_status" not in cols:
-            self.conn.execute("ALTER TABLE events ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'extracted'")
-        # The AI's attribution was renamed 'other' -> 'assistant'; carry old rows
-        # forward so the value set stays consistent. Idempotent: a no-op once done.
-        self.conn.execute("UPDATE events SET attribution = 'assistant' WHERE attribution = 'other'")
-
         # ``memory_items.summary`` was renamed ``content`` — a memory's text is its
         # content, not a summary of a longer body. Guarded on the old column so it
         # runs once. FTS5 has no RENAME COLUMN, so the index is dropped and recreated
@@ -273,6 +264,120 @@ class Database:
             self.conn.execute(
                 "CREATE VIRTUAL TABLE memory_fts USING fts5(mem_id UNINDEXED, content, tokenize = 'unicode61')"
             )
+
+        # ``memory_items.source_event_id`` (FK to the retired events table) became
+        # ``source_id`` (FK to sources). Add the new column so writes land; the
+        # legacy fold below backfills it from the old one.
+        if "source_id" not in item_cols:
+            self.conn.execute("ALTER TABLE memory_items ADD COLUMN source_id TEXT")
+        self.conn.commit()
+
+        self._migrate_legacy_sources()
+
+        # The join's source_id index lives here rather than in SCHEMA: on a legacy
+        # database the table only gains that column during the fold above, so
+        # indexing it in the up-front schema script would fail.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_sources_source ON memory_sources(source_id)")
+        self.conn.commit()
+
+    def _table_exists(self, name: str) -> bool:
+        return (
+            self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+            is not None
+        )
+
+    def _migrate_legacy_sources(self) -> None:
+        """Fold a legacy threads+events database into the sources model, once.
+
+        Each thread becomes a source whose payload is its turns in order; a
+        memory's ``source_event_id`` is rewired to the source of the event's
+        thread, and the ``memory_sources`` join is remapped from event ids to
+        source ids. The old tables are left in place (readable, inert) so the fold
+        stays reversible; a later cleanup drops them. Guarded on the events table,
+        so it never runs on a database born under the sources schema, and on a
+        sentinel-only sources table, so it runs at most once.
+        """
+        if not self._table_exists("events"):
+            return
+        if self.conn.execute("SELECT 1 FROM sources WHERE id != 'unknown' LIMIT 1").fetchone():
+            return
+
+        # 1. Every thread an event belongs to becomes a source (DISTINCT covers
+        #    one-turn threads that never got a threads row).
+        thread_ids = [
+            r[0] for r in self.conn.execute("SELECT DISTINCT thread_id FROM events WHERE thread_id != 'unknown'")
+        ]
+        for tid in thread_ids:
+            evs = self.conn.execute(
+                "SELECT id, text, received_at, source_kind, attribution FROM events "
+                "WHERE thread_id = ? ORDER BY received_at ASC",
+                (tid,),
+            ).fetchall()
+            if not evs:
+                continue
+            meta = self.conn.execute(
+                "SELECT created_at, source_kind, label, client_key FROM threads WHERE id = ?", (tid,)
+            ).fetchone()
+            turns = [
+                {"i": i, "role": _attr_to_role(e["attribution"]), "text": e["text"], "ts": e["received_at"]}
+                for i, e in enumerate(evs)
+            ]
+            kind = (meta["source_kind"] if meta else evs[0]["source_kind"]) or "claude_code_session"
+            client_key = meta["client_key"] if meta else None
+            started, ended = evs[0]["received_at"], evs[-1]["received_at"]
+            payload = json.dumps(
+                {"client_key": client_key, "kind": kind, "started_at": started, "ended_at": ended, "turns": turns}
+            )
+            self.conn.execute(
+                "INSERT OR IGNORE INTO sources (id, client_key, kind, label, payload, turn_count, started_at, "
+                "last_activity_at, ended_at, extraction_status, extracted_through, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'extracted', ?, ?)",
+                (
+                    tid,
+                    client_key,
+                    kind,
+                    meta["label"] if meta else None,
+                    payload,
+                    len(turns),
+                    started,
+                    ended,
+                    ended,
+                    len(turns),
+                    meta["created_at"] if meta else started,
+                ),
+            )
+
+        # 2. Rewire memory_items.source_id from the old source_event_id via its event's thread.
+        if "source_event_id" in {r["name"] for r in self.conn.execute("PRAGMA table_info(memory_items)")}:
+            self.conn.execute(
+                "UPDATE memory_items SET source_id = ("
+                "  SELECT e.thread_id FROM events e WHERE e.id = memory_items.source_event_id"
+                ") WHERE source_id IS NULL AND source_event_id IS NOT NULL AND source_event_id != 'unknown'"
+            )
+
+        # 3. Remap the memory_sources join from event ids to source (thread) ids.
+        if "event_id" in {r["name"] for r in self.conn.execute("PRAGMA table_info(memory_sources)")}:
+            old = self.conn.execute("SELECT memory_id, event_id FROM memory_sources").fetchall()
+            emap = {r[0]: r[1] for r in self.conn.execute("SELECT id, thread_id FROM events")}
+            self.conn.execute("DROP TABLE memory_sources")
+            self.conn.execute(
+                "CREATE TABLE memory_sources (memory_id TEXT NOT NULL REFERENCES memory_items(id), "
+                "source_id TEXT NOT NULL REFERENCES sources(id), PRIMARY KEY (memory_id, source_id))"
+            )
+            rows = [
+                (m["memory_id"], emap[m["event_id"]])
+                for m in old
+                if m["event_id"] in emap and emap[m["event_id"]] != "unknown"
+            ]
+            if rows:
+                self.conn.executemany("INSERT OR IGNORE INTO memory_sources (memory_id, source_id) VALUES (?, ?)", rows)
+
+        # 4. Proposals anchored to a thread now anchor to that source (same id).
+        if "source_id" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(memory_proposals)")}:
+            self.conn.execute("ALTER TABLE memory_proposals ADD COLUMN source_id TEXT")
+        if "thread_id" in {r["name"] for r in self.conn.execute("PRAGMA table_info(memory_proposals)")}:
+            self.conn.execute("UPDATE memory_proposals SET source_id = thread_id WHERE source_id IS NULL")
+
         self.conn.commit()
 
     def _reconcile_fts(self) -> None:
@@ -311,7 +416,7 @@ class Database:
                (id, content, memory_type, status,
                 access_count, last_accessed, daily_ref,
                 storage_strength, reinforcement_count, last_reinforced,
-                source_event_id, created_at, updated_at)
+                source_id, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item.id,
@@ -324,7 +429,7 @@ class Database:
                 item.storage_strength,
                 item.reinforcement_count,
                 item.last_reinforced.isoformat() if item.last_reinforced else None,
-                clean_source_event_id(item.source_event_id),
+                clean_source_id(item.source_id),
                 item.created_at.isoformat(),
                 item.updated_at.isoformat(),
             ),
@@ -333,39 +438,29 @@ class Database:
         self.conn.commit()
 
     @_locked
-    def add_memory_sources(self, memory_id: str, event_ids: list[str]) -> None:
-        """Record a memory's provenance: the set of raw turns it was distilled from.
+    def add_memory_sources(self, memory_id: str, source_ids: list[str]) -> None:
+        """Record a memory's provenance: the set of sessions it was distilled from.
 
-        Idempotent per (memory_id, event_id). Empty / 'unknown' / missing ids are
-        dropped by ``clean_source_event_id``, so only real turns become sources; a
+        Idempotent per (memory_id, source_id). Empty / 'unknown' / missing ids are
+        dropped by ``clean_source_id``, so only real sessions become sources; a
         memory with no resolvable source (a reflection, a legacy row) simply has no
         rows here.
         """
-        rows = [(memory_id, sid) for eid in event_ids if (sid := clean_source_event_id(eid))]
+        rows = [(memory_id, sid) for raw in source_ids if (sid := clean_source_id(raw))]
         if not rows:
             return
-        self.conn.executemany("INSERT OR IGNORE INTO memory_sources (memory_id, event_id) VALUES (?, ?)", rows)
+        self.conn.executemany("INSERT OR IGNORE INTO memory_sources (memory_id, source_id) VALUES (?, ?)", rows)
         self.conn.commit()
 
     @_locked
-    def get_source_event_ids_for_memory(self, memory_id: str) -> list[str]:
-        """The event ids a memory was distilled from, oldest turn first."""
+    def get_source_ids_for_memory(self, memory_id: str) -> list[str]:
+        """The session ids a memory was distilled from, oldest source first."""
         rows = self.conn.execute(
-            "SELECT ms.event_id FROM memory_sources ms JOIN events e ON e.id = ms.event_id "
-            "WHERE ms.memory_id = ? ORDER BY e.received_at ASC",
+            "SELECT ms.source_id FROM memory_sources ms JOIN sources s ON s.id = ms.source_id "
+            "WHERE ms.memory_id = ? ORDER BY s.started_at ASC",
             (memory_id,),
         ).fetchall()
-        return [row["event_id"] for row in rows]
-
-    @_locked
-    def get_thread_ids_for_memory(self, memory_id: str) -> list[str]:
-        """The distinct threads a memory's source turns belong to (its derived span)."""
-        rows = self.conn.execute(
-            "SELECT DISTINCT e.thread_id FROM memory_sources ms JOIN events e ON e.id = ms.event_id "
-            "WHERE ms.memory_id = ?",
-            (memory_id,),
-        ).fetchall()
-        return [row["thread_id"] for row in rows]
+        return [row["source_id"] for row in rows]
 
     @_locked
     def get_item(self, item_id: str) -> MemoryItem | None:
@@ -699,59 +794,86 @@ class Database:
         ]
 
     @_locked
-    def event_status_counts(self) -> dict[str, int]:
-        """Event counts grouped by extraction_status — the worker's queue depth."""
+    def source_status_counts(self) -> dict[str, int]:
+        """Source counts grouped by extraction_status — the worker's queue depth."""
         return {
             row[0]: row[1]
-            for row in self.conn.execute("SELECT extraction_status, COUNT(*) FROM events GROUP BY extraction_status")
+            for row in self.conn.execute("SELECT extraction_status, COUNT(*) FROM sources GROUP BY extraction_status")
         }
 
     @_locked
     def web_ingestion_health(self) -> dict:
-        """Event-ingestion counts (1h / 24h / total), plus the extraction queue depth."""
+        """Source-ingestion counts (1h / 24h / total), plus the extraction queue depth."""
         now = datetime.now(timezone.utc)
         h1 = (now - timedelta(hours=1)).isoformat()
         d1 = (now - timedelta(days=1)).isoformat()
-        status_counts = self.event_status_counts()
+        status_counts = self.source_status_counts()
         return {
-            "events_received_1h": self.conn.execute(
-                "SELECT COUNT(*) FROM events WHERE received_at >= ?", (h1,)
+            "sources_ingested_1h": self.conn.execute(
+                "SELECT COUNT(*) FROM sources WHERE created_at >= ?", (h1,)
             ).fetchone()[0],
-            "events_received_24h": self.conn.execute(
-                "SELECT COUNT(*) FROM events WHERE received_at >= ?", (d1,)
+            "sources_ingested_24h": self.conn.execute(
+                "SELECT COUNT(*) FROM sources WHERE created_at >= ?", (d1,)
             ).fetchone()[0],
-            "events_total": self.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
-            "events_pending": status_counts.get("pending", 0),
-            "events_failed": status_counts.get("failed", 0),
+            "sources_total": self.conn.execute("SELECT COUNT(*) FROM sources WHERE id != 'unknown'").fetchone()[0],
+            "sources_ready": status_counts.get("ready", 0),
+            "sources_failed": status_counts.get("failed", 0),
         }
 
     @_locked
-    def web_ingestion_events(self, limit: int = 50) -> list[dict]:
-        """Recent ingested events with truncated text — mirrors phileas-db.ts:listIngestionEvents."""
+    def web_ingestion_sources(self, limit: int = 50) -> list[dict]:
+        """Recent ingested sessions with turn count and extraction status."""
         limit = min(max(50 if limit is None else limit, 1), 500)
         rows = self.conn.execute(
-            "SELECT id, text, received_at FROM events ORDER BY received_at DESC LIMIT ?",
+            "SELECT id, client_key, kind, label, turn_count, extraction_status, last_activity_at "
+            "FROM sources WHERE id != 'unknown' ORDER BY last_activity_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [{"id": r["id"], "received_at": r["received_at"], "text_preview": _preview(r["text"])} for r in rows]
+        return [
+            {
+                "id": r["id"],
+                "client_key": r["client_key"],
+                "kind": r["kind"],
+                "label": r["label"],
+                "turn_count": r["turn_count"],
+                "extraction_status": r["extraction_status"],
+                "last_activity_at": r["last_activity_at"],
+            }
+            for r in rows
+        ]
 
     @_locked
-    def web_ingestion_event(self, event_id: str) -> dict | None:
-        """One event plus its linked active memories — mirrors phileas-db.ts:fetchIngestionEvent."""
-        ev = self.conn.execute("SELECT id, text, received_at FROM events WHERE id = ?", (event_id,)).fetchone()
-        if not ev:
+    def web_ingestion_source(self, source_id: str) -> dict | None:
+        """One session plus its linked active memories."""
+        src = self.conn.execute(
+            "SELECT id, client_key, kind, label, payload, turn_count, extraction_status, "
+            "started_at, ended_at, last_activity_at FROM sources WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+        if not src:
             return None
         mems = self.conn.execute(
             """SELECT id, content, memory_type, created_at
                FROM memory_items
                WHERE status = 'active'
-                 AND (source_event_id = ?
-                      OR id IN (SELECT memory_id FROM memory_sources WHERE event_id = ?))
+                 AND (source_id = ?
+                      OR id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?))
                ORDER BY created_at ASC""",
-            (event_id, event_id),
+            (source_id, source_id),
         ).fetchall()
         return {
-            "event": {"id": ev["id"], "text": ev["text"], "received_at": ev["received_at"]},
+            "source": {
+                "id": src["id"],
+                "client_key": src["client_key"],
+                "kind": src["kind"],
+                "label": src["label"],
+                "payload": json.loads(src["payload"] or "{}"),
+                "turn_count": src["turn_count"],
+                "extraction_status": src["extraction_status"],
+                "started_at": src["started_at"],
+                "ended_at": src["ended_at"],
+                "last_activity_at": src["last_activity_at"],
+            },
             "memories": [
                 {
                     "id": m["id"],
@@ -887,149 +1009,137 @@ class Database:
             storage_strength=row["storage_strength"] if "storage_strength" in row.keys() else 0.5,
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
-            source_event_id=row["source_event_id"] if "source_event_id" in row.keys() else None,
+            source_id=row["source_id"] if "source_id" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
-    # --- Events (raw ingested turns) ---
+    # --- Sources (whole ingested sessions) ---
+
+    def _row_to_source(self, row: sqlite3.Row) -> Source:
+        keys = row.keys()
+
+        def _dt(key: str) -> datetime | None:
+            v = row[key] if key in keys else None
+            return datetime.fromisoformat(v) if v else None
+
+        return Source(
+            id=row["id"],
+            client_key=row["client_key"] if "client_key" in keys else None,
+            kind=(row["kind"] if "kind" in keys else None) or "claude_code_session",
+            cwd=row["cwd"] if "cwd" in keys else None,
+            label=row["label"] if "label" in keys else None,
+            payload=json.loads((row["payload"] if "payload" in keys else None) or "{}"),
+            turn_count=(row["turn_count"] if "turn_count" in keys else 0) or 0,
+            started_at=_dt("started_at"),
+            last_activity_at=_dt("last_activity_at") or datetime.now(timezone.utc),
+            ended_at=_dt("ended_at"),
+            extraction_status=(row["extraction_status"] if "extraction_status" in keys else None) or "open",
+            extracted_through=(row["extracted_through"] if "extracted_through" in keys else 0) or 0,
+            created_at=_dt("created_at") or datetime.now(timezone.utc),
+        )
 
     @_locked
-    def save_event(self, event: Event) -> None:
+    def save_source(self, source: Source) -> None:
+        """Insert or replace a source by id (the id is stable per client_key)."""
         self.conn.execute(
-            """INSERT OR REPLACE INTO events
-               (id, text, received_at, source_kind, thread_id, attribution, extraction_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT OR REPLACE INTO sources
+               (id, client_key, kind, cwd, label, payload, turn_count,
+                started_at, last_activity_at, ended_at, extraction_status,
+                extracted_through, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                event.id,
-                event.text,
-                event.received_at.isoformat(),
-                event.source_kind,
-                event.thread_id or event.id,
-                event.attribution,
-                event.extraction_status,
+                source.id,
+                source.client_key,
+                source.kind,
+                source.cwd,
+                source.label,
+                json.dumps(source.payload or {}),
+                source.turn_count,
+                source.started_at.isoformat() if source.started_at else None,
+                source.last_activity_at.isoformat() if source.last_activity_at else None,
+                source.ended_at.isoformat() if source.ended_at else None,
+                source.extraction_status,
+                source.extracted_through,
+                source.created_at.isoformat(),
             ),
         )
         self.conn.commit()
 
     @_locked
-    def get_memories_for_event(self, event_id: str) -> list[MemoryItem]:
-        """Active memories that count this event among their source turns, oldest first.
-
-        Reads the many-to-many ``memory_sources`` join, unioned with the legacy
-        single ``source_event_id`` so a memory written before the backfill is still
-        found by its source turn.
-        """
-        rows = self.conn.execute(
-            """SELECT * FROM memory_items
-               WHERE status = 'active'
-                 AND (source_event_id = ?
-                      OR id IN (SELECT memory_id FROM memory_sources WHERE event_id = ?))
-               ORDER BY created_at ASC""",
-            (event_id, event_id),
-        ).fetchall()
-        return [self._row_to_item(row) for row in rows]
-
-    def _row_to_event(self, row: sqlite3.Row) -> Event:
-        keys = row.keys()
-        return Event(
-            id=row["id"],
-            text=row["text"],
-            received_at=datetime.fromisoformat(row["received_at"]),
-            source_kind=row["source_kind"] or "unknown",
-            thread_id=(row["thread_id"] if "thread_id" in keys else None) or row["id"],
-            attribution=row["attribution"] if "attribution" in keys else None,
-            extraction_status=row["extraction_status"] if "extraction_status" in keys else "extracted",
-        )
+    def get_source(self, source_id: str) -> Source | None:
+        row = self.conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
+        return self._row_to_source(row) if row else None
 
     @_locked
-    def get_all_events(self, limit: int | None = None) -> list[Event]:
-        """All events in insertion order — used by the embed-backfill script."""
-        sql = (
-            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status "
-            "FROM events ORDER BY received_at ASC"
-        )
+    def get_source_by_client_key(self, client_key: str) -> Source | None:
+        """The source a client's stable session key already opened, or None."""
+        row = self.conn.execute("SELECT * FROM sources WHERE client_key = ?", (client_key,)).fetchone()
+        return self._row_to_source(row) if row else None
+
+    @_locked
+    def get_all_sources(self, limit: int | None = None) -> list[Source]:
+        """Every real (non-sentinel) source, oldest first."""
+        sql = "SELECT * FROM sources WHERE id != 'unknown' ORDER BY created_at ASC"
         params: tuple = ()
         if limit is not None:
             sql += " LIMIT ?"
             params = (limit,)
-        rows = self.conn.execute(sql, params).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_source(row) for row in self.conn.execute(sql, params).fetchall()]
 
     @_locked
-    def get_event(self, event_id: str) -> Event | None:
-        row = self.conn.execute(
-            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status "
-            "FROM events WHERE id = ?",
-            (event_id,),
-        ).fetchone()
-        if not row:
-            return None
-        return self._row_to_event(row)
+    def get_memories_for_source(self, source_id: str) -> list[MemoryItem]:
+        """Active memories distilled from this session, oldest first.
 
-    @_locked
-    def get_events_for_thread(self, thread_id: str) -> list[Event]:
-        """All raw turns in a thread, oldest first — the conversation in order."""
-        rows = self.conn.execute(
-            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status FROM events "
-            "WHERE thread_id = ? ORDER BY received_at ASC",
-            (thread_id,),
-        ).fetchall()
-        return [self._row_to_event(row) for row in rows]
-
-    @_locked
-    def get_thread_ids_for_events(self, event_ids: list[str]) -> dict[str, str]:
-        """Map each event id to its thread id, in one batched lookup.
-
-        The recall_recent snapshot groups recent memories by conversation, and
-        each memory carries only its ``source_event_id``; this resolves a whole
-        gather window's events to their threads without a query per memory. An
-        event with a null ``thread_id`` stands as its own thread.
-        """
-        ids = [e for e in dict.fromkeys(event_ids) if e]
-        out: dict[str, str] = {}
-        chunk = 500
-        for i in range(0, len(ids), chunk):
-            part = ids[i : i + chunk]
-            q = f"SELECT id, thread_id FROM events WHERE id IN ({','.join('?' * len(part))})"
-            for row in self.conn.execute(q, part):
-                out[row["id"]] = row["thread_id"] or row["id"]
-        return out
-
-    @_locked
-    def get_pending_events_for_thread(self, thread_id: str) -> list[Event]:
-        """A thread's turns still awaiting distillation, oldest first.
-
-        The extraction worker's per-thread work list: the window it builds a
-        transcript from, then marks extracted (or failed).
+        Reads the many-to-many ``memory_sources`` join, unioned with the single
+        ``source_id`` column so a memory's primary source is always found.
         """
         rows = self.conn.execute(
-            "SELECT id, text, received_at, source_kind, thread_id, attribution, extraction_status "
-            "FROM events WHERE thread_id = ? AND extraction_status = 'pending' "
-            "ORDER BY received_at ASC",
-            (thread_id,),
+            """SELECT * FROM memory_items
+               WHERE status = 'active'
+                 AND (source_id = ?
+                      OR id IN (SELECT memory_id FROM memory_sources WHERE source_id = ?))
+               ORDER BY created_at ASC""",
+            (source_id, source_id),
         ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+        return [self._row_to_item(row) for row in rows]
 
     @_locked
-    def pending_thread_ids(self) -> list[str]:
-        """Distinct threads holding at least one pending turn — the worker's recovery seed.
+    def get_ready_sources(self, limit: int = 20) -> list[Source]:
+        """Sessions marked 'ready' (done, awaiting distillation), oldest activity first."""
+        rows = self.conn.execute(
+            "SELECT * FROM sources WHERE extraction_status = 'ready' ORDER BY last_activity_at ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [self._row_to_source(row) for row in rows]
 
-        On daemon start this reseeds the dirty map so turns buffered before a
-        restart still flush instead of stalling unseen.
+    @_locked
+    def set_source_status(self, source_id: str, status: str) -> None:
+        """Move a source through its distillation lifecycle."""
+        self.conn.execute("UPDATE sources SET extraction_status = ? WHERE id = ?", (status, source_id))
+        self.conn.commit()
+
+    @_locked
+    def mark_source_extracted(self, source_id: str, extracted_through: int) -> None:
+        """Record a source distilled through ``extracted_through`` of its turns."""
+        self.conn.execute(
+            "UPDATE sources SET extraction_status = 'extracted', extracted_through = ? WHERE id = ?",
+            (extracted_through, source_id),
+        )
+        self.conn.commit()
+
+    @_locked
+    def reset_extracting_sources(self) -> list[str]:
+        """Return any source stuck 'extracting' (a crash mid-distillation) to 'ready'.
+
+        The worker's recovery seed on daemon start, so a session interrupted
+        mid-distillation is retried instead of stalling in a held state.
         """
-        rows = self.conn.execute("SELECT DISTINCT thread_id FROM events WHERE extraction_status = 'pending'").fetchall()
-        return [row["thread_id"] for row in rows]
-
-    @_locked
-    def mark_events_extracted(self, event_ids: list[str]) -> None:
-        """Flip a flushed window from 'pending' to 'extracted'."""
-        self._set_extraction_status(event_ids, "extracted")
-
-    @_locked
-    def mark_events_failed(self, event_ids: list[str]) -> None:
-        """Flip a window the worker gave up on to 'failed' after its retries."""
-        self._set_extraction_status(event_ids, "failed")
+        ids = [r[0] for r in self.conn.execute("SELECT id FROM sources WHERE extraction_status = 'extracting'")]
+        if ids:
+            self.conn.execute("UPDATE sources SET extraction_status = 'ready' WHERE extraction_status = 'extracting'")
+            self.conn.commit()
+        return ids
 
     # --- Reconciliation dismissals (judged-distinct entity pairs) ---
 
@@ -1143,7 +1253,7 @@ class Database:
             "memory_type": row["memory_type"],
             "entities": json.loads(row["entities"] or "[]"),
             "relationships": json.loads(row["relationships"] or "[]"),
-            "thread_id": row["thread_id"],
+            "source_id": row["source_id"],
             "status": row["status"],
             "created_at": row["created_at"],
             "resolved_at": row["resolved_at"],
@@ -1158,13 +1268,13 @@ class Database:
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         source_text: str | None = None,
-        thread_id: str | None = None,
+        source_id: str | None = None,
     ) -> None:
         """Enqueue one candidate memory for review (status 'pending')."""
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             "INSERT INTO memory_proposals (id, content, source_text, memory_type, entities, "
-            "relationships, thread_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            "relationships, source_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
             (
                 proposal_id,
                 content,
@@ -1172,7 +1282,7 @@ class Database:
                 memory_type,
                 json.dumps(entities or []),
                 json.dumps(relationships or []),
-                thread_id,
+                source_id,
                 now,
             ),
         )
@@ -1188,8 +1298,8 @@ class Database:
         return self._row_to_proposal(row) if row else None
 
     @_locked
-    def list_proposals(self, status: str | None = "pending", thread_id: str | None = None) -> list[dict]:
-        """Proposals, newest first; filter by status (default 'pending') and/or thread.
+    def list_proposals(self, status: str | None = "pending", source_id: str | None = None) -> list[dict]:
+        """Proposals, newest first; filter by status (default 'pending') and/or source.
 
         Pass ``status=None`` for every status.
         """
@@ -1198,9 +1308,9 @@ class Database:
         if status is not None:
             clauses.append("status = ?")
             args.append(status)
-        if thread_id is not None:
-            clauses.append("thread_id = ?")
-            args.append(thread_id)
+        if source_id is not None:
+            clauses.append("source_id = ?")
+            args.append(source_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self.conn.execute(f"SELECT * FROM memory_proposals {where} ORDER BY created_at DESC", args).fetchall()
         return [self._row_to_proposal(r) for r in rows]
@@ -1243,52 +1353,3 @@ class Database:
         """Delete a queue row outright — used when its cluster is fully rolled up."""
         self.conn.execute("DELETE FROM consolidation_queue WHERE id = ?", (queue_id,))
         self.conn.commit()
-
-    def _set_extraction_status(self, event_ids: list[str], status: str) -> None:
-        ids = [e for e in dict.fromkeys(event_ids) if e]
-        if not ids:
-            return
-        chunk = 500
-        for i in range(0, len(ids), chunk):
-            part = ids[i : i + chunk]
-            placeholders = ",".join("?" * len(part))
-            self.conn.execute(
-                f"UPDATE events SET extraction_status = ? WHERE id IN ({placeholders})",
-                [status, *part],
-            )
-        self.conn.commit()
-
-    # --- Threads (conversations: ordered runs of raw turns) ---
-
-    def _row_to_thread(self, row: sqlite3.Row) -> Thread:
-        return Thread(
-            id=row["id"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            source_kind=row["source_kind"] or "agent",
-            label=row["label"],
-            client_key=row["client_key"] if "client_key" in row.keys() else None,
-        )
-
-    @_locked
-    def save_thread(self, thread: Thread) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO threads (id, created_at, source_kind, label, client_key) VALUES (?, ?, ?, ?, ?)",
-            (thread.id, thread.created_at.isoformat(), thread.source_kind, thread.label, thread.client_key),
-        )
-        self.conn.commit()
-
-    @_locked
-    def get_thread(self, thread_id: str) -> Thread | None:
-        row = self.conn.execute(
-            "SELECT id, created_at, source_kind, label, client_key FROM threads WHERE id = ?",
-            (thread_id,),
-        ).fetchone()
-        return self._row_to_thread(row) if row else None
-
-    @_locked
-    def get_thread_by_client_key(self, client_key: str) -> Thread | None:
-        row = self.conn.execute(
-            "SELECT id, created_at, source_kind, label, client_key FROM threads WHERE client_key = ?",
-            (client_key,),
-        ).fetchone()
-        return self._row_to_thread(row) if row else None

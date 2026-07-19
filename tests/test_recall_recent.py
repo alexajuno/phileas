@@ -1,17 +1,17 @@
-"""recall_recent as a thread snapshot — the frozen-corpus (Tier 1) eval.
+"""recall_recent as a session snapshot — the frozen-corpus (Tier 1) eval.
 
 These pin the behaviour the redesign is meant to guarantee, on a controlled
 corpus so they never depend on a model or a live database:
 
   1. a busy session collapses to one line, not a flood (burst-collapse);
   2. a wide gather window cannot inflate a busy snapshot (`days` is advisory);
-  3. the representative is the thread's latest reflection when it has one;
-  4. several distinct light threads all survive the cut;
-  5. get_thread_memories round-trips a thread back to its full memory list.
+  3. the representative is the session's latest reflection when it has one;
+  4. several distinct light sessions all survive the cut;
+  5. get_source_memories round-trips a session back to its full memory list.
 
-Seeding mirrors the contradiction/roll-up tests' real-backend setup: one Event
-per thread (a one-turn conversation) with N memories pointing at it, so grouping
-by ``source_event_id -> thread_id`` has something real to group.
+Seeding mirrors the contradiction/roll-up tests' real-backend setup: one Source
+per session with N memories pointing at it (via ``source_id``), so grouping by
+source has something real to group.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
-from phileas.models import Event, MemoryItem
+from phileas.models import MemoryItem, Source
 from phileas.vector import VectorStore
 
 _TODAY = date.today()
@@ -39,27 +39,33 @@ def _engine(path: Path) -> MemoryEngine:
     return MemoryEngine(db=db, vector=vs, graph=gs, config=cfg)
 
 
-def _thread(eng: MemoryEngine, days_ago: int, types: list[str], hour: int = 2) -> str:
-    """Create one thread (one event) with a memory per entry in ``types``.
+def _session(eng: MemoryEngine, days_ago: int, types: list[str], hour: int = 2) -> str:
+    """Create one source (session) with a memory per entry in ``types``.
 
     Memories land on ``_TODAY - days_ago`` at increasing minutes so creation
-    order is deterministic. Returns the thread id (the event id).
+    order is deterministic. Returns the source id.
     """
     day = (_TODAY - timedelta(days=days_ago)).isoformat()
-    ev = Event(text=f"conversation {days_ago}d ago", received_at=datetime(2000, 1, 1, tzinfo=timezone.utc))
-    eng.db.save_event(ev)
+    src = Source(
+        kind="claude_code_session",
+        payload={"turns": [{"i": 0, "role": "user", "text": f"conversation {days_ago}d ago"}]},
+        turn_count=1,
+        started_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        extraction_status="extracted",
+    )
+    eng.db.save_source(src)
     for i, mtype in enumerate(types):
         ts = datetime.fromisoformat(f"{day}T{hour:02d}:{i:02d}:00+00:00")
         eng.db.save_item(
             MemoryItem(
-                content=f"{day} thread {ev.id[:4]} memory {i} ({mtype})",
+                content=f"{day} session {src.id[:4]} memory {i} ({mtype})",
                 memory_type=mtype,
-                source_event_id=ev.id,
+                source_id=src.id,
                 daily_ref=day,
                 created_at=ts,
             )
         )
-    return ev.id
+    return src.id
 
 
 def _run(eng, **kw):
@@ -67,68 +73,68 @@ def _run(eng, **kw):
 
 
 def test_busy_session_collapses_to_one_line(tmp_dir: Path):
-    big = _thread(eng := _engine(tmp_dir), days_ago=1, types=["knowledge"] * 20)
-    _thread(eng, days_ago=0, types=["event"])
-    _thread(eng, days_ago=0, types=["behavior", "event"])
+    big = _session(eng := _engine(tmp_dir), days_ago=1, types=["knowledge"] * 20)
+    _session(eng, days_ago=0, types=["event"])
+    _session(eng, days_ago=0, types=["behavior", "event"])
 
     res = _run(eng, max_threads=12, max_chars=8000)
     body = [ln for ln in res["text"].splitlines() if ln.startswith("  ")]
 
-    # Three threads in, three lines out — the 20-memory burst is one of them.
-    assert len(res["threads"]) == 3
+    # Three sessions in, three lines out — the 20-memory burst is one of them.
+    assert len(res["sources"]) == 3
     assert len(body) == 3
-    big_snap = next(s for s in res["threads"] if s["thread_id"] == big)
+    big_snap = next(s for s in res["sources"] if s["source_id"] == big)
     assert big_snap["count"] == 20
     assert "🧵20 memories" in res["text"]
 
 
 def test_wide_window_cannot_inflate_a_busy_snapshot(tmp_dir: Path):
     """`days` is advisory: once recent activity fills the budget, a huge `days`
-    returns the same threads — older ones are cut, not added."""
+    returns the same sessions — older ones are cut, not added."""
     eng = _engine(tmp_dir)
-    for d in range(8):  # 8 distinct recent threads, more than the budget below
-        _thread(eng, days_ago=d, types=["knowledge", "behavior"])
-    _thread(eng, days_ago=50, types=["knowledge"])  # old: only a wide window reaches it
+    for d in range(8):  # 8 distinct recent sessions, more than the budget below
+        _session(eng, days_ago=d, types=["knowledge", "behavior"])
+    _session(eng, days_ago=50, types=["knowledge"])  # old: only a wide window reaches it
 
     small = _run(eng, days=2, max_threads=5, max_chars=8000)
     huge = _run(eng, days=365, max_threads=5, max_chars=8000)
 
-    # The shown threads are identical; only the "of N total" header count moves,
-    # because a wider window discovers more threads than it shows.
-    assert [s["thread_id"] for s in small["threads"]] == [s["thread_id"] for s in huge["threads"]]
+    # The shown sessions are identical; only the "of N total" header count moves,
+    # because a wider window discovers more sessions than it shows.
+    assert [s["source_id"] for s in small["sources"]] == [s["source_id"] for s in huge["sources"]]
     small_body = [ln for ln in small["text"].splitlines() if ln.startswith("  ")]
     huge_body = [ln for ln in huge["text"].splitlines() if ln.startswith("  ")]
     assert small_body == huge_body
-    assert len(small["threads"]) == 5  # budget bound, not window bound
+    assert len(small["sources"]) == 5  # budget bound, not window bound
 
 
 def test_representative_prefers_latest_reflection(tmp_dir: Path):
-    """A reflection is the thread's distilled beat, so it stands in even when a
+    """A reflection is the session's distilled beat, so it stands in even when a
     plainer memory is chronologically newer."""
     eng = _engine(tmp_dir)
-    # reflection first, then a newer knowledge memory in the same thread.
-    _thread(eng, days_ago=1, types=["reflection", "knowledge"])
+    # reflection first, then a newer knowledge memory in the same session.
+    _session(eng, days_ago=1, types=["reflection", "knowledge"])
 
     res = _run(eng)
-    rep = res["threads"][0]["rep"]
+    rep = res["sources"][0]["rep"]
     assert rep["type"] == "reflection"
 
 
-def test_distinct_light_threads_all_survive(tmp_dir: Path):
+def test_distinct_light_sessions_all_survive(tmp_dir: Path):
     eng = _engine(tmp_dir)
-    ids = [_thread(eng, days_ago=d, types=["knowledge"]) for d in range(4)]
+    ids = [_session(eng, days_ago=d, types=["knowledge"]) for d in range(4)]
 
     res = _run(eng, max_threads=12, max_chars=8000)
-    shown = {s["thread_id"] for s in res["threads"]}
+    shown = {s["source_id"] for s in res["sources"]}
     assert shown == set(ids)
 
 
-def test_get_thread_memories_round_trips(tmp_dir: Path):
+def test_get_source_memories_round_trips(tmp_dir: Path):
     eng = _engine(tmp_dir)
-    big = _thread(eng, days_ago=1, types=["knowledge"] * 20)
-    _thread(eng, days_ago=0, types=["event"])
+    big = _session(eng, days_ago=1, types=["knowledge"] * 20)
+    _session(eng, days_ago=0, types=["event"])
 
-    gm = tool_runner.get_thread_memories(eng, tool_runner.no_entities, thread_id=big)
+    gm = tool_runner.get_source_memories(eng, tool_runner.no_entities, source_id=big)
     assert len(gm["items"]) == 20
     # newest first
     cas = [it["created_at"] for it in gm["items"]]
@@ -138,7 +144,7 @@ def test_get_thread_memories_round_trips(tmp_dir: Path):
 def test_empty_window_is_graceful(tmp_dir: Path):
     """No recent activity returns a clear message, never a crash or a dump."""
     eng = _engine(tmp_dir)
-    _thread(eng, days_ago=200, types=["knowledge"])  # far outside the gather floor
+    _session(eng, days_ago=200, types=["knowledge"])  # far outside the gather floor
 
     res = _run(eng, days=7)
     assert res["items"] == []

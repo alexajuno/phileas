@@ -13,7 +13,7 @@ from phileas.config import resolve_home
 
 DEFAULT_CHROMA_PATH = resolve_home() / "chroma"
 COLLECTION_NAME = "memories"
-EVENTS_COLLECTION_NAME = "events"
+SOURCES_COLLECTION_NAME = "sources"
 
 
 def _zip_embeddings(chroma_result: dict) -> dict[str, list[float]]:
@@ -64,17 +64,19 @@ class VectorStore:
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        self._events_collection = self._client.get_or_create_collection(
-            name=EVENTS_COLLECTION_NAME,
+        self._sources_collection = self._client.get_or_create_collection(
+            name=SOURCES_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        # One-time cleanup: an earlier build kept a per-memory verbatim collection
-        # alongside the events one. Provenance now flows through events, so drop
-        # the leftover collection if a prior version left it on disk.
-        try:
-            self._client.delete_collection("raw_memories")
-        except Exception:
-            pass
+        # One-time cleanup: earlier builds kept other verbatim collections
+        # ("raw_memories", the per-turn "events" index) alongside this one.
+        # Provenance now flows through sources, so drop the leftovers a prior
+        # version may have left on disk.
+        for stale in ("raw_memories", "events"):
+            try:
+                self._client.delete_collection(stale)
+            except Exception:
+                pass
 
         # Lazy embedding function for text_similarities — same default model
         # Chroma attaches to the collections, instantiated only when the
@@ -192,25 +194,25 @@ class VectorStore:
     def count(self) -> int:
         return self._collection.count()
 
-    # --- Events collection (verbatim conversation chunks, keyed by event_id) ---
+    # --- Sources collection (session text, keyed by source_id) ---
 
-    def add_event(self, event_id: str, text: str) -> None:
-        """Embed an ingested event's full text for verbatim recall."""
-        self._events_collection.upsert(ids=[event_id], documents=[text])
+    def add_source(self, source_id: str, text: str) -> None:
+        """Embed a session's text so a query can find the session it came from."""
+        self._sources_collection.upsert(ids=[source_id], documents=[text])
 
-    def search_events(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        """Search event text by semantic similarity. Returns [(event_id, score)]."""
-        if self._events_collection.count() == 0:
+    def search_sources(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        """Search session text by semantic similarity. Returns [(source_id, score)]."""
+        if self._sources_collection.count() == 0:
             return []
-        results = self._events_collection.query(
-            query_texts=[query], n_results=min(top_k, self._events_collection.count())
+        results = self._sources_collection.query(
+            query_texts=[query], n_results=min(top_k, self._sources_collection.count())
         )
         ids = results["ids"][0] if results["ids"] else []
         distances = results["distances"][0] if results["distances"] else []
         return [(id_, 1.0 - dist) for id_, dist in zip(ids, distances)]
 
-    def delete_event(self, event_id: str) -> None:
-        self._events_collection.delete(ids=[event_id])
+    def delete_source(self, source_id: str) -> None:
+        self._sources_collection.delete(ids=[source_id])
 
-    def event_count(self) -> int:
-        return self._events_collection.count()
+    def source_count(self) -> int:
+        return self._sources_collection.count()

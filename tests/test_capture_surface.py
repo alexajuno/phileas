@@ -1,9 +1,9 @@
-"""The capture surface after the move to hook-driven raw capture.
+"""The capture surface after the move to hook-driven session ingest.
 
-Raw capture belongs to the Claude Code hooks, so the model no longer has an
-`ingest` tool (nor `start_thread`, whose only job was grouping ingest calls).
-Its one capture job is `memorize`, on the endorsement-pair model. These pin that
-the tool surface and the shipped skill match that contract.
+Raw capture belongs to the Claude Code hooks, so the model has no ingestion tool
+(no `ingest_source`, `start_thread`, or `thread`). Its capture job is `memorize`
+on the endorsement-pair model; sessions are read back via `source`. These pin
+that the tool surface and the shipped skill match that contract.
 """
 
 from __future__ import annotations
@@ -19,15 +19,18 @@ def _tool_names() -> set[str]:
     return {tool.name for tool in asyncio.run(mcp.list_tools())}
 
 
-def test_ingest_and_start_thread_are_not_model_tools():
+def test_ingestion_is_not_a_model_tool():
     names = _tool_names()
     assert "ingest" not in names
+    assert "ingest_source" not in names
     assert "start_thread" not in names
+    assert "thread" not in names  # renamed to source
+    assert "get_thread_memories" not in names
 
 
-def test_memorize_and_recall_remain():
+def test_memorize_recall_and_source_remain():
     names = _tool_names()
-    assert {"memorize", "recall"} <= names
+    assert {"memorize", "recall", "source", "get_source_memories"} <= names
 
 
 def test_skill_carries_the_propose_and_review_capture_model():

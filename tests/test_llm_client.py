@@ -90,13 +90,22 @@ def _result(parsed, *, error=None, input_tokens=10, output_tokens=20):
 # -- Availability gate -------------------------------------------------------
 
 
+# A keyed provider config, so availability keys on the key (the default provider,
+# claude_code, is keyless and always available).
+_KEYED = LLMConfig(provider="anthropic", model="claude-haiku-4-5-20251001", api_key_env="PHILEAS_ANTHROPIC_API_KEY")
+
+
 class TestAvailability:
     def test_unavailable_without_key(self, monkeypatch):
         monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
-        assert LLMClient(LLMConfig()).available is False
+        assert LLMClient(_KEYED).available is False
 
     def test_available_with_key(self, monkeypatch):
         monkeypatch.setenv("PHILEAS_ANTHROPIC_API_KEY", "sk-test")
+        assert LLMClient(_KEYED).available is True
+
+    def test_keyless_claude_code_available_without_key(self, monkeypatch):
+        monkeypatch.delenv("PHILEAS_ANTHROPIC_API_KEY", raising=False)
         assert LLMClient(LLMConfig()).available is True
 
     def test_keyless_provider_available_without_key(self, monkeypatch):
@@ -121,7 +130,7 @@ class TestInvokeStructured:
     def test_returns_parsed_and_records_usage(self):
         tracker = _FakeTracker()
         model = _FakeChatModel(_result(_Out(value="ok"), input_tokens=100, output_tokens=200))
-        client = LLMClient(LLMConfig(model="claude-haiku-4-5-20251001"), tracker, model=model)
+        client = LLMClient(LLMConfig(provider="anthropic", model="claude-haiku-4-5-20251001"), tracker, model=model)
 
         out = client.invoke_structured("extraction", _Out, [("human", "hi")])
 

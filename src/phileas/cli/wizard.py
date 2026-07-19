@@ -454,14 +454,9 @@ def run_wizard(skip_models: bool = False, profile: str | None = None, assume_yes
     skill_marker = "[green]OK[/green]" if skill_changed else "[dim]skip[/dim]"
     console.print(f"  Skill {skill_marker} -- {skill_msg}")
 
-    # Match the Stop-hook nudge to the profile's extraction mode: client wires the
-    # nudge (the default), api installs capture-only so the background worker distills.
-    from phileas.config import load_config
-
-    memorize = load_config(profile=profile).extraction.mode == "client"
-    hooks_ok = install_hooks(profile, memorize=memorize)
+    hooks_ok = install_hooks(profile)
     if hooks_ok:
-        console.print("  Hooks [green]OK[/green] -- raw capture wired into ~/.claude/settings.json")
+        console.print("  Hooks [green]OK[/green] -- capture wired into ~/.claude/settings.json")
     else:
         console.print("  Hooks [yellow]warn[/yellow] -- could not write ~/.claude/settings.json")
     console.print("  [dim]Restart Claude Code to pick up MCP, skill, and hook changes.[/dim]")

@@ -1,26 +1,16 @@
-"""The extraction worker: debounced per-thread distillation (Phase 4).
+"""The extraction worker: whole-session distillation of the ready queue.
 
-Offline and deterministic: a real temp Database holds the queue, a fake engine
-records ``memorize`` calls, a fake client returns canned tool-use output, and a
-controllable clock drives the debounce and max-buffer timing. No daemon, no
-network, no models.
+Offline and deterministic: a real temp Database holds the ready queue, a fake
+engine records ``memorize`` calls, and a fake client returns canned structured
+output. No daemon, no network, no models. The worker has no clock — ``tick``
+drains whatever sessions are marked ready.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from phileas.db import Database
 from phileas.extraction_worker import ExtractionWorker, build_transcript
-from phileas.models import Event
-
-
-class _Clock:
-    def __init__(self, t=0.0):
-        self.t = t
-
-    def __call__(self):
-        return self.t
+from phileas.models import Source
 
 
 class _FakeClient:
@@ -45,7 +35,7 @@ class _FakeClient:
 
 
 class _FakeEngine:
-    """Real db for the queue; recorded memorize calls, no backends."""
+    """Real db for the ready queue; recorded memorize calls, no backends."""
 
     def __init__(self, db):
         self.db = db
@@ -56,134 +46,155 @@ class _FakeEngine:
         return {"id": f"m-{len(self.memorized)}", "content": kwargs.get("content")}
 
 
-def _worker(tmp_dir, client, *, clock, debounce_s=8.0, max_buffer_s=120.0, max_retries=3):
+def _worker(tmp_dir, client, *, max_retries=3):
     db = Database(path=tmp_dir / "test.db")
     engine = _FakeEngine(db)
-    worker = ExtractionWorker(
-        engine, client, debounce_s=debounce_s, max_buffer_s=max_buffer_s, max_retries=max_retries, clock=clock
-    )
+    worker = ExtractionWorker(engine, client, max_retries=max_retries)
     return db, engine, worker
 
 
-def _pending(db, thread_id, text, attribution=None, secs=0):
-    db.save_event(
-        Event(
-            text=text,
-            thread_id=thread_id,
-            attribution=attribution,
-            extraction_status="pending",
-            received_at=datetime(2024, 1, 1, 0, 0, secs, tzinfo=timezone.utc),
+def _ready(db, sid="s1", turns=None, extracted_through=0, status="ready", client_key=None):
+    """Save one source, ready for distillation by default."""
+    turns = turns or [
+        {"i": 0, "role": "user", "text": "I play tennis"},
+        {"i": 1, "role": "assistant", "text": "nice"},
+    ]
+    db.save_source(
+        Source(
+            id=sid,
+            client_key=client_key,
+            payload={"turns": turns},
+            turn_count=len(turns),
+            extraction_status=status,
+            extracted_through=extracted_through,
         )
     )
+    return sid
 
 
-def test_build_transcript_tags_attribution_and_defaults_to_self():
-    events = [
-        Event(text="hi", attribution="self"),
-        Event(text="hello back", attribution="assistant"),
-        Event(text="untagged"),
+def test_build_transcript_tags_role_and_defaults_to_user():
+    turns = [
+        {"role": "user", "text": "hi"},
+        {"role": "assistant", "text": "hello back"},
+        {"text": "untagged"},
     ]
-    assert build_transcript(events) == "self: hi\nassistant: hello back\nself: untagged"
+    assert build_transcript(turns) == "user: hi\nassistant: hello back\nuser: untagged"
 
 
-def test_flush_after_debounce_writes_memories_and_marks_extracted(tmp_dir):
-    clock = _Clock()
+def test_tick_distills_ready_source_and_marks_extracted(tmp_dir):
     client = _FakeClient([{"content": "The user plays tennis", "memory_type": "behavior"}])
-    db, engine, worker = _worker(tmp_dir, client, clock=clock)
-    _pending(db, "t1", "I play tennis", attribution="self", secs=0)
-    _pending(db, "t1", "nice", attribution="assistant", secs=1)
-    last = db.get_pending_events_for_thread("t1")[-1].id
+    db, engine, worker = _worker(tmp_dir, client)
+    _ready(db, "s1")
 
-    worker.notify("t1")  # at t=0
+    worker.tick()
 
-    clock.t = 7.0
-    worker.tick(7.0)  # 7 < debounce, not yet
-    assert engine.memorized == []
-    assert len(db.get_pending_events_for_thread("t1")) == 2
-
-    clock.t = 8.0
-    worker.tick(8.0)  # debounce elapsed -> flush
     assert len(engine.memorized) == 1
     assert engine.memorized[0]["content"] == "The user plays tennis"
-    assert engine.memorized[0]["source_event_id"] == last  # the window's last turn
+    assert engine.memorized[0]["source_id"] == "s1"  # tagged to the session
     assert engine.memorized[0]["detect_conflict"] is False
-    assert db.get_pending_events_for_thread("t1") == []
-    assert db.pending_thread_ids() == []
+
+    src = db.get_source("s1")
+    assert src.extraction_status == "extracted"
+    assert src.extracted_through == 2  # distilled through both turns
+    assert db.get_ready_sources() == []
 
 
-def test_transcript_carries_attribution_into_extraction(tmp_dir):
-    clock = _Clock()
+def test_transcript_carries_roles_into_extraction(tmp_dir):
     client = _FakeClient([{"content": "s", "memory_type": "event"}])
-    db, engine, worker = _worker(tmp_dir, client, clock=clock)
-    _pending(db, "t1", "I moved to Bangkok", attribution="self", secs=0)
-    _pending(db, "t1", "congrats", attribution="assistant", secs=1)
-    worker.notify("t1")
-    clock.t = 8.0
-    worker.tick(8.0)
+    db, engine, worker = _worker(tmp_dir, client)
+    _ready(
+        db,
+        "s1",
+        turns=[
+            {"role": "user", "text": "I moved to Bangkok"},
+            {"role": "assistant", "text": "congrats"},
+        ],
+    )
+
+    worker.tick()
 
     prompt = client.calls[0]["messages"]
-    assert "self: I moved to Bangkok" in prompt
+    assert "user: I moved to Bangkok" in prompt
     assert "assistant: congrats" in prompt
 
 
-def test_max_buffer_forces_flush_despite_recent_activity(tmp_dir):
-    clock = _Clock()
-    client = _FakeClient([{"content": "x", "memory_type": "event"}])
-    db, engine, worker = _worker(tmp_dir, client, clock=clock, debounce_s=8.0, max_buffer_s=20.0)
-    _pending(db, "t1", "one")
+def test_resumed_source_distills_only_new_turns(tmp_dir):
+    # A source already distilled through 2 turns grows to 4 and is re-queued: the
+    # worker builds its transcript from the new turns only, past the high-water mark.
+    client = _FakeClient([{"content": "new fact", "memory_type": "event"}])
+    db, engine, worker = _worker(tmp_dir, client)
+    _ready(
+        db,
+        "s1",
+        turns=[
+            {"role": "user", "text": "old one"},
+            {"role": "assistant", "text": "old reply"},
+            {"role": "user", "text": "fresh prompt"},
+            {"role": "assistant", "text": "fresh reply"},
+        ],
+        extracted_through=2,
+    )
 
-    # Keep the thread active so the debounce never elapses, but the window ages.
-    for t in (0.0, 5.0, 10.0, 15.0):
-        clock.t = t
-        worker.notify("t1")
+    worker.tick()
 
-    clock.t = 21.0
-    worker.tick(21.0)  # 21-15=6 < debounce, but 21-0=21 >= max_buffer -> flush
-    assert len(engine.memorized) == 1
-    assert db.pending_thread_ids() == []
+    prompt = client.calls[0]["messages"]
+    assert "fresh prompt" in prompt and "fresh reply" in prompt
+    assert "old one" not in prompt  # already distilled; not re-fed
+    assert db.get_source("s1").extracted_through == 4
 
 
-def test_unavailable_client_leaves_turns_pending(tmp_dir):
-    clock = _Clock()
-    client = _FakeClient(available=False)
-    db, engine, worker = _worker(tmp_dir, client, clock=clock)
-    _pending(db, "t1", "I play tennis")
-    worker.notify("t1")
+def test_fully_distilled_source_marks_extracted_without_calling_model(tmp_dir):
+    # A ready source whose high-water mark already covers all its turns has nothing
+    # new to distill: it settles to extracted without a model call.
+    client = _FakeClient([{"content": "should not appear", "memory_type": "event"}])
+    db, engine, worker = _worker(tmp_dir, client)
+    _ready(db, "s1", extracted_through=2)  # 2 turns, all already distilled
 
-    clock.t = 8.0
-    worker.tick(8.0)
+    worker.tick()
+
     assert engine.memorized == []
-    assert len(db.get_pending_events_for_thread("t1")) == 1  # still pending, not lost
-    assert db.pending_thread_ids() == ["t1"]  # still dirty, retries when a key appears
+    assert client.calls == []
+    assert db.get_source("s1").extraction_status == "extracted"
+
+
+def test_unavailable_client_leaves_source_ready(tmp_dir):
+    client = _FakeClient(available=False)
+    db, engine, worker = _worker(tmp_dir, client)
+    _ready(db, "s1")
+
+    worker.tick()
+
+    assert engine.memorized == []
+    assert db.get_source("s1").extraction_status == "ready"  # still queued, not lost
+    assert [s.id for s in db.get_ready_sources()] == ["s1"]
 
 
 def test_failure_marks_failed_after_max_retries(tmp_dir):
-    clock = _Clock()
     client = _FakeClient(fail=True)
-    db, engine, worker = _worker(tmp_dir, client, clock=clock, debounce_s=8.0, max_retries=3)
-    _pending(db, "t1", "I play tennis")
-    worker.notify("t1")
+    db, engine, worker = _worker(tmp_dir, client, max_retries=3)
+    _ready(db, "s1")
 
-    # Each attempt fails; the thread waits another debounce before the next try.
-    for t in (8.0, 16.0, 24.0):
-        clock.t = t
-        worker.tick(t)
+    # Each tick re-flushes the still-ready source; the third failure gives up.
+    for _ in range(3):
+        worker.tick()
 
     assert engine.memorized == []
-    assert db.get_pending_events_for_thread("t1") == []
-    assert all(e.extraction_status == "failed" for e in db.get_events_for_thread("t1"))
-    assert db.pending_thread_ids() == []
+    assert db.get_source("s1").extraction_status == "failed"
+    assert db.get_ready_sources() == []
 
 
-def test_seed_recovers_pending_threads(tmp_dir):
-    clock = _Clock()
+def test_seed_recovers_interrupted_extractions(tmp_dir):
+    # A source stuck 'extracting' (a crash mid-flush) returns to 'ready' on seed,
+    # so it is retried instead of stalling in a held state.
     client = _FakeClient([{"content": "s", "memory_type": "event"}])
-    db, engine, worker = _worker(tmp_dir, client, clock=clock)
-    # Turns buffered before this worker existed (e.g. a daemon restart).
-    _pending(db, "t1", "earlier turn")
+    db, engine, worker = _worker(tmp_dir, client)
+    _ready(db, "s1", status="extracting")
 
-    worker.seed()  # picks them up at t=0
-    clock.t = 8.0
-    worker.tick(8.0)
+    recovered = worker.seed()  # returns via db.reset_extracting_sources
+    assert db.get_source("s1").extraction_status == "ready"
+
+    worker.tick()
     assert len(engine.memorized) == 1
-    assert db.pending_thread_ids() == []
+    assert db.get_source("s1").extraction_status == "extracted"
+    # seed itself returns nothing meaningful to assert on beyond the reset above.
+    assert recovered is None

@@ -2,7 +2,7 @@
 recalls, stores, and replies, merged from three sources.
 
 A Claude Code session is one ``~/.claude/projects/<munged-project>/<session_id>.jsonl``
-transcript. Phileas ingests each session's turns under a thread keyed
+transcript. Phileas ingests each whole session as one source keyed
 ``claude_code:<session_id>`` (see ``hooks.capture``), and traces every recall to
 ``metrics.db``. This module joins the three:
 
@@ -10,15 +10,14 @@ transcript. Phileas ingests each session's turns under a thread keyed
   memorize calls, and assistant replies already sit in order, correlated by turn;
 * **metrics.db** (``recall_traces``) enriches each recall with the candidate-pool
   size, latency, and returned ids the model's pointer view doesn't show;
-* **memory.db** (``threads`` / ``events``) is the authoritative session index and
-  the fallback timeline when a transcript is gone.
+* **memory.db** (``sources``) is the authoritative session index and the fallback
+  timeline (from the stored payload) when a transcript is gone.
 
 The join is deliberately honest about its seams: ``recall_traces`` carries no
 session id, so a recall is matched to its trace by exact query text and nearest
-timestamp, and any recall without a confirming trace is flagged, not guessed.
-Memories stored via an in-session ``memorize()`` call land with
-``source_event_id = NULL``, so the transcript's own ``memorize`` tool calls — not
-the thread→event→memory link — are the truth for "what this session stored".
+timestamp, and any recall without a confirming trace is flagged, not guessed. The
+transcript's own ``memorize`` tool calls are the truth for "what this session
+stored".
 """
 
 from __future__ import annotations
@@ -105,7 +104,7 @@ class SessionView:
     """A whole session, reconstructed as an ordered list of turns."""
 
     session_id: str
-    thread_id: str | None
+    source_id: str | None
     project: str | None
     transcript_path: str | None
     started_at: str
@@ -128,7 +127,7 @@ class SessionSummary:
     or when the transcript could not be found."""
 
     session_id: str
-    thread_id: str
+    source_id: str
     when: str
     turns: int
     recalls: int | None
@@ -334,6 +333,54 @@ def parse_transcript(entries: list[dict]) -> list[Turn]:
     return turns
 
 
+# --- transcript → unified ingestion payload -----------------------------------
+
+
+def transcript_to_payload(session_id: str, entries: list[dict]) -> dict:
+    """Normalize a Claude Code transcript into the unified ingestion payload.
+
+    The unified format is one JSON object with an ordered ``turns`` list of
+    ``{i, role, text, ts}`` — the shape every ingestion adapter produces and the
+    extraction worker reads. Each parsed turn contributes a ``user`` turn (the
+    human prompt) and an ``assistant`` turn (the reply), with transcript noise
+    already dropped by ``parse_transcript``. ``client_key`` keys the source to
+    this session, so a resume updates the same source.
+    """
+    parsed = parse_transcript(entries)
+    turns: list[dict] = []
+    for t in parsed:
+        if t.prompt:
+            turns.append({"i": len(turns), "role": "user", "text": t.prompt, "ts": t.timestamp})
+        if t.reply:
+            turns.append({"i": len(turns), "role": "assistant", "text": t.reply, "ts": t.timestamp})
+    return {
+        "client_key": f"{CLIENT_PREFIX}{session_id}",
+        "kind": "claude_code_session",
+        "cwd": _project_of(entries),
+        "started_at": parsed[0].timestamp if parsed else None,
+        "ended_at": parsed[-1].timestamp if parsed else None,
+        "turns": turns,
+    }
+
+
+def payload_from_path(session_id: str, path: Path) -> dict:
+    """The unified payload for a transcript already located on disk."""
+    return transcript_to_payload(session_id, _load_entries(path))
+
+
+def load_transcript_payload(session_id: str) -> dict | None:
+    """Find a session's transcript and normalize it to the unified payload.
+
+    Returns None when no transcript is on disk or it holds no real turns, so a
+    caller (the SessionEnd hook, the daemon's idle sweep) can skip it.
+    """
+    path = find_transcript(session_id)
+    if path is None:
+        return None
+    payload = payload_from_path(session_id, path)
+    return payload if payload["turns"] else None
+
+
 # --- metrics enrichment -------------------------------------------------------
 
 
@@ -396,22 +443,22 @@ def _nearest(rows: list[sqlite3.Row], target: datetime | None) -> sqlite3.Row:
 # --- session assembly ---------------------------------------------------------
 
 
-def _resolve_thread(mem_db: Path, ident: str) -> tuple[str | None, str | None, str | None]:
-    """Resolve a session id, thread id, or prefix of either to
-    ``(session_id, thread_id, started_at)``. Any component may be None."""
+def _resolve_source(mem_db: Path, ident: str) -> tuple[str | None, str | None, str | None]:
+    """Resolve a session id, source id, or prefix of either to
+    ``(session_id, source_id, started_at)``. Any component may be None."""
     conn = _connect_ro(mem_db)
     if conn is None:
         return None, None, None
     try:
         # Exact session id via its client key.
         row = conn.execute(
-            "SELECT id, created_at, client_key FROM threads WHERE client_key = ?",
+            "SELECT id, created_at, client_key FROM sources WHERE client_key = ?",
             (f"{CLIENT_PREFIX}{ident}",),
         ).fetchone()
         if row is None:
-            # Thread id (or prefix), or session-id prefix inside the client key.
+            # Source id (or prefix), or session-id prefix inside the client key.
             row = conn.execute(
-                "SELECT id, created_at, client_key FROM threads "
+                "SELECT id, created_at, client_key FROM sources "
                 "WHERE id = ? OR id LIKE ? OR client_key LIKE ? ORDER BY created_at DESC",
                 (ident, f"{ident}%", f"{CLIENT_PREFIX}{ident}%"),
             ).fetchone()
@@ -430,9 +477,9 @@ def build_session_view(cfg, ident: str) -> SessionView | None:
     thread when no transcript is on disk."""
     mem_db = cfg.db_path
     metrics_db = cfg.home / "metrics.db"
-    sid, thread_id, started = _resolve_thread(mem_db, ident)
-    # A raw session id with no ingested thread is still inspectable off its file.
-    if sid is None and thread_id is None:
+    sid, source_id, started = _resolve_source(mem_db, ident)
+    # A raw session id with no ingested source is still inspectable off its file.
+    if sid is None and source_id is None:
         sid = ident
 
     transcript = find_transcript(sid) if sid else None
@@ -442,7 +489,7 @@ def build_session_view(cfg, ident: str) -> SessionView | None:
         enrich_from_metrics(turns, metrics_db)
         return SessionView(
             session_id=sid or "",
-            thread_id=thread_id,
+            source_id=source_id,
             project=_project_of(entries),
             transcript_path=str(transcript),
             started_at=turns[0].timestamp if turns else (started or ""),
@@ -450,37 +497,34 @@ def build_session_view(cfg, ident: str) -> SessionView | None:
             turns=turns,
             source="transcript",
         )
-    if thread_id is None:
+    if source_id is None:
         return None
-    return _view_from_memory_db(mem_db, sid, thread_id, started)
+    return _view_from_source(mem_db, sid, source_id, started)
 
 
-def _view_from_memory_db(mem_db: Path, sid: str | None, thread_id: str, started: str | None) -> SessionView | None:
-    """Degraded timeline from the raw events when the transcript is gone: the
-    turns are there, but recalls (which live only in the transcript) are not."""
+def _view_from_source(mem_db: Path, sid: str | None, source_id: str, started: str | None) -> SessionView | None:
+    """Degraded timeline from the stored source payload when the transcript is
+    gone: the turns are there, but recalls (which live only in the transcript) are
+    not."""
     conn = _connect_ro(mem_db)
     if conn is None:
         return None
     try:
-        rows = conn.execute(
-            "SELECT text, received_at, attribution FROM events WHERE thread_id = ? ORDER BY received_at",
-            (thread_id,),
-        ).fetchall()
+        row = conn.execute("SELECT payload FROM sources WHERE id = ?", (source_id,)).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload"] or "{}")
         turns: list[Turn] = []
-        cur: Turn | None = None
-        for r in rows:
-            text = (r["text"] or "").strip()
-            if r["attribution"] == "self":
-                if any(m in text for m in _NOISE_MARKERS):
-                    continue
-                cur = Turn(index=len(turns) + 1, timestamp=r["received_at"], prompt=text)
-                turns.append(cur)
-            elif cur is not None:
-                cur.reply = f"{cur.reply}\n\n{text}".strip() if cur.reply else text
+        for tr in payload.get("turns", []):
+            text = (tr.get("text") or "").strip()
+            if tr.get("role") == "user":
+                turns.append(Turn(index=len(turns) + 1, timestamp=tr.get("ts", ""), prompt=text))
+            elif turns:
+                turns[-1].reply = f"{turns[-1].reply}\n\n{text}".strip() if turns[-1].reply else text
         return SessionView(
             session_id=sid or "",
-            thread_id=thread_id,
-            project=None,
+            source_id=source_id,
+            project=payload.get("cwd"),
             transcript_path=None,
             started_at=turns[0].timestamp if turns else (started or ""),
             ended_at=turns[-1].timestamp if turns else (started or ""),
@@ -504,7 +548,7 @@ def list_sessions(
     if conn is None:
         return []
     try:
-        sql = "SELECT id, created_at, client_key FROM threads WHERE client_key LIKE ?"
+        sql = "SELECT id, created_at, client_key FROM sources WHERE client_key LIKE ?"
         params: list = [f"{CLIENT_PREFIX}%"]
         if since_iso:
             sql += " AND created_at >= ?"
@@ -528,7 +572,7 @@ def list_sessions(
         conn.close()
 
 
-def _summarize_session(conn, cfg, sid: str, thread_id: str, created_at: str, fast: bool) -> SessionSummary:
+def _summarize_session(conn, cfg, sid: str, source_id: str, created_at: str, fast: bool) -> SessionSummary:
     when = created_at[:16].replace("T", " ")
     if not fast:
         transcript = find_transcript(sid)
@@ -537,7 +581,7 @@ def _summarize_session(conn, cfg, sid: str, thread_id: str, created_at: str, fas
             turns = parse_transcript(entries)
             return SessionSummary(
                 session_id=sid,
-                thread_id=thread_id,
+                source_id=source_id,
                 when=when,
                 turns=len(turns),
                 recalls=sum(len(t.recalls) for t in turns),
@@ -545,27 +589,27 @@ def _summarize_session(conn, cfg, sid: str, thread_id: str, created_at: str, fas
                 project=_project_of(entries),
                 opening=turns[0].prompt if turns else "",
             )
-    # Fast path, or no transcript on disk: lean on the raw events.
-    turns_ct, opening = _events_glance(conn, thread_id)
+    # Fast path, or no transcript on disk: lean on the stored source payload.
+    turns_ct, opening, project = _source_glance(conn, source_id)
     return SessionSummary(
         session_id=sid,
-        thread_id=thread_id,
+        source_id=source_id,
         when=when,
         turns=turns_ct,
         recalls=None,
         stored=None,
-        project=None,
+        project=project,
         opening=opening,
     )
 
 
-def _events_glance(conn, thread_id: str) -> tuple[int, str]:
-    """Turn count and opening prompt straight from memory.db, skipping the
-    synthetic task-notification 'self' turns so the count reads like real
-    exchanges."""
-    rows = conn.execute(
-        "SELECT text FROM events WHERE thread_id = ? AND attribution = 'self' ORDER BY received_at",
-        (thread_id,),
-    ).fetchall()
-    prompts = [t for r in rows if (t := (r["text"] or "").strip()) and not any(m in t for m in _NOISE_MARKERS)]
-    return len(prompts), (prompts[0] if prompts else "")
+def _source_glance(conn, source_id: str) -> tuple[int, str, str | None]:
+    """User-turn count, opening prompt, and project from the stored source payload."""
+    row = conn.execute("SELECT payload FROM sources WHERE id = ?", (source_id,)).fetchone()
+    if row is None:
+        return 0, "", None
+    payload = json.loads(row["payload"] or "{}")
+    prompts = [
+        t for tr in payload.get("turns", []) if tr.get("role") == "user" and (t := (tr.get("text") or "").strip())
+    ]
+    return len(prompts), (prompts[0] if prompts else ""), payload.get("cwd")

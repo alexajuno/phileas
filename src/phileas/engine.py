@@ -20,11 +20,11 @@ from typing import cast, get_args
 from phileas import contradiction
 from phileas.backends import DatabaseBackend, GraphBackend, VectorBackend
 from phileas.config import PhileasConfig, load_config
-from phileas.db import clean_source_event_id
+from phileas.db import clean_source_id
 from phileas.fusion import rank_by_score, rank_consume, resolve_fusion, resolve_rerank, rrf_fuse
 from phileas.graph import _norm_type
 from phileas.logging import get_logger, op_extra, timed_op
-from phileas.models import MemoryItem, MemoryType, Thread
+from phileas.models import MemoryItem, MemoryType, Source
 from phileas.reconcile import candidate_pairs
 from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
 from phileas.standout import resolve_strategy, standout_keep
@@ -45,7 +45,7 @@ MMR_LAMBDA = 0.7  # MMR relevance-vs-diversity tradeoff (1.0 = pure relevance)
 # — a garbage gate, never the cut itself. Kept well below the ~0.38 cosine band real
 # English matches land in, so lowering one can't re-introduce the absolute-floor bug.
 COSINE_HARD_FLOOR = 0.25  # backstop for semantic cosine hits (Path 2)
-EVENT_HARD_FLOOR = 0.20  # event chunks score lower under cosine (Path 5)
+SOURCE_HARD_FLOOR = 0.20  # session text scores lower under cosine (Path 5)
 COSINE_MIN_KEEP = 0  # semantic paths are additive to keyword/graph — force nothing in
 RELEVANCE_HARD_FLOOR = 0.05  # backstop for normalized cross-encoder relevance
 RELEVANCE_MIN_KEEP = 1  # never zero the whole reranked pool on a flat distribution
@@ -192,8 +192,24 @@ def _item_to_dict(item: MemoryItem, score: float = 0.0) -> dict:
         "type": item.memory_type,
         "score": score,
         "created_at": item.created_at.isoformat() if item.created_at else None,
-        "source_event_id": item.source_event_id,
+        "source_id": item.source_id,
     }
+
+
+def _parse_ts(ts) -> datetime | None:
+    """Parse a unified-format turn timestamp (ISO string) to a datetime, or None."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_text(payload: dict) -> str:
+    """Render a session's turns as one text blob for semantic indexing."""
+    turns = (payload or {}).get("turns", [])
+    return "\n".join(f"{t.get('role', '')}: {t.get('text', '')}" for t in turns)
 
 
 def _scope_is_expired(scope: dict, now: datetime) -> bool:
@@ -308,119 +324,122 @@ class MemoryEngine:
         self._metrics = MetricsWriter(self.config.home / "metrics.db")
 
     # ------------------------------------------------------------------
-    # ingest event (raw turn)
+    # sources (whole ingested sessions)
     # ------------------------------------------------------------------
 
-    def save_event(self, event) -> None:
-        """Persist a raw event to SQLite and embed its text for verbatim recall.
+    def save_source(self, source: Source) -> None:
+        """Persist a session to SQLite and embed its text so recall can find it.
 
-        Wraps `db.save_event` + `vector.add_event` so callers (the daemon ingest
-        path, tests, the backfill script) get the embed for free. The event
-        text is what powers Path 5 / `thread()` retrieval.
+        Wraps `db.save_source` + `vector.add_source` so callers (the daemon ingest
+        path, tests, the backfill script) get the embed for free. The embedded
+        text is the session's turns joined, which powers Path 5 / `source()`
+        retrieval.
         """
-        self.db.save_event(event)
+        self.db.save_source(source)
         try:
-            self.vector.add_event(event.id, event.text)
+            self.vector.add_source(source.id, _source_text(source.payload))
         except Exception as e:
             log.debug(
-                "vector add_event failed",
-                extra={"op": "save_event", "data": {"event_id": event.id, "error": str(e)}},
+                "vector add_source failed",
+                extra={"op": "save_source", "data": {"source_id": source.id, "error": str(e)}},
             )
 
-    # ------------------------------------------------------------------
-    # threads (conversations: ordered runs of raw turns)
-    # ------------------------------------------------------------------
+    def ingest_source(self, payload: dict, *, mark_ready: bool = True) -> dict:
+        """Upsert a whole session as one source, ready for distillation.
 
-    def start_thread(
-        self,
-        label: str | None = None,
-        source_kind: str = "agent",
-        client_key: str | None = None,
-    ) -> dict:
-        """Open or resume a conversation. Tag the turns you ingest with the
-        returned id so they read back as one ordered thread.
-
-        Idempotent on ``client_key`` (a stable client identity like
-        ``"claude_code:<session_id>"``): if a thread already carries that key it
-        is returned — so a resumed or compacted session continues the same
-        thread instead of fragmenting. Omit ``client_key`` to always open a
-        fresh thread with no continuity.
+        Get-or-create on ``payload['client_key']`` (a stable session identity like
+        ``"claude_code:<session_id>"``): a resumed or compacted session updates the
+        source it already opened instead of forking a new one. When ``mark_ready``
+        and the session has grown past what was last distilled, the source drops to
+        ``ready`` so the extraction worker re-distills only its new turns.
         """
-        if client_key:
-            existing = self.db.get_thread_by_client_key(client_key)
-            if existing is not None:
-                return {
-                    "thread_id": existing.id,
-                    "started_at": existing.created_at.isoformat(),
-                    "source_kind": existing.source_kind,
-                    "label": existing.label,
-                    "resumed": True,
-                }
-        thread = Thread(source_kind=source_kind, label=label, client_key=client_key)
-        self.db.save_thread(thread)
+        client_key = payload.get("client_key")
+        turns = payload.get("turns") or []
+        now = datetime.now(timezone.utc)
+        started = _parse_ts(turns[0].get("ts")) if turns else None
+        ended = _parse_ts(turns[-1].get("ts")) if turns else None
+
+        existing = self.db.get_source_by_client_key(client_key) if client_key else None
+        if existing is not None:
+            source_id = existing.id
+            created_at = existing.created_at
+            extracted_through = existing.extracted_through
+            has_new = len(turns) > existing.extracted_through
+            status = "ready" if (mark_ready and has_new) else existing.extraction_status
+        else:
+            source_id = str(uuid.uuid4())
+            created_at = now
+            extracted_through = 0
+            status = "ready" if mark_ready else "open"
+
+        source = Source(
+            id=source_id,
+            client_key=client_key,
+            kind=payload.get("kind") or "claude_code_session",
+            cwd=payload.get("cwd"),
+            label=payload.get("label"),
+            payload=payload,
+            turn_count=len(turns),
+            started_at=started or now,
+            last_activity_at=now,
+            ended_at=ended,
+            extraction_status=status,
+            extracted_through=extracted_through,
+            created_at=created_at,
+        )
+        self.save_source(source)
         return {
-            "thread_id": thread.id,
-            "started_at": thread.created_at.isoformat(),
-            "source_kind": source_kind,
-            "label": label,
-            "resumed": False,
+            "source_id": source_id,
+            "client_key": client_key,
+            "turn_count": len(turns),
+            "extraction_status": status,
+            "resumed": existing is not None,
         }
 
-    def thread(self, handle: str) -> dict | None:
-        """Return a conversation: its raw turns in order, each with the memories
-        it produced.
+    def _resolve_source(self, handle: str) -> Source | None:
+        """A source by full id, client_key, or 8-char id prefix."""
+        if not handle:
+            return None
+        src = self.db.get_source(handle) or self.db.get_source_by_client_key(handle)
+        if src is not None:
+            return src
+        for candidate in self.db.get_all_sources():
+            if candidate.id.startswith(handle):
+                return candidate
+        return None
 
-        ``handle`` is a thread_id, or an event_id (a memory's source_event_id),
-        which resolves to the thread that turn sits in. The raw turns are the
-        spine; the memories hang off the turn they were distilled from.
+    def source(self, handle: str) -> dict | None:
+        """Return a session: its turns in order and the memories it produced.
+
+        ``handle`` is a source_id (full or 8-char prefix) or a client_key. The
+        turns are the spine; the memories are what was distilled from them.
         """
-        turns = self.db.get_events_for_thread(handle)
-        thread_id = handle
-        if not turns:
-            event = self.db.get_event(handle)
-            if event is None:
-                return None
-            thread_id = event.thread_id or event.id
-            turns = self.db.get_events_for_thread(thread_id) or [event]
-        meta = self.db.get_thread(thread_id)
-        turn_dicts = [
-            {
-                "event_id": ev.id,
-                "text": ev.text,
-                "received_at": ev.received_at.isoformat() if ev.received_at else None,
-                "source_kind": ev.source_kind,
-                "memories": [_item_to_dict(m) for m in self.db.get_memories_for_event(ev.id)],
-            }
-            for ev in turns
-        ]
+        src = self._resolve_source(handle)
+        if src is None:
+            return None
         return {
-            "thread_id": thread_id,
-            "label": meta.label if meta else None,
-            "source_kind": meta.source_kind if meta else (turns[0].source_kind if turns else None),
-            "turns": turn_dicts,
+            "source_id": src.id,
+            "client_key": src.client_key,
+            "kind": src.kind,
+            "label": src.label,
+            "cwd": src.cwd,
+            "extraction_status": src.extraction_status,
+            "turns": (src.payload or {}).get("turns", []),
+            "memories": [_item_to_dict(m) for m in self.db.get_memories_for_source(src.id)],
         }
 
-    def get_thread_memories(self, handle: str) -> list[dict]:
-        """The memories a thread produced, newest first — the cheap thread drill-in.
+    def get_source_memories(self, handle: str) -> list[dict]:
+        """The memories a session produced, newest first — the cheap source drill-in.
 
-        ``handle`` is a thread_id, or an event_id that resolves to its thread.
-        Unlike ``thread``, this returns only the distilled memory pointers, not
-        the raw turns: the light expand for a recall_recent thread line, for when
-        the model wants the whole session's memories without the verbatim
-        conversation. Empty when the handle resolves to nothing.
+        ``handle`` is a source_id or client_key. Unlike ``source``, this returns
+        only the distilled memory pointers, not the turns: the light expand for a
+        recall_recent source line. Empty when the handle resolves to nothing.
         """
-        events = self.db.get_events_for_thread(handle)
-        if not events:
-            event = self.db.get_event(handle)
-            if event is None:
-                return []
-            events = self.db.get_events_for_thread(event.thread_id or event.id) or [event]
-        seen: dict[str, MemoryItem] = {}
-        for ev in events:
-            for m in self.db.get_memories_for_event(ev.id):
-                seen[m.id] = m
+        src = self._resolve_source(handle)
+        if src is None:
+            return []
         items = sorted(
-            seen.values(),
+            self.db.get_memories_for_source(src.id),
             key=lambda m: m.created_at.timestamp() if m.created_at else 0.0,
             reverse=True,
         )
@@ -431,7 +450,7 @@ class MemoryEngine:
 
         The inverse of the pointer trim: returns everything the cheap pointer
         line drops — exact timestamps, status/access counts, the
-        *full* source_event_id (the handle for `thread`), and linked entities.
+        *full* source_id (the handle for `source`), and linked entities.
         Powers the "inspect this one memory" drill-in (AA-106).
 
         Returns the record dict on a unique match, ``None`` for no match, or
@@ -474,33 +493,30 @@ class MemoryEngine:
             contradictions = self.graph.get_contradictions_for_memory(item.id)
         except Exception as e:
             log.debug("hydrate contradiction lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
-        # Provenance: the set of raw turns this memory was distilled from, and the
-        # thread(s) they belong to. The `memory_sources` join is authoritative;
-        # fall back to the legacy single column so a memory written before the
-        # backfill still shows its source. `thread(thread_id)` reads back a run.
-        source_event_ids = self.db.get_source_event_ids_for_memory(item.id)
-        if not source_event_ids and item.source_event_id:
-            source_event_ids = [item.source_event_id]
-        source_turns: list[dict] = []
-        thread_ids: list[str] = []
-        for eid in source_event_ids:
-            event = self.db.get_event(eid)
-            if event is None:
+        # Provenance: the set of sessions this memory was distilled from. The
+        # `memory_sources` join is authoritative; fall back to the single
+        # `source_id` column so a memory's primary source always shows.
+        # `source(source_id)` reads the session back.
+        source_ids = self.db.get_source_ids_for_memory(item.id)
+        if not source_ids and item.source_id:
+            source_ids = [item.source_id]
+        sources_meta: list[dict] = []
+        for sid in source_ids:
+            src = self.db.get_source(sid)
+            if src is None:
                 continue
-            source_turns.append(
+            sources_meta.append(
                 {
-                    "event_id": event.id,
-                    "text": event.text,
-                    "received_at": event.received_at.isoformat() if event.received_at else None,
+                    "source_id": src.id,
+                    "client_key": src.client_key,
+                    "kind": src.kind,
+                    "label": src.label,
+                    "turn_count": src.turn_count,
                 }
             )
-            tid = event.thread_id or event.id
-            if tid not in thread_ids:
-                thread_ids.append(tid)
-        # Back-compat singletons: the first (oldest) source turn and its thread.
-        source_event_id = source_event_ids[0] if source_event_ids else None
-        source_turn = source_turns[0] if source_turns else None
-        thread_id = thread_ids[0] if thread_ids else None
+        # Back-compat singleton: the memory's primary (first) source.
+        source_id = source_ids[0] if source_ids else None
+        source_meta = sources_meta[0] if sources_meta else None
         return {
             "id": item.id,
             "content": item.content,
@@ -511,12 +527,10 @@ class MemoryEngine:
             "daily_ref": item.daily_ref,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            "source_event_id": source_event_id,
-            "source_event_ids": source_event_ids,
-            "thread_id": thread_id,
-            "thread_ids": thread_ids,
-            "source_turn": source_turn,
-            "source_turns": source_turns,
+            "source_id": source_id,
+            "source_ids": source_ids,
+            "source": source_meta,
+            "sources": sources_meta,
             "entities": entities,
             "scopes": scopes,
             "contradictions": contradictions,
@@ -584,21 +598,20 @@ class MemoryEngine:
         daily_ref: str | None = None,
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
-        source_event_id: str | None = None,
-        source_event_ids: list[str] | None = None,
+        source_id: str | None = None,
+        source_ids: list[str] | None = None,
         contexts: list[str] | None = None,
         child_ids: list[str] | None = None,
         detect_conflict: bool = True,
     ) -> dict:
         """Store a memory across all three backends.
 
-        `content` is the canonical, AI-written fact. The raw source turns live in
-        the `events` table. Provenance is a set: a memory can be distilled from one
-        turn, a span, or a whole conversation. Pass `source_event_id` for the
-        single-turn case or `source_event_ids` for the set; both are merged and
-        recorded in the `memory_sources` join, and the memory's thread(s) are
-        derived from that set. Memories must not contain raw verbatim text — that's
-        what events are for.
+        `content` is the canonical, AI-written fact. The raw session lives in the
+        `sources` table. Provenance is a set: a memory is usually distilled from
+        one session, but a rollup can span several. Pass `source_id` for the single
+        case or `source_ids` for the set; both are merged and recorded in the
+        `memory_sources` join. Memories must not contain raw verbatim text — that's
+        what sources are for.
 
         `contexts` scopes the memory: each name resolves (or mints) a
         Context-typed entity and gets a SCOPED_TO edge. No contexts ⇒ the
@@ -625,26 +638,24 @@ class MemoryEngine:
             context_count=len(contexts or []),
         )
 
-        # Provenance: the source set is `source_event_id` (the one-element case)
-        # merged with `source_event_ids`, de-duplicated. Every id must reference a
-        # real captured turn, so a typo or hallucinated id can't slip in. A memory
-        # with no source — a reflection or rollup derived from other memories, or a
-        # legacy write — has an empty set, which is allowed. The legacy single
-        # column keeps the first source for back-compat; the full set goes to the
-        # `memory_sources` join after the row is saved.
-        source_ids: list[str] = []
-        for raw in [source_event_id, *(source_event_ids or [])]:
-            sid = clean_source_event_id(raw)
-            if sid is None or sid in source_ids:
+        # Provenance: the source set is `source_id` (the one-element case) merged
+        # with `source_ids`, de-duplicated. Every id must reference a real captured
+        # session, so a typo or hallucinated id can't slip in. A memory with no
+        # source — a reflection or rollup derived from other memories, or a legacy
+        # write — has an empty set, which is allowed. The single column keeps the
+        # primary source; the full set goes to the `memory_sources` join.
+        resolved_ids: list[str] = []
+        for raw in [source_id, *(source_ids or [])]:
+            sid = clean_source_id(raw)
+            if sid is None or sid in resolved_ids:
                 continue
-            if self.db.get_event(sid) is None:
+            if self.db.get_source(sid) is None:
                 raise ValueError(
-                    f"source_event_id {sid!r} does not reference a captured turn. "
-                    "Capture the source with ingest_text(...) and use the id it returns, "
-                    "or omit it for a memory derived from other memories."
+                    f"source_id {sid!r} does not reference a captured session. "
+                    "Ingest the session first, or omit it for a memory derived from other memories."
                 )
-            source_ids.append(sid)
-        source_event_id = source_ids[0] if source_ids else None
+            resolved_ids.append(sid)
+        primary_source_id = resolved_ids[0] if resolved_ids else None
 
         # 1. Default daily_ref to today
         if daily_ref is None:
@@ -660,14 +671,14 @@ class MemoryEngine:
             # reinforcement grow it from here.
             storage_strength=seed_storage_strength(memory_type),
             daily_ref=daily_ref,
-            source_event_id=source_event_id,
+            source_id=primary_source_id,
         )
 
         self.db.save_item(item)
         # Record the full provenance set (the join is the source of truth; the
-        # single column above is the back-compat first-source cache).
-        if source_ids:
-            self.db.add_memory_sources(item.id, source_ids)
+        # single column above is the primary-source cache).
+        if resolved_ids:
+            self.db.add_memory_sources(item.id, resolved_ids)
 
         # 4. Probe for a possible conflict *before* the new embedding lands and
         # before the new edges are written, so neither the nearest-neighbour
@@ -801,12 +812,12 @@ class MemoryEngine:
         entities: list[dict] | None = None,
         relationships: list[dict] | None = None,
         source_text: str | None = None,
-        thread_id: str | None = None,
+        source_id: str | None = None,
     ) -> dict:
         """Enqueue one candidate memory for the user to review, storing nothing yet.
 
-        The manual capture mode's write path: the live model proposes, and the
-        memory is materialized only once the user approves. Returns the proposal id.
+        The manual capture write path: the live model proposes, and the memory is
+        materialized only once the user approves. Returns the proposal id.
         """
         proposal_id = uuid.uuid4().hex
         self.db.save_proposal(
@@ -816,22 +827,22 @@ class MemoryEngine:
             entities=entities,
             relationships=relationships,
             source_text=source_text,
-            thread_id=thread_id,
+            source_id=source_id,
         )
         return {"id": proposal_id, "status": "pending"}
 
-    def list_proposals(self, status: str | None = "pending", thread_id: str | None = None) -> list[dict]:
+    def list_proposals(self, status: str | None = "pending", source_id: str | None = None) -> list[dict]:
         """Proposals awaiting (or past) review; see ``Database.list_proposals``."""
-        return self.db.list_proposals(status=status, thread_id=thread_id)
+        return self.db.list_proposals(status=status, source_id=source_id)
 
     def approve_proposal(self, proposal_id: str, edits: dict | None = None) -> dict:
         """Materialize a proposal into a real memory, then mark it approved.
 
         Applies any ``edits`` (content / memory_type / entities / relationships /
-        source_text) first. Provenance is the proposal's thread expanded to its
-        turns, so the memory carries the whole conversation it was distilled from
-        as its ``memory_sources`` set. ``source_text`` is a review aid, not a
-        memory body: the durable body is the conversation the sources point at.
+        source_text) first. Provenance is the proposal's source, so the memory
+        carries the session it was distilled from as its ``memory_sources`` set.
+        ``source_text`` is a review aid, not a memory body: the durable body is the
+        session the source points at.
         """
         proposal = self.db.get_proposal(proposal_id)
         if proposal is None:
@@ -842,14 +853,13 @@ class MemoryEngine:
             self.db.update_proposal(proposal["id"], edits)
             proposal = self.db.get_proposal(proposal["id"])
 
-        thread_id = proposal.get("thread_id")
-        source_event_ids = [e.id for e in self.db.get_events_for_thread(thread_id)] if thread_id else []
+        source_id = proposal.get("source_id")
         result = self.memorize(
             content=proposal["content"],
             memory_type=proposal["memory_type"],
             entities=proposal["entities"],
             relationships=proposal["relationships"],
-            source_event_ids=source_event_ids,
+            source_ids=[source_id] if source_id else None,
             detect_conflict=False,
         )
         self.db.mark_proposal_resolved(proposal["id"], "approved")
@@ -962,7 +972,7 @@ class MemoryEngine:
         path3_ids: set[str] = set()  # Path 3: entity lookup + 1-hop neighbours
         path3b_ids: set[str] = set()  # Path 3b: memory-pivot expansion
         path4_ids: set[str] = set()  # Path 4: semantic-to-graph bridge
-        event_thread_ids: set[str] = set()  # track event-text sibling fanout
+        source_sibling_ids: set[str] = set()  # track session-text sibling fanout
         context_ids: set[str] = set()  # AA-119: candidates boosted by active context
         context_info: dict | None = None  # AA-119: resolved/expanded active context
 
@@ -1305,7 +1315,7 @@ class MemoryEngine:
         # on a keyword candidate floods day_ids with unrelated results.
         #
         # Capped by recall.path4_max_seeds. Non-graph candidates (keyword /
-        # semantic / event_thread) come first — those are the
+        # semantic / source) come first — those are the
         # seeds Path 4 was actually designed for, producing new bridges
         # Path 3b couldn't have. graph_ids seeds fill any remaining headroom,
         # though their bridges duplicate Path 3b's by construction.
@@ -1334,31 +1344,31 @@ class MemoryEngine:
                     )
         _mark("graph_path4_bridge")
 
-        # Path 5: event-text search → sibling-memory fanout.
-        # An event hit drags in every memory extracted from that event,
-        # tagged hop=1 (one structural step from the matching event). This is
+        # Path 5: session-text search → sibling-memory fanout.
+        # A session hit drags in every memory distilled from that session,
+        # tagged hop=1 (one structural step from the matching session). This is
         # also where the verbatim source rejoins retrieval: summarization drops
-        # details (names, places, exact phrasing) that the event text keeps, so
-        # a query matching those surfaces the memories distilled from that turn.
-        # Verbatim event passages themselves are not memory rows, so they
+        # details (names, places, exact phrasing) that the session text keeps, so
+        # a query matching those surfaces the memories distilled from that session.
+        # Verbatim session passages themselves are not memory rows, so they
         # are not added to `candidates` here — only the sibling memories are.
-        # Lower backstop than memory search: long event chunks score lower
+        # Lower backstop than memory search: long session chunks score lower
         # under cosine than focused summaries.
-        event_hits = self.vector.search_events(query, top_k=20)
+        source_hits = self.vector.search_sources(query, top_k=20)
         for k in standout_keep(
-            [sim for _, sim in event_hits],
-            hard_floor=EVENT_HARD_FLOOR,
+            [sim for _, sim in source_hits],
+            hard_floor=SOURCE_HARD_FLOOR,
             min_keep=0,
             method=_cut_method,
             **_cut_params,
         ):
-            event_id, _sim = event_hits[k]
-            for sibling in self.db.get_memories_for_event(event_id):
-                event_thread_ids.add(sibling.id)
+            source_id, _sim = source_hits[k]
+            for sibling in self.db.get_memories_for_source(source_id):
+                source_sibling_ids.add(sibling.id)
                 if sibling.id not in candidates:
                     candidates[sibling.id] = sibling
                     candidate_hop[sibling.id] = min(candidate_hop.get(sibling.id, 99), 1)
-        _mark("events")
+        _mark("sources")
 
         # Path 6: roll-up collapse — fold a gathered flood into its gist.
         # Walk ROLLS_UP up from the gathered memories to their covering summaries.
@@ -1857,8 +1867,8 @@ class MemoryEngine:
                 s.append("path3b")
             if mid in path4_ids:
                 s.append("path4")
-            if mid in event_thread_ids:
-                s.append("event_thread")
+            if mid in source_sibling_ids:
+                s.append("source")
             if mid in context_ids:
                 s.append("context")
             return s
@@ -2782,14 +2792,14 @@ class MemoryEngine:
         """Aggregate stats from all three backends."""
         counts = self.db.get_counts()
         graph_stats = self.graph.get_stats()
-        event_status = self.db.event_status_counts()
+        source_status = self.db.source_status_counts()
         return {
             **counts,
             "vector_count": self.vector.count(),
-            "event_vector_count": self.vector.event_count(),
+            "source_vector_count": self.vector.source_count(),
             "graph_nodes": graph_stats["nodes"],
             "graph_edges": graph_stats["edges"],
-            "events_pending": event_status.get("pending", 0),
-            "events_failed": event_status.get("failed", 0),
+            "sources_ready": source_status.get("ready", 0),
+            "sources_failed": source_status.get("failed", 0),
             "storage_health": self.db.storage_health(),
         }
