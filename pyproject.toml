@@ -26,6 +26,10 @@ dependencies = [
     "fastapi>=0.136.3",
     "uvicorn>=0.42.0",
     "tomli-w>=1.0.0",
+    # The default extraction provider (claude_code) wraps `claude -p` behind a
+    # LangChain chat model, so langchain-core is a base need, not an extra. The
+    # optional API adapters stay in the `extraction` extra below.
+    "langchain-core>=0.3.0",
 ]
 
 [project.urls]
@@ -38,8 +42,9 @@ phileas = "phileas.cli:app"
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers"]
-# Internal extraction LLM (the observer capture path). Off unless [llm] is
-# enabled with a key present, so the SDK stays an opt-in install.
+# API-key extraction providers. The default provider (claude_code) needs only
+# langchain-core, a base dependency; these LangChain adapters are the opt-in path
+# for extracting through a keyed provider (Anthropic / OpenAI / a local Ollama).
 extraction = [
     "langchain-anthropic>=1.4.8",
     "langchain-ollama>=1.1.0",

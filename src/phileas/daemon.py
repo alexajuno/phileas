@@ -47,6 +47,60 @@ _sync_pusher: SyncPusher | None = None
 # Extraction worker, initialized by start() when extraction is enabled.
 _extraction_worker: ExtractionWorker | None = None
 
+# Idle-sweep bounds. The sweep is a backstop for a session that ended but whose
+# SessionEnd hook never fired (a killed terminal). It only considers a transcript
+# quiet for at least IDLE_SECONDS (the session is done) AND touched within
+# IDLE_MAX_AGE_SECONDS (recent). The recency floor is load-bearing: without it, a
+# first run against a long transcript history would ingest and re-distill every
+# past session — a mass extraction storm. Old history is never swept; it was
+# already distilled (marked extracted) when it was folded into sources.
+IDLE_SWEEP_INTERVAL_SEC = 300
+IDLE_SECONDS = 600
+IDLE_MAX_AGE_SECONDS = 12 * 3600
+
+
+def run_idle_sweep(
+    engine,
+    now: float,
+    *,
+    idle_seconds: float = IDLE_SECONDS,
+    max_age_seconds: float = IDLE_MAX_AGE_SECONDS,
+) -> int:
+    """Ingest recently-ended sessions whose SessionEnd hook never fired.
+
+    Returns the count ingested. Only sweeps a transcript quiet for at least
+    ``idle_seconds`` (done) and touched within ``max_age_seconds`` (recent), so a
+    first run against a large history is bounded to just-finished sessions. A
+    source already ``ready``/``extracting``/``failed``/``open`` is left alone — the
+    worker owns an active one, and a failed one waits for an explicit
+    ``retry-sources`` rather than looping. An ``extracted`` source is re-ingested
+    only when its transcript has grown past what was distilled.
+    """
+    from phileas import sessions
+
+    ingested = 0
+    for path in sessions.projects_root().glob("*/*.jsonl"):
+        try:
+            age = now - path.stat().st_mtime
+            if age < idle_seconds or age > max_age_seconds:
+                continue
+            sid = path.stem
+            existing = engine.db.get_source_by_client_key(f"{sessions.CLIENT_PREFIX}{sid}")
+            if existing is not None and existing.extraction_status != "extracted":
+                continue
+            payload = sessions.payload_from_path(sid, path)
+            turn_count = len(payload["turns"])
+            if turn_count == 0:
+                continue
+            if existing is not None and existing.extracted_through >= turn_count:
+                continue
+            engine.ingest_source(payload, mark_ready=True)
+            ingested += 1
+        except Exception:
+            continue
+    return ingested
+
+
 # Dispatch methods that mutate the canonical (synced) store and should arm a
 # push. Events ride along incrementally on the next push, and the derived graph
 # is rebuilt on import, so neither needs its own trigger here.
@@ -598,41 +652,15 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
         )
 
         # -- Idle sweep (backstop for sessions that never ended cleanly) ---
-        # A session whose terminal was killed never fires SessionEnd, so its
-        # transcript would never become a source. This sweep ingests any transcript
-        # quiet past the idle window that isn't already distilled at its size.
-        _IDLE_SWEEP_INTERVAL_SEC = 300
-        _IDLE_SECONDS = 600
-
         def _idle_sweep_loop():
             import time
 
-            from phileas import sessions
-
             while True:
-                time.sleep(_IDLE_SWEEP_INTERVAL_SEC)
+                time.sleep(IDLE_SWEEP_INTERVAL_SEC)
                 try:
-                    now = time.time()
-                    for path in sessions.projects_root().glob("*/*.jsonl"):
-                        try:
-                            if now - path.stat().st_mtime < _IDLE_SECONDS:
-                                continue
-                            sid = path.stem
-                            existing = engine.db.get_source_by_client_key(f"{sessions.CLIENT_PREFIX}{sid}")
-                            payload = sessions.payload_from_path(sid, path)
-                            turn_count = len(payload["turns"])
-                            if turn_count == 0:
-                                continue
-                            already_done = (
-                                existing is not None
-                                and existing.extraction_status == "extracted"
-                                and existing.extracted_through >= turn_count
-                            )
-                            if already_done:
-                                continue
-                            engine.ingest_source(payload, mark_ready=True)
-                        except Exception:
-                            continue
+                    n = run_idle_sweep(engine, time.time())
+                    if n:
+                        log.info("idle sweep ingested sessions", extra={"op": "extraction", "data": {"count": n}})
                 except Exception as e:
                     log.debug("idle sweep failed", extra={"op": "extraction", "data": {"error": str(e)}})
 
