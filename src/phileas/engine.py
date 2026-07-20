@@ -1074,6 +1074,20 @@ class MemoryEngine:
         path3_tokens_matched: list[str] = []
         path3_hop0_entities: list[dict[str, str]] = []
         seen_entities: set[tuple[str, str]] = set()
+        entities_of_memory: dict[str, list[dict[str, str]]] = {}
+        neighbours_of_entity: dict[tuple[str, str], list[dict[str, str]]] = {}
+
+        def _entities_for_memory(mem_id: str) -> list[dict[str, str]]:
+            cached = entities_of_memory.get(mem_id)
+            if cached is None:
+                cached = entities_of_memory[mem_id] = self.graph.get_entities_for_memory(mem_id)
+            return cached
+
+        def _neighbours_of(etype: str, ename: str) -> list[dict[str, str]]:
+            cached = neighbours_of_entity.get((etype, ename))
+            if cached is None:
+                cached = neighbours_of_entity[(etype, ename)] = self.graph.get_related_entities(etype, ename)
+            return cached
 
         day_ids: set[str] = set()  # memories from matched Day entities
         referent_ids: set[str] = set()  # memories from LLM-resolved referents
@@ -1182,7 +1196,7 @@ class MemoryEngine:
                 # Skip Day-typed neighbours: they fan out to a whole day's
                 # memories and flood day_ids with unrelated results.
                 try:
-                    related = self.graph.get_related_entities(entity_type, entity_name)
+                    related = _neighbours_of(entity_type, entity_name)
                     for rel in related:
                         if rel["type"] == "Day":
                             continue
@@ -1210,7 +1224,7 @@ class MemoryEngine:
                     path3_hop0_entities.append({"token": phrase, "name": entity_name, "type": entity_type})
                     _add_memories_for_entity(entity_type, entity_name, hop=0, sub_path=path3_ids)
                     try:
-                        related = self.graph.get_related_entities(entity_type, entity_name)
+                        related = _neighbours_of(entity_type, entity_name)
                         for rel in related:
                             if rel["type"] == "Day":
                                 continue
@@ -1249,7 +1263,7 @@ class MemoryEngine:
         graph_pivot_snapshot = sorted(graph_ids)[:PATH3B_MAX_SEEDS]
         for mem_id in graph_pivot_snapshot:
             try:
-                pivot_entities = self.graph.get_entities_for_memory(mem_id)
+                pivot_entities = _entities_for_memory(mem_id)
             except Exception as e:
                 log.debug(
                     "graph pivot entity lookup failed",
@@ -1263,7 +1277,7 @@ class MemoryEngine:
                     continue  # Day entities fan out too broadly
                 _add_memories_for_entity(etype, ename, hop=1, sub_path=path3b_ids)
                 try:
-                    related = self.graph.get_related_entities(etype, ename)
+                    related = _neighbours_of(etype, ename)
                     for rel in related:
                         if rel["type"] == "Day":
                             continue
@@ -1285,7 +1299,7 @@ class MemoryEngine:
         for idx, (etype, ename) in enumerate(referent_names, start=1):
             _add_memories_for_entity(etype, ename, hop=0, referent_rank_value=idx)
             try:
-                related = self.graph.get_related_entities(etype, ename)
+                related = _neighbours_of(etype, ename)
                 for rel in related:
                     _add_memories_for_entity(rel["type"], rel["name"], hop=1)
             except Exception as e:
@@ -1333,7 +1347,7 @@ class MemoryEngine:
         graph_seeds = [m for m in candidates if m in graph_ids]
         bridge_source_ids = (non_graph_seeds + graph_seeds)[:PATH4_MAX_SEEDS]
         for mem_id in bridge_source_ids:
-            entities = self.graph.get_entities_for_memory(mem_id)
+            entities = _entities_for_memory(mem_id)
             for entity in entities:
                 ename = entity["name"]
                 etype = entity["type"]
@@ -1342,7 +1356,7 @@ class MemoryEngine:
                 _add_memories_for_entity(etype, ename, hop=1, sub_path=path4_ids)
                 # Follow entity↔entity edges from bridge entities
                 try:
-                    related = self.graph.get_related_entities(etype, ename)
+                    related = _neighbours_of(etype, ename)
                     for rel in related:
                         if rel["type"] == "Day":
                             continue
