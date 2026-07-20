@@ -69,14 +69,19 @@ def rerank(query: str, candidates: list[tuple[str, str]]) -> list[tuple[str, flo
         return []
 
     model = _ensure_model()
-    pairs = [(query, text) for _, text in candidates]
-    scores = model.predict(pairs)
+    # Score in length order. Each batch is padded to its longest member, so a
+    # single long memory among short ones costs the whole batch its own width —
+    # and a recall's candidates run from a line to several paragraphs. Grouping
+    # by length keeps the padding close to the text actually being scored. The
+    # scores are unchanged; only which rows share a batch is.
+    by_length = sorted(candidates, key=lambda c: len(c[1]))
+    scores = model.predict([(query, text) for _, text in by_length])
 
     import math
 
     def sigmoid(x: float) -> float:
         return 1.0 / (1.0 + math.exp(-x))
 
-    scored = [(cid, sigmoid(float(score))) for (cid, _), score in zip(candidates, scores)]
+    scored = [(cid, sigmoid(float(score))) for (cid, _), score in zip(by_length, scores)]
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored
