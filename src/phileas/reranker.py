@@ -9,6 +9,7 @@ import logging
 from sentence_transformers import CrossEncoder
 
 _MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_PREDICT_BATCH_SIZE = 8
 _model: CrossEncoder | None = None
 _load_failed = False
 
@@ -75,7 +76,7 @@ def rerank(query: str, candidates: list[tuple[str, str]]) -> list[tuple[str, flo
     # by length keeps the padding close to the text actually being scored. The
     # scores are unchanged; only which rows share a batch is.
     by_length = sorted(candidates, key=lambda c: len(c[1]))
-    scores = model.predict([(query, text) for _, text in by_length])
+    scores = model.predict([(query, text) for _, text in by_length], batch_size=_PREDICT_BATCH_SIZE)
 
     import math
 
