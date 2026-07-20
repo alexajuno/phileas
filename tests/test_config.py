@@ -672,6 +672,14 @@ class TestValidateConfigUpdate:
         with pytest.raises(ValueError, match="true or false"):
             validate_config_update("extraction", {"enabled": "banana"})
 
+    def test_auto_recall_mode_is_one_of_its_choices(self):
+        # A misspelled mode is a well-typed string, so only a choice check catches
+        # it. Left uncaught it writes cleanly and then falls back, and the user is
+        # told nothing while the mode they asked for never runs.
+        assert validate_config_update("auto_recall", {"mode": "plan"}) == {"mode": "plan"}
+        with pytest.raises(ValueError, match="off, nudge, plan"):
+            validate_config_update("auto_recall", {"mode": "planning"})
+
     def test_optional_string_clears_on_empty(self):
         assert validate_config_update("sync", {"push_command": "  "}) == {"push_command": None}
         assert validate_config_update("sync", {"push_command": None}) == {"push_command": None}

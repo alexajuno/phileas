@@ -904,22 +904,21 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             _extraction_worker.notify(result["source_id"])
         return {"queued": True, **result}
     elif method == "auto_recall":
-        # The UserPromptSubmit hook's entry point: plan this turn's lookups from
-        # the prompt and the tail of the session, run them, and hand back the
-        # block to inject. Returns {"block": ""} for every non-answer — feature
-        # off, no client, planner declined, queries found nothing — so the hook
-        # has one thing to check and stays silent on all of them.
+        # The UserPromptSubmit hook's entry point: work out what precedes this
+        # turn and hand back the block to inject. Returns {"block": ""} for every
+        # non-answer — mode off, planner declined, queries found nothing — so the
+        # hook has one thing to check and stays silent on all of them.
         from phileas import auto_recall as auto_recall_mod
         from phileas import sessions
 
-        if not engine.config.auto_recall.enabled or _planning_client is None:
-            return {"block": ""}
+        mode = engine.config.auto_recall.mode
         session_id = params.get("session_id")
-        # A missing or unreadable transcript is the first prompt of a session,
-        # which is exactly when memory matters most: plan from the prompt alone
-        # rather than declining.
+        # Only a planner reads the exchange, and reading it costs a transcript
+        # parse on every prompt. A missing or unreadable one is the first prompt of
+        # a session, which is exactly when memory matters most: plan from the
+        # prompt alone rather than declining.
         turns: list[dict] = []
-        if session_id:
+        if mode == "plan" and session_id:
             payload = sessions.load_transcript_payload(session_id)
             if payload:
                 turns = payload.get("turns", [])
@@ -927,6 +926,7 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
             engine,
             _entities_for_engine(engine),
             _planning_client,
+            mode=mode,
             prompt=params.get("prompt") or "",
             turns=turns,
         )

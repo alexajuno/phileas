@@ -1,17 +1,27 @@
-"""Pre-turn recall: plan queries, run them, return one block of prior context.
+"""Pre-turn recall: what the capture hook puts in front of the host model's turn.
 
-The capture hook fires on every prompt, so this runs on every prompt. What it
-produces is injected into the turn the host model is about to run, which sets
-the two constraints everything here answers to.
+The hook fires on every prompt, so this runs on every prompt, and what it returns
+is injected into the turn about to run. Two things can fill that slot, and
+``[auto_recall] mode`` picks between them.
 
-It must stay small. A block that is usually noise teaches its reader to skip it,
-and a reader that skips it is worse than no block at all, so the planner is free
-to return nothing and the output is capped well below what recall would return
-to a model that asked for it on purpose.
+The cheap one is a nudge: a fixed string asking the model to weigh whether the
+prompt reaches back to anything and to recall for itself if it does. It costs
+nothing and it under-recalls, because the model has to notice an absence to act
+on it.
 
-It must stay quiet. Every failure path returns the empty string: no planner, no
-key, a model that returns nothing usable, a query that scores nothing. A turn
-with no memories reads exactly like a turn before any of this existed.
+The dear one is a plan: a model reads the exchange, names the lookups the prompt
+calls for, and this runs them and injects what they found. It recalls what the
+nudge misses and bills a model call in front of every turn.
+
+Both answer to the same two constraints. They must stay small: a block that is
+usually noise teaches its reader to skip it, and a reader that skips it is worse
+than no block at all, so the planner is free to return nothing and its output is
+capped well below what recall would return to a model that asked on purpose.
+
+And they must stay quiet. A planner that cannot run falls back to the nudge, so a
+lapsed key costs recall quality rather than recall; everything past that returns
+the empty string, and a turn with no memories reads exactly like a turn before any
+of this existed.
 
 Retrieval here is read-only. ``engine.recall`` normally records the retrieval,
 growing a memory's storage strength on the Bjork two-strength model in
@@ -42,10 +52,10 @@ log = logging.getLogger("phileas.auto_recall")
 # Whether a planning failure has already been reported at warning level. Planning
 # runs on every prompt, so a persistent fault (a revoked key, a provider that
 # stopped answering) would either fill the log with one line per prompt or, logged
-# only at debug, stay invisible while the feature quietly does nothing. Neither is
-# survivable: a memory layer that silently stops recalling looks exactly like one
-# whose store is empty. So the first failure is loud, the rest are quiet, and a
-# success re-arms it.
+# only at debug, stay invisible. Invisible is the worse one now that failure falls
+# back to the nudge: the session keeps working, so nothing looks wrong, and the
+# paid-for planning is simply never happening. So the first failure is loud, the
+# rest are quiet, and a success re-arms it.
 _warned = False
 
 # How much of the block the pointer list may fill. Recall's own default is 30;
@@ -66,6 +76,28 @@ CONTEXT_CHARS = 6000
 
 BLOCK_OPEN = "<phileas-memory>"
 BLOCK_CLOSE = "</phileas-memory>"
+
+# What ``nudge`` mode injects, and what ``plan`` falls back to when it cannot run.
+# The model picks its own query and tool here (recall / recall_recent / about /
+# find_entities / timeline — see the phileas skill's Recall section), so this
+# steers that choice without making it: nothing below runs a lookup.
+RECALL_HINT = (
+    "<phileas-recall-hint>\n"
+    "Before answering, weigh whether this prompt calls back to something "
+    "durable -- past work, a decision, a named person/project, a date -- "
+    "worth recalling first. If so, call recall yourself: don't default to "
+    "one fixed-size recall(query=<the prompt>) call. Pick your own focused "
+    "query per concept (not the prompt verbatim), phrased in English even "
+    "when this conversation is in another language -- stored memories are "
+    "in English, so a same-language query can miss them. Match the tool to "
+    "the question's shape -- recall, recall_recent, about/find_entities, "
+    "and timeline all exist for a reason; see the "
+    "phileas skill's Recall section for which one and how to size it. Fire "
+    "more than one in parallel and merge by id when the prompt holds more "
+    "than one concept. If nothing here calls for it, just answer -- don't "
+    "force a call, don't ask permission either way.\n"
+    "</phileas-recall-hint>"
+)
 
 _PREAMBLE = (
     "Relevant memories from past sessions with this user, retrieved before this turn. "
@@ -160,21 +192,28 @@ def render(sections: list[tuple[str, list[dict]]], entities_fn) -> str:
 def auto_recall(
     engine: MemoryEngine,
     entities_fn,
-    client: LLMClient,
+    client: LLMClient | None,
     *,
+    mode: str,
     prompt: str,
     turns: list[dict] | None = None,
 ) -> str:
-    """Plan and run this turn's recall; return the block to inject, or "".
+    """Return the block to inject before this turn: a plan's findings, the nudge, or "".
 
-    Best-effort throughout: a planner that cannot run, returns nothing usable, or
-    plans queries that retrieve nothing all produce the empty string, and the turn
-    proceeds as if this had never been called.
+    Planning that cannot run at all — no client, no key, a provider that stopped
+    answering — degrades to the nudge, which needs neither. A planner that ran and
+    decided nothing was worth looking up returns "" instead: it already did the
+    job the nudge would have asked the model to do, and its answer was no.
+
+    Any mode it does not recognize nudges, since that is the mode that works
+    without anything configured.
     """
     global _warned
 
-    if not prompt.strip():
+    if mode == "off" or not prompt.strip():
         return ""
+    if mode != "plan" or client is None:
+        return RECALL_HINT
 
     try:
         queries = plan_queries(client, build_conversation(prompt, turns or []))
@@ -182,12 +221,12 @@ def auto_recall(
         if not _warned:
             _warned = True
             log.warning(
-                "recall planning failed; prompts will get no memories until this is fixed",
+                "recall planning failed; prompts fall back to the recall nudge until this is fixed",
                 extra={"op": "auto_recall", "data": {"error": str(e)[:300]}},
             )
         else:
             log.debug("recall planning failed", extra={"op": "auto_recall", "data": {"error": str(e)}})
-        return ""
+        return RECALL_HINT
 
     _warned = False
     if not queries:

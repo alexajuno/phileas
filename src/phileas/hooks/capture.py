@@ -1,17 +1,17 @@
 """The Claude Code capture hooks: pre-turn recall and end-of-session ingest.
 
-Two hooks, one job each. UserPromptSubmit asks the daemon what this prompt calls
-back to and injects the answer as context for the turn. SessionEnd hands the
-whole finished session to the daemon, which normalizes the transcript into one
-source and queues it for the extraction worker to distill. Nothing is captured
-per turn: the transcript on disk is the record, and a session becomes a
-memory-bearing source once it is done (here, or via the daemon's idle sweep for a
-session that never ended cleanly).
+Two hooks, one job each. UserPromptSubmit asks the daemon what should precede
+this turn and injects the answer as context for it. SessionEnd hands the whole
+finished session to the daemon, which normalizes the transcript into one source
+and queues it for the extraction worker to distill. Nothing is captured per turn:
+the transcript on disk is the record, and a session becomes a memory-bearing
+source once it is done (here, or via the daemon's idle sweep for a session that
+never ended cleanly).
 
-Recall is planned daemon-side rather than decided by the host model, because the
-model cannot reliably notice that a memory it does not have might exist — the not
-knowing is the condition memory exists to fix. The hook holds none of that logic:
-it forwards the prompt and the session id, and prints whatever comes back.
+What comes back is a nudge asking the host model to recall for itself, or the
+results of a lookup the daemon planned and ran, or nothing, depending on
+``[auto_recall] mode``. The hook holds none of that: it forwards the prompt and
+the session id, and prints whatever it is handed.
 
 Every handler is best-effort. If the daemon is unreachable it stays silent and
 returns 0; capture never blocks or breaks the session. The handlers take an
@@ -54,12 +54,12 @@ def _client_key(session_id: str) -> str:
 
 
 def handle_user_prompt_submit(payload: dict) -> int:
-    """Inject the memories this prompt calls back to, if any.
+    """Inject whatever the daemon says should precede this turn, if anything.
 
-    The daemon plans the lookups and runs them; this prints what it returns.
-    Anything short of a usable block — daemon down, feature off, nothing
-    relevant — prints nothing, so a turn with no memories looks like a turn
-    before any of this existed.
+    The daemon decides between nudging the host model and planning the lookups
+    itself; this prints what it returns. Anything short of a usable block — daemon
+    down, mode off, nothing relevant — prints nothing, so a turn with no memories
+    looks like a turn before any of this existed.
     """
     if _is_self_call():
         return 0

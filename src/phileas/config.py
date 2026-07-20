@@ -95,18 +95,28 @@ class ExtractionConfig:
 
 @dataclass
 class AutoRecallConfig:
-    """Whether each turn is preceded by a planned lookup in the memory store.
+    """What the UserPromptSubmit hook puts in front of each turn.
 
-    On, the UserPromptSubmit hook asks the configured model which memories the
-    incoming prompt calls for, runs those queries, and injects what they return
-    as context for the turn. Off, the hook does nothing and recall happens only
-    when the host model calls a recall tool itself.
+    ``nudge``, the default, injects a fixed string asking the host model to weigh
+    whether the prompt reaches back to anything durable and to run its own recall
+    if it does. It costs nothing: no model call, no key, no latency past the
+    hook's own startup. It also under-recalls, for a structural reason rather than
+    a fixable one: noticing that a memory you do not have might exist is precisely
+    what a model cannot do, and precisely what memory exists to fix.
 
-    Off is the setting for a box that wants the store written but not read on its
-    behalf.
+    ``plan`` closes that gap by asking ``provider``/``model`` which lookups the
+    prompt calls for, running them, and injecting what they return. It finds what
+    the nudge misses, and it bills a model call on every prompt and spends that
+    call's latency before the user's turn begins. Worth it where recall matters
+    more than either; the default is the cheap one because most prompts reach back
+    to nothing.
 
-    ``provider``/``model`` override ``[llm]`` for this call alone, and default to
-    inheriting it. The two calls want different things from a model: distilling a
+    ``off`` injects nothing, leaving recall to happen only when the host model
+    reaches for a recall tool unprompted. The setting for a box that wants the
+    store written but not read on its behalf.
+
+    ``provider``/``model`` bear on ``plan`` alone and default to inheriting
+    ``[llm]``. The two calls want different things from a model: distilling a
     session is a background job where quality is worth minutes, while planning a
     turn's lookups happens inside a hook the user is waiting on, where a slower
     answer is a worse one however good it is. The Claude Code CLI cannot serve the
@@ -116,9 +126,12 @@ class AutoRecallConfig:
     subscription.
     """
 
-    enabled: bool = True
+    mode: str = "nudge"
     provider: str | None = None
     model: str | None = None
+
+
+AUTO_RECALL_MODES: tuple[str, ...] = ("off", "nudge", "plan")
 
 
 # Providers that authenticate without a Phileas-held API key. ``claude_code``
@@ -670,13 +683,22 @@ def _coerce_config_value(label: str, default: Any, value: Any) -> Any:
     raise ValueError(f"{label} is not editable")
 
 
+# Fields that take one of a fixed set of words. Matching the field's type is not
+# enough for these: every candidate is a string, so a misspelled mode would be
+# written, then read back as something unrecognized, and silently take whichever
+# branch is the safe default. For ``auto_recall.mode`` that means the planner the
+# user just asked for quietly never runs.
+_CHOICES: dict[str, tuple[str, ...]] = {"auto_recall.mode": AUTO_RECALL_MODES}
+
+
 def validate_config_update(section: str, values: dict[str, Any]) -> dict[str, Any]:
     """Validate a settings-UI edit, returning cleaned values ready to write.
 
-    Rejects an unknown section, an unknown key within a section, and a value
-    whose type doesn't match the field. This is the guard that ``load_config``'s
-    silent drop-unknown-keys behavior lacks: a UI needs a clear error instead of
-    a write that vanishes. Raises ``ValueError`` on the first problem.
+    Rejects an unknown section, an unknown key within a section, a value whose
+    type doesn't match the field, and a value outside the field's fixed set of
+    choices. This is the guard that ``load_config``'s silent drop-unknown-keys
+    behavior lacks: a UI needs a clear error instead of a write that vanishes.
+    Raises ``ValueError`` on the first problem.
     """
     if section not in _EDITABLE_SECTIONS:
         allowed = ", ".join(sorted(_EDITABLE_SECTIONS))
@@ -688,6 +710,9 @@ def validate_config_update(section: str, values: dict[str, Any]) -> dict[str, An
         if key not in known:
             raise ValueError(f"unknown key {section}.{key}")
         clean = _coerce_config_value(f"{section}.{key}", getattr(defaults, key), value)
+        choices = _CHOICES.get(f"{section}.{key}")
+        if choices and clean not in choices:
+            raise ValueError(f"{section}.{key} must be one of {', '.join(choices)}")
         cleaned[key] = clean
     return cleaned
 

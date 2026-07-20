@@ -1,10 +1,10 @@
-"""Pre-turn recall: planning, gathering, and the block that gets injected.
+"""Pre-turn recall: mode selection, planning, gathering, and the injected block.
 
 The engine is faked here. What matters at this layer is not what retrieval
-returns but what happens around it: that nothing is injected when there is
-nothing to inject, that the budget holds, that a memory two queries both find is
-shown once, and that a broken planner or a broken query is silent rather than
-fatal. Retrieval quality is the engine's own tests.
+returns but what happens around it: that each mode injects what it promises, that
+nothing is injected when there is nothing to inject, that the budget holds, that a
+memory two queries both find is shown once, and that a broken planner or a broken
+query degrades rather than breaks. Retrieval quality is the engine's own tests.
 """
 
 from __future__ import annotations
@@ -143,27 +143,58 @@ def test_the_block_is_delimited_and_carries_its_pointers():
     assert 'recall: "tennis"' in block
 
 
+# -- modes ----------------------------------------------------------------
+
+
+def test_nudge_mode_never_calls_the_planner():
+    # The point of the default mode: no model call, so no bill and no wait.
+    client = FakeClient(error=AssertionError("planner should not have been called"))
+    block = auto_recall.auto_recall(FakeEngine(), _no_entities, client, mode="nudge", prompt="what did we decide?")
+    assert block == auto_recall.RECALL_HINT
+
+
+def test_off_mode_injects_nothing():
+    client = FakeClient(error=AssertionError("planner should not have been called"))
+    assert auto_recall.auto_recall(FakeEngine(), _no_entities, client, mode="off", prompt="hi") == ""
+
+
+def test_an_unknown_mode_nudges():
+    # Nudging is the mode that works with nothing configured, so a typo lands
+    # there rather than on the mode that needs a key and bills per prompt.
+    block = auto_recall.auto_recall(FakeEngine(), _no_entities, None, mode="planning", prompt="hi")
+    assert block == auto_recall.RECALL_HINT
+
+
+def test_planning_without_a_configured_client_nudges():
+    assert auto_recall.auto_recall(FakeEngine(), _no_entities, None, mode="plan", prompt="hi") == (
+        auto_recall.RECALL_HINT
+    )
+
+
 # -- end to end -----------------------------------------------------------
 
 
 def test_an_empty_plan_injects_nothing():
-    # The planner declining is an ordinary answer, not a failure. No plan, no
-    # block, no retrieval attempted.
+    # The planner declining is an ordinary answer, not a failure — and not a
+    # reason to nudge, since it already answered the question the nudge asks.
     engine = FakeEngine({"tennis": [_memory("m1")]})
-    block = auto_recall.auto_recall(engine, _no_entities, FakeClient(RecallPlan(queries=[])), prompt="hi")
+    block = auto_recall.auto_recall(engine, _no_entities, FakeClient(RecallPlan(queries=[])), mode="plan", prompt="hi")
     assert block == ""
     assert engine.calls == []
 
 
-def test_a_broken_planner_is_silent():
+def test_a_broken_planner_falls_back_to_the_nudge():
+    # A lapsed key should cost recall quality, not recall: the model can still be
+    # asked to look things up itself, and that costs nothing.
     engine = FakeEngine()
     client = FakeClient(error=RuntimeError("claude -p timed out"))
-    assert auto_recall.auto_recall(engine, _no_entities, client, prompt="what did we decide?") == ""
+    block = auto_recall.auto_recall(engine, _no_entities, client, mode="plan", prompt="what did we decide?")
+    assert block == auto_recall.RECALL_HINT
 
 
 def test_an_empty_prompt_never_reaches_the_planner():
     client = FakeClient(error=AssertionError("planner should not have been called"))
-    assert auto_recall.auto_recall(FakeEngine(), _no_entities, client, prompt="   ") == ""
+    assert auto_recall.auto_recall(FakeEngine(), _no_entities, client, mode="plan", prompt="   ") == ""
 
 
 def test_the_planner_sees_the_exchange_not_just_the_prompt():
@@ -171,7 +202,7 @@ def test_the_planner_sees_the_exchange_not_just_the_prompt():
     # named several turns back.
     client = FakeClient(RecallPlan(queries=[]))
     turns = [{"role": "user", "text": "let's work on the recall flow"}, {"role": "assistant", "text": "sure"}]
-    auto_recall.auto_recall(FakeEngine(), _no_entities, client, prompt="why is it slow?", turns=turns)
+    auto_recall.auto_recall(FakeEngine(), _no_entities, client, mode="plan", prompt="why is it slow?", turns=turns)
     assert "recall flow" in client.seen
     assert "why is it slow?" in client.seen
 
@@ -179,7 +210,7 @@ def test_the_planner_sees_the_exchange_not_just_the_prompt():
 def test_the_exchange_is_bounded():
     client = FakeClient(RecallPlan(queries=[]))
     turns = [{"role": "user", "text": f"turn {i}"} for i in range(100)]
-    auto_recall.auto_recall(FakeEngine(), _no_entities, client, prompt="now what?", turns=turns)
+    auto_recall.auto_recall(FakeEngine(), _no_entities, client, mode="plan", prompt="now what?", turns=turns)
     assert "turn 99" in client.seen
     assert "turn 0" not in client.seen
 
@@ -189,12 +220,12 @@ def test_the_exchange_is_bounded():
 
 def test_a_persistent_planner_failure_is_reported_once(caplog, monkeypatch):
     # A revoked key fails on every prompt. Logged per-prompt it floods; logged only
-    # at debug it is invisible while the feature quietly stops working.
+    # at debug it is invisible, and the fallback to nudging makes it look fine.
     monkeypatch.setattr(auto_recall, "_warned", False)
     client = FakeClient(error=RuntimeError("401 API key is invalid"))
     with caplog.at_level("WARNING", logger="phileas.auto_recall"):
         for _ in range(3):
-            assert auto_recall.auto_recall(FakeEngine(), _no_entities, client, prompt="what did we decide?") == ""
+            auto_recall.auto_recall(FakeEngine(), _no_entities, client, mode="plan", prompt="what did we decide?")
     assert len(caplog.records) == 1
     # The cause has to reach the log line, or the warning says only "something broke".
     assert "401" in caplog.records[0].data["error"]
@@ -205,7 +236,7 @@ def test_a_recovered_planner_can_warn_again(caplog, monkeypatch):
     broken = FakeClient(error=RuntimeError("boom"))
     working = FakeClient(RecallPlan(queries=[]))
     with caplog.at_level("WARNING", logger="phileas.auto_recall"):
-        auto_recall.auto_recall(FakeEngine(), _no_entities, broken, prompt="q")
-        auto_recall.auto_recall(FakeEngine(), _no_entities, working, prompt="q")
-        auto_recall.auto_recall(FakeEngine(), _no_entities, broken, prompt="q")
+        auto_recall.auto_recall(FakeEngine(), _no_entities, broken, mode="plan", prompt="q")
+        auto_recall.auto_recall(FakeEngine(), _no_entities, working, mode="plan", prompt="q")
+        auto_recall.auto_recall(FakeEngine(), _no_entities, broken, mode="plan", prompt="q")
     assert len(caplog.records) == 2
