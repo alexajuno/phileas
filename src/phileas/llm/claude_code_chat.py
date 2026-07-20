@@ -89,8 +89,13 @@ class PhileasClaudeCodeChat(BaseChatModel):
         return "phileas-claude-code-cli"
 
     def _call_cli(self, user_prompt: str, system: str | None) -> tuple[str, dict]:
-        """Run one print-mode call; return the model's text and its usage block."""
-        cmd = [self.binary, "-p", user_prompt, "--model", self.model, *_BASE_FLAGS]
+        """Run one print-mode call; return the model's text and its usage block.
+
+        The prompt goes in on stdin rather than as an argv element: Linux caps a
+        single argument at 128 KB, and a whole-session payload clears that easily,
+        so passing it as an argument failed such sessions outright with E2BIG.
+        """
+        cmd = [self.binary, "-p", "--model", self.model, *_BASE_FLAGS]
         if system:
             cmd += ["--append-system-prompt", system]
 
@@ -105,6 +110,7 @@ class PhileasClaudeCodeChat(BaseChatModel):
         try:
             proc = subprocess.run(
                 cmd,
+                input=user_prompt,
                 capture_output=True,
                 text=True,
                 env=env,

@@ -101,6 +101,7 @@ class TestCallCli:
 
         def fake_run(cmd, **kwargs):
             captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input")
             captured["env"] = kwargs.get("env")
             return _FakeProc(stdout=_envelope("hi", input_tokens=1, output_tokens=2))
 
@@ -112,11 +113,30 @@ class TestCallCli:
         assert text == "hi"
         assert usage == {"input_tokens": 1, "output_tokens": 2}
         cmd = captured["cmd"]
-        assert cmd[:5] == ["claude", "-p", "prompt-body", "--model", "sonnet"]
+        assert cmd[:4] == ["claude", "-p", "--model", "sonnet"]
         assert "--strict-mcp-config" in cmd
         assert "--append-system-prompt" in cmd
+        # The prompt rides stdin, so a session larger than the 128 KB argv cap still runs.
+        assert captured["input"] == "prompt-body"
+        assert "prompt-body" not in cmd
         # The subscription is forced: a generic key must not reach the child.
         assert "ANTHROPIC_API_KEY" not in captured["env"]
+
+    def test_oversized_prompt_is_not_passed_as_an_argument(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["input"] = kwargs.get("input")
+            return _FakeProc(stdout=_envelope("ok"))
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        huge = "x" * 200_000  # over MAX_ARG_STRLEN (128 KB), the old E2BIG failure
+        PhileasClaudeCodeChat()._call_cli(huge, None)
+
+        assert captured["input"] == huge
+        assert all(len(arg) < 4096 for arg in captured["cmd"])
 
     def test_nonzero_exit_raises(self, monkeypatch):
         monkeypatch.setattr(subprocess, "run", lambda cmd, **k: _FakeProc(stderr="boom", returncode=1))
@@ -156,7 +176,7 @@ class TestStructuredOutput:
         seen: dict = {}
 
         def fake_run(cmd, **kwargs):
-            seen["user"] = cmd[2]  # the -p argument
+            seen["user"] = kwargs.get("input")
             return _FakeProc(stdout=_envelope('{"value": "ok"}'))
 
         monkeypatch.setattr(subprocess, "run", fake_run)
