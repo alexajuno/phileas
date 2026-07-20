@@ -71,7 +71,11 @@ def handle_user_prompt_submit(payload: dict) -> int:
         {"prompt": prompt, "session_id": payload.get("session_id")},
         timeout=RECALL_TIMEOUT_SEC,
     )
-    block = (response or {}).get("block") if isinstance(response, dict) else None
+    # The daemon answers in the {"ok", "result"} envelope every method shares; an
+    # unreachable daemon answers None and a raising one answers ok=False.
+    if not isinstance(response, dict) or not response.get("ok"):
+        return 0
+    block = (response.get("result") or {}).get("block")
     if block:
         print(block)
     return 0

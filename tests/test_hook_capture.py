@@ -18,6 +18,12 @@ from phileas.hooks import capture
 _BLOCK = "<phileas-memory>\n  [abcd1234] [knowledge] plays tennis\n</phileas-memory>"
 
 
+# The daemon answers in the shared {"ok", "result"} envelope. Faking the inner
+# shape instead is how a hook that never printed anything passed its tests.
+def _envelope(block):
+    return {"ok": True, "result": {"block": block}}
+
+
 def _record_calls(monkeypatch, response=None):
     calls: list[tuple[str, dict]] = []
 
@@ -33,7 +39,7 @@ def _record_calls(monkeypatch, response=None):
 
 
 def test_user_prompt_injects_the_daemons_block(monkeypatch, capsys):
-    calls = _record_calls(monkeypatch, {"block": _BLOCK})
+    calls = _record_calls(monkeypatch, _envelope(_BLOCK))
     assert capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "I play tennis"}) == 0
     assert "[abcd1234]" in capsys.readouterr().out
     # The session id travels with the prompt: the planner reads the exchange, not
@@ -42,7 +48,7 @@ def test_user_prompt_injects_the_daemons_block(monkeypatch, capsys):
 
 
 def test_user_prompt_empty_is_noop(monkeypatch, capsys):
-    calls = _record_calls(monkeypatch, {"block": "x"})
+    calls = _record_calls(monkeypatch, _envelope("x"))
     assert capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "   "}) == 0
     assert capsys.readouterr().out == ""
     assert calls == []
@@ -51,7 +57,7 @@ def test_user_prompt_empty_is_noop(monkeypatch, capsys):
 def test_user_prompt_prints_nothing_when_nothing_was_recalled(monkeypatch, capsys):
     # The daemon's "no relevant memories" answer. A turn with none must read like
     # a turn before any of this existed, so an empty block prints nothing at all.
-    _record_calls(monkeypatch, {"block": ""})
+    _record_calls(monkeypatch, _envelope(""))
     assert capture.handle_user_prompt_submit({"session_id": "s1", "prompt": "hi"}) == 0
     assert capsys.readouterr().out == ""
 
@@ -94,7 +100,7 @@ def test_session_end_stands_down_inside_own_call(monkeypatch):
 def test_user_prompt_stands_down_inside_own_call(monkeypatch, capsys):
     # Same mark, and the stakes are higher here: a planning call whose own hook
     # planned another recall would recurse once per prompt.
-    calls = _record_calls(monkeypatch, {"block": "x"})
+    calls = _record_calls(monkeypatch, _envelope("x"))
     monkeypatch.setenv("PHILEAS_EXTRACTION", "1")
     assert capture.handle_user_prompt_submit({"prompt": "distill this"}) == 0
     assert capsys.readouterr().out == ""
@@ -120,7 +126,7 @@ def test_assistant_text_ignores_non_assistant():
 
 
 def test_cli_user_prompt_reads_payload_from_stdin(monkeypatch):
-    calls = _record_calls(monkeypatch, {"block": _BLOCK})
+    calls = _record_calls(monkeypatch, _envelope(_BLOCK))
     result = CliRunner().invoke(hook_group, ["user-prompt"], input=json.dumps({"session_id": "s1", "prompt": "hello"}))
     assert result.exit_code == 0
     assert "[abcd1234]" in result.output
@@ -137,3 +143,11 @@ def test_cli_session_end_reads_payload_from_stdin(monkeypatch):
 def test_cli_bad_json_exits_zero():
     result = CliRunner().invoke(hook_group, ["session-end"], input="not json at all")
     assert result.exit_code == 0
+
+
+def test_user_prompt_ignores_a_daemon_error_envelope(monkeypatch, capsys):
+    # ok=False carries an "error" key and no result; reading through it blindly
+    # would raise inside a hook that must never break the session.
+    monkeypatch.setattr(capture, "call", lambda m, p, **kw: {"ok": False, "error": "engine raised"})
+    assert capture.handle_user_prompt_submit({"prompt": "hi"}) == 0
+    assert capsys.readouterr().out == ""
