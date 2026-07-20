@@ -33,10 +33,23 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
 
-# Print-mode call that pins the model, returns the JSON result envelope, and loads
-# no MCP servers. Kept identical to the validated spike so behavior matches what
-# was measured.
-_BASE_FLAGS = ("--output-format", "json", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}')
+# Print-mode call that pins the model and returns the JSON result envelope. Two
+# isolations are load-bearing. --strict-mcp-config with an empty config loads no
+# MCP servers. --setting-sources project loads only project/local settings, never
+# the user's global ~/.claude/settings.json -- that global config holds the
+# SessionEnd capture hook, and without this exclusion the daemon's own headless
+# call would end, fire that hook, and re-ingest itself as a fresh source, looping
+# the worker against its own extraction prompt. The env marker in _call_cli is the
+# backstop for any hook that still slips through from a project-level settings file.
+_BASE_FLAGS = (
+    "--output-format",
+    "json",
+    "--strict-mcp-config",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--setting-sources",
+    "project",
+)
 
 
 class ClaudeCodeError(RuntimeError):
@@ -84,6 +97,10 @@ class PhileasClaudeCodeChat(BaseChatModel):
         # Force the subscription: a generic ANTHROPIC_API_KEY on the box would
         # otherwise take precedence and bill the paid API instead.
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        # Mark this as Phileas's own extraction subprocess. A capture hook that
+        # still fires in a descendant inherits the mark and no-ops, so the daemon
+        # never re-ingests its own extraction call (see _BASE_FLAGS).
+        env["PHILEAS_EXTRACTION"] = "1"
 
         try:
             proc = subprocess.run(

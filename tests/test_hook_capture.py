@@ -66,6 +66,21 @@ def test_session_end_daemon_down_is_noop(monkeypatch):
     assert capture.handle_session_end({"session_id": "s1"}) == 0
 
 
+def test_session_end_stands_down_inside_own_extraction(monkeypatch):
+    # The extraction worker marks its `claude -p` subprocess with PHILEAS_EXTRACTION;
+    # a hook firing there must not ingest, or the worker loops on its own output.
+    calls = _record_calls(monkeypatch)
+    monkeypatch.setenv("PHILEAS_EXTRACTION", "1")
+    assert capture.handle_session_end({"session_id": "s1"}) == 0
+    assert calls == []
+
+
+def test_user_prompt_stands_down_inside_own_extraction(monkeypatch, capsys):
+    monkeypatch.setenv("PHILEAS_EXTRACTION", "1")
+    assert capture.handle_user_prompt_submit({"prompt": "distill this"}) == 0
+    assert capsys.readouterr().out == ""
+
+
 # -- transcript helper shared with the inspector --------------------------
 
 

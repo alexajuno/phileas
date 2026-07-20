@@ -19,9 +19,25 @@ stay pure and testable; the CLI layer does the stdin read and the exit.
 
 from __future__ import annotations
 
+import os
+
 from phileas.daemon_client import call
 
 CLIENT_PREFIX = "claude_code:"
+
+
+def _is_self_extraction() -> bool:
+    """True when this hook is firing inside Phileas's own `claude -p` extraction call.
+
+    The extraction worker marks its headless subprocess with PHILEAS_EXTRACTION, and
+    the mark is inherited by any hook the harness spawns. Ingesting such a call would
+    store the extraction prompt itself as a new source and loop the worker against its
+    own output, so capture stands down when it sees the mark. The primary guard is
+    upstream (extraction runs with --setting-sources project, which never loads these
+    user hooks); this is the backstop for a hook reintroduced by a project settings file.
+    """
+    return os.environ.get("PHILEAS_EXTRACTION") == "1"
+
 
 # Recall hint (UserPromptSubmit) ----------------------------------------------
 # Static: the model picks its own query and tool (recall / recall_recent /
@@ -55,6 +71,8 @@ def _client_key(session_id: str) -> str:
 
 def handle_user_prompt_submit(payload: dict) -> int:
     """Nudge the model to recall relevant memories before answering."""
+    if _is_self_extraction():
+        return 0
     if not (payload.get("prompt") or "").strip():
         return 0
     print(_RECALL_HINT)
@@ -69,6 +87,8 @@ def handle_session_end(payload: dict) -> int:
     marks it ready so the extraction worker distills it whole. Best-effort: an
     unreachable daemon just leaves the session for the idle sweep to pick up.
     """
+    if _is_self_extraction():
+        return 0
     session_id = payload.get("session_id")
     if not session_id:
         return 0

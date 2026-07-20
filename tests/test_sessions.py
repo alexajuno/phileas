@@ -134,3 +134,43 @@ def test_parse_transcript_separates_turns_and_classifies_other_tools():
     assert turns[0].other_tools == ["hydrate"]  # not a recall, not a store
     assert turns[0].recalls == [] and turns[0].stores == []
     assert turns[1].reply == "second answer"
+
+
+def test_slash_command_message_opens_a_turn():
+    # A `/phileas <message>` invocation carries the human's real message inside
+    # <command-args>; it must open a turn on that message, not be dropped as noise.
+    cmd = (
+        "<command-message>phileas</command-message>\n"
+        "<command-name>/phileas</command-name>\n"
+        "<command-args>I shipped a thing and I'm worried it's useless</command-args>"
+    )
+    turns = core.parse_transcript([_user(cmd), _assistant_text("Let me pull up context.")])
+    assert len(turns) == 1
+    assert turns[0].prompt == "I shipped a thing and I'm worried it's useless"
+    assert turns[0].reply == "Let me pull up context."
+
+
+def test_bare_slash_command_stays_noise():
+    # A bare command with no real args carries no human message, so it opens no turn.
+    entries = [_user("<command-name>/compact</command-name>\n<command-args></command-args>")]
+    assert core.parse_transcript(entries) == []
+
+
+def test_self_extraction_transcript_yields_no_turns():
+    # Phileas's own `claude -p` distillation runs are Claude Code sessions whose
+    # transcripts land on disk. Every ingest path funnels through here, so a payload
+    # with no turns is how the worker refuses to distill (and loop on) its own output.
+    from phileas.llm.extraction import EXTRACTION_PROMPT_HEAD
+
+    entries = [
+        _user(EXTRACTION_PROMPT_HEAD + "\n\nTranscript:\n---\nuser: hi\n---"),
+        _assistant_text('{"memories": []}'),
+    ]
+    payload = core.transcript_to_payload("distill-1", entries)
+    assert payload["turns"] == []
+
+
+def test_ordinary_transcript_still_yields_turns():
+    entries = [_user("a real question about refactoring the parser"), _assistant_text("on it")]
+    payload = core.transcript_to_payload("real-1", entries)
+    assert [t["role"] for t in payload["turns"]] == ["user", "assistant"]

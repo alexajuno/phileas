@@ -27,6 +27,12 @@ if TYPE_CHECKING:
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extraction.txt"
 
+# The prompt's opening line. The ingest path uses it to recognize Phileas's own
+# `claude -p` distillation transcripts (themselves Claude Code sessions on disk)
+# and refuse to ingest them -- otherwise the worker distills its own extraction
+# call and loops. Read from the file the prompt itself uses, so the two can't drift.
+EXTRACTION_PROMPT_HEAD = _PROMPT_PATH.read_text(encoding="utf-8").splitlines()[0].strip()
+
 # Entity/relationship type vocabularies live in the prompt (the descriptions
 # below), not as enums here: the type's job is a collision-resistant bucket, and
 # an over-strict enum would drop a memory when the model reaches for a near-miss

@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 from phileas.hooks.capture import CLIENT_PREFIX, _assistant_text
+from phileas.llm.extraction import EXTRACTION_PROMPT_HEAD
 
 # Phileas MCP tools, grouped by what the inspector shows them as. Names are the
 # bare tool name (the segment after the last ``__`` in ``mcp__<server>__<name>``).
@@ -38,11 +39,13 @@ RETRIEVE_TOOLS = frozenset(
 )
 STORE_TOOLS = frozenset({"memorize", "update", "forget"})
 
-# Transcript user entries that look like prompts but were never typed by the
-# human — the recall/memorize task-notifications, slash commands, local-command
-# IO, the interrupt marker, and the compact-continuation summary. They do not
-# open a new turn; anything they trigger (e.g. a memorize after the memorize
-# nudge) stays attached to the genuine turn it belongs to.
+# Transcript user entries that look like prompts but were never typed by the human:
+# recall/memorize task-notifications, local-command IO, the interrupt marker, and the
+# compact-continuation summary. They don't open a turn; anything they trigger (e.g. a
+# memorize after the memorize nudge) stays attached to the genuine turn it belongs to.
+# A slash command is the exception: a bare one (like `/compact`) is noise, but one that
+# carries a real message (`/phileas <message>`) opens a turn on that message, unwrapped
+# from <command-args> in parse_transcript before this check runs.
 _NOISE_MARKERS = (
     "<task-notification>",
     "<command-name>",
@@ -217,6 +220,26 @@ def _prompt_text(entry: dict) -> str:
     return ""
 
 
+_COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+
+
+def _unwrap_command_args(text: str) -> str:
+    """The real message inside a user slash-command entry, else the text unchanged.
+
+    Claude Code wraps a slash-command invocation as
+    ``<command-name>/phileas</command-name><command-args>the human's message</command-args>``.
+    The wrapper tags are noise, but the args are what the human actually typed, so a
+    deliberate ``/phileas`` conversation opens a turn on that message instead of being
+    dropped. A bare command (empty args, like ``/compact``) returns unchanged and is
+    filtered as noise downstream.
+    """
+    if "<command-name>" in text and (m := _COMMAND_ARGS_RE.search(text)):
+        args = m.group(1).strip()
+        if args:
+            return args
+    return text
+
+
 def _tool_results(entry: dict) -> dict[str, str]:
     """Map ``tool_use_id`` → result text for a user entry carrying tool_result
     blocks. The result content is either a string or a list of text blocks."""
@@ -312,7 +335,7 @@ def parse_transcript(entries: list[dict]) -> list[Turn]:
                         base, tool_input = pending.pop(tuid)
                         attach(base, tool_input, result)
                 continue
-            text = _prompt_text(e)
+            text = _unwrap_command_args(_prompt_text(e))
             if not text or _is_noise_prompt(e, text):
                 continue
             cur = Turn(index=len(turns) + 1, timestamp=e.get("timestamp", ""), prompt=text)
@@ -336,6 +359,19 @@ def parse_transcript(entries: list[dict]) -> list[Turn]:
 # --- transcript → unified ingestion payload -----------------------------------
 
 
+def _is_self_extraction(parsed: list) -> bool:
+    """True when this transcript is Phileas's own ``claude -p`` distillation call.
+
+    A distillation run is a Claude Code session like any other, so its transcript
+    lands under ``~/.claude/projects`` and every ingest path (idle sweep, SessionEnd
+    hook, manual ``ingest``) would otherwise pick it up — storing the extraction
+    prompt as a source and looping the worker against its own output. The first user
+    turn of such a call is the extraction prompt itself, so its opening line is the
+    tell.
+    """
+    return bool(parsed) and (parsed[0].prompt or "").strip().startswith(EXTRACTION_PROMPT_HEAD)
+
+
 def transcript_to_payload(session_id: str, entries: list[dict]) -> dict:
     """Normalize a Claude Code transcript into the unified ingestion payload.
 
@@ -345,14 +381,18 @@ def transcript_to_payload(session_id: str, entries: list[dict]) -> dict:
     human prompt) and an ``assistant`` turn (the reply), with transcript noise
     already dropped by ``parse_transcript``. ``client_key`` keys the source to
     this session, so a resume updates the same source.
+
+    A self-extraction transcript yields no turns, so the caller's empty-turns skip
+    keeps the worker from ingesting its own distillation runs (see ``_is_self_extraction``).
     """
     parsed = parse_transcript(entries)
     turns: list[dict] = []
-    for t in parsed:
-        if t.prompt:
-            turns.append({"i": len(turns), "role": "user", "text": t.prompt, "ts": t.timestamp})
-        if t.reply:
-            turns.append({"i": len(turns), "role": "assistant", "text": t.reply, "ts": t.timestamp})
+    if not _is_self_extraction(parsed):
+        for t in parsed:
+            if t.prompt:
+                turns.append({"i": len(turns), "role": "user", "text": t.prompt, "ts": t.timestamp})
+            if t.reply:
+                turns.append({"i": len(turns), "role": "assistant", "text": t.reply, "ts": t.timestamp})
     return {
         "client_key": f"{CLIENT_PREFIX}{session_id}",
         "kind": "claude_code_session",
