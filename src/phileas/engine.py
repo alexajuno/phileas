@@ -908,12 +908,22 @@ class MemoryEngine:
         top_k: int | None = None,
         memory_type: str | None = None,
         context: str | None = None,
+        *,
+        reinforce: bool = True,
     ) -> list[dict]:
         """Three-stage retrieval: gather → rerank → MMR select.
 
         Stage 1: Bucketed vector search + keyword + graph (gather candidates)
         Stage 2: Cross-encoder reranking (semantic relevance)
         Stage 3: MMR diversity selection + final scoring
+
+        ``reinforce`` records the retrieval, growing each surfaced memory's
+        storage strength. A caller that did not ask for these memories on the
+        user's behalf — the pre-turn sweep in ``auto_recall``, or a benchmark
+        replaying queries — passes False: the two-strength model reads a recall
+        as evidence the memory was wanted, and an automatic query is no such
+        evidence. Left True, an unattended sweep would strengthen whatever
+        already ranks well on every prompt until the score stops discriminating.
 
         ``context`` is an optional active-context name. When given, it
         is resolved to a Context entity, expanded over the PART_OF hierarchy
@@ -1806,13 +1816,14 @@ class MemoryEngine:
         # captured retrieval_before, relevance-gated), count the access, and
         # refresh accessibility. Sum the per-item gains for monitoring.
         storage_delta_sum = 0.0
-        for r in results:
-            mem_id = r["id"]
-            storage_delta_sum += self.db.record_retrieval(
-                mem_id,
-                retrieval_before.get(mem_id, 1.0),
-                relevance_by_id.get(mem_id, 0.0),
-            )
+        if reinforce:
+            for r in results:
+                mem_id = r["id"]
+                storage_delta_sum += self.db.record_retrieval(
+                    mem_id,
+                    retrieval_before.get(mem_id, 1.0),
+                    relevance_by_id.get(mem_id, 0.0),
+                )
         _mark("record_retrieval")
 
         op_extra(results=len(results))

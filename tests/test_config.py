@@ -556,7 +556,7 @@ class TestConfigSnapshot:
         self._use_anthropic()
         cfg = load_config()
         snap = config_snapshot(cfg)
-        assert set(snap["sections"]) == {"extraction", "sync", "llm"}
+        assert set(snap["sections"]) == {"extraction", "auto_recall", "sync", "llm"}
         assert snap["config_path"] == str(cfg.config_path)
         assert snap["sections"]["extraction"]["enabled"] == cfg.extraction.enabled
         assert snap["sections"]["llm"]["model"] == cfg.llm.model

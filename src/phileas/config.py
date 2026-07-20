@@ -93,6 +93,23 @@ class ExtractionConfig:
     enabled: bool = True
 
 
+@dataclass
+class AutoRecallConfig:
+    """Whether each turn is preceded by a planned lookup in the memory store.
+
+    On, the UserPromptSubmit hook asks the configured model which memories the
+    incoming prompt calls for, runs those queries, and injects what they return
+    as context for the turn. Off, the hook does nothing and recall happens only
+    when the host model calls a recall tool itself.
+
+    This shares ``[llm]`` with extraction, so it costs a model call per prompt on
+    the same provider. Off is the setting for a box that wants the store written
+    but not read on its behalf.
+    """
+
+    enabled: bool = True
+
+
 # Providers that authenticate without a Phileas-held API key. ``claude_code``
 # rides the Claude Code CLI's own subscription auth; ``ollama`` runs locally. A
 # keyless provider is reachable without any credential, so extraction can run
@@ -192,6 +209,7 @@ class PhileasConfig:
     profile: str = DEFAULT_PROFILE
     sync: SyncConfig = field(default_factory=SyncConfig)
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    auto_recall: AutoRecallConfig = field(default_factory=AutoRecallConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property
@@ -246,15 +264,17 @@ def _apply_toml_section(dc_instance: object, toml_section: dict) -> None:
 def _apply_toml_data(cfg: PhileasConfig, data: dict) -> None:
     """Merge a parsed TOML dict onto a PhileasConfig in-place.
 
-    The ``[sync]``, ``[extraction]``, and ``[llm]`` sections are configurable;
-    every other section (including retired ones like ``[recall]``) is silently
-    ignored. A nested table inside a section (such as a stale ``[llm.operations]``)
-    is an unknown key on the dataclass and is dropped along with it.
+    The ``[sync]``, ``[extraction]``, ``[auto_recall]``, and ``[llm]`` sections are
+    configurable; every other section (including retired ones like ``[recall]``) is
+    silently ignored. A nested table inside a section (such as a stale
+    ``[llm.operations]``) is an unknown key on the dataclass and is dropped with it.
     """
     if "sync" in data:
         _apply_toml_section(cfg.sync, data["sync"])
     if "extraction" in data:
         _apply_toml_section(cfg.extraction, data["extraction"])
+    if "auto_recall" in data:
+        _apply_toml_section(cfg.auto_recall, data["auto_recall"])
     if "llm" in data:
         _apply_toml_section(cfg.llm, data["llm"])
 
@@ -504,6 +524,7 @@ def update_user_config(home: Path, section: str, values: dict[str, Any]) -> Path
 # nothing secret to read or write through this surface.
 _EDITABLE_SECTIONS: dict[str, type] = {
     "extraction": ExtractionConfig,
+    "auto_recall": AutoRecallConfig,
     "sync": SyncConfig,
     "llm": LLMConfig,
 }

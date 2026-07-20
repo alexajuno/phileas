@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 from phileas.hooks.capture import CLIENT_PREFIX, _assistant_text
-from phileas.llm.extraction import EXTRACTION_PROMPT_HEAD
+from phileas.llm import INNER_PROMPT_HEADS
 
 # Phileas MCP tools, grouped by what the inspector shows them as. Names are the
 # bare tool name (the segment after the last ``__`` in ``mcp__<server>__<name>``).
@@ -359,17 +359,24 @@ def parse_transcript(entries: list[dict]) -> list[Turn]:
 # --- transcript → unified ingestion payload -----------------------------------
 
 
-def _is_self_extraction(parsed: list) -> bool:
-    """True when this transcript is Phileas's own ``claude -p`` distillation call.
+def _is_self_call(parsed: list) -> bool:
+    """True when this transcript is one of Phileas's own ``claude -p`` calls.
 
-    A distillation run is a Claude Code session like any other, so its transcript
-    lands under ``~/.claude/projects`` and every ingest path (idle sweep, SessionEnd
-    hook, manual ``ingest``) would otherwise pick it up — storing the extraction
-    prompt as a source and looping the worker against its own output. The first user
-    turn of such a call is the extraction prompt itself, so its opening line is the
-    tell.
+    Distillation and recall planning are Claude Code sessions like any other, so
+    their transcripts land under ``~/.claude/projects`` and every ingest path
+    (idle sweep, SessionEnd hook, manual ``ingest``) would otherwise pick them up
+    — storing Phileas's own prompt as a source and looping the worker against its
+    own output. The first user turn of such a call is that prompt, so its opening
+    line is the tell.
+
+    Planning matters more here than distillation does, because it runs on every
+    prompt rather than once per session: an unrecognized planning transcript would
+    ingest at conversation rate.
     """
-    return bool(parsed) and (parsed[0].prompt or "").strip().startswith(EXTRACTION_PROMPT_HEAD)
+    if not parsed:
+        return False
+    first = (parsed[0].prompt or "").strip()
+    return any(first.startswith(head) for head in INNER_PROMPT_HEADS)
 
 
 def transcript_to_payload(session_id: str, entries: list[dict]) -> dict:
@@ -382,12 +389,12 @@ def transcript_to_payload(session_id: str, entries: list[dict]) -> dict:
     already dropped by ``parse_transcript``. ``client_key`` keys the source to
     this session, so a resume updates the same source.
 
-    A self-extraction transcript yields no turns, so the caller's empty-turns skip
-    keeps the worker from ingesting its own distillation runs (see ``_is_self_extraction``).
+    A transcript of one of Phileas's own calls yields no turns, so the caller's
+    empty-turns skip keeps the worker from ingesting them (see ``_is_self_call``).
     """
     parsed = parse_transcript(entries)
     turns: list[dict] = []
-    if not _is_self_extraction(parsed):
+    if not _is_self_call(parsed):
         for t in parsed:
             if t.prompt:
                 turns.append({"i": len(turns), "role": "user", "text": t.prompt, "ts": t.timestamp})

@@ -109,9 +109,18 @@ def _cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
 
 
 def build_chat_model(
-    config: LLMConfig, *, home: Path | None = None, max_tokens: int = DEFAULT_MAX_TOKENS
+    config: LLMConfig,
+    *,
+    home: Path | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    timeout_s: float | None = None,
 ) -> BaseChatModel:
     """Construct the LangChain chat model for the configured provider.
+
+    ``timeout_s`` overrides the adapter's own ceiling. Distilling a whole session
+    is allowed to take minutes; a call made inside a hook that blocks the user's
+    turn is not, and without a shorter ceiling there it would keep working long
+    after its caller stopped waiting for the answer.
 
     The key never lives in config: it is resolved at call time (environment first,
     then the profile's stored secrets file under ``home``; see
@@ -133,15 +142,16 @@ def build_chat_model(
 
         # Keyless: auth is the Claude Code CLI's own (subscription). No max_tokens
         # flag on the CLI, so the prompt bounds the output instead.
-        return PhileasClaudeCodeChat(model=config.model)
+        overrides = {"timeout_s": timeout_s} if timeout_s else {}
+        return PhileasClaudeCodeChat(model=config.model, **overrides)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model=config.model, max_tokens=max_tokens, api_key=api_key)
+        return ChatAnthropic(model=config.model, max_tokens=max_tokens, api_key=api_key, timeout=timeout_s)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model=config.model, max_tokens=max_tokens, api_key=api_key)
+        return ChatOpenAI(model=config.model, max_tokens=max_tokens, api_key=api_key, timeout=timeout_s)
     if provider == "ollama":
         from langchain_ollama import ChatOllama
 
@@ -164,13 +174,16 @@ class LLMClient:
         *,
         home: Path | None = None,
         model: BaseChatModel | None = None,
+        timeout_s: float | None = None,
     ) -> None:
         """``home`` locates the stored secrets file for key resolution; ``model`` is
-        injectable so tests run without an adapter or a network."""
+        injectable so tests run without an adapter or a network. ``timeout_s`` caps
+        how long one call may run, for a caller that cannot wait out the default."""
         self._config = config
         self._usage = usage_tracker
         self._home = home
         self._model = model
+        self._timeout_s = timeout_s
 
     @property
     def available(self) -> bool:
@@ -181,7 +194,7 @@ class LLMClient:
 
     def _chat_model(self) -> BaseChatModel:
         if self._model is None:
-            self._model = build_chat_model(self._config, home=self._home)
+            self._model = build_chat_model(self._config, home=self._home, timeout_s=self._timeout_s)
         return self._model
 
     def invoke_structured(self, operation: str, schema: type[TSchema], messages: Any) -> TSchema:

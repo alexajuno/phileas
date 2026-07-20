@@ -170,6 +170,20 @@ def test_self_extraction_transcript_yields_no_turns():
     assert payload["turns"] == []
 
 
+def test_recall_planning_transcript_yields_no_turns():
+    # Planning runs once per prompt, not once per session, so an unrecognized
+    # planning transcript would ingest at conversation rate — and each ingested
+    # one would be distilled into memories about Phileas's own prompt.
+    from phileas.llm.recall_planning import RECALL_PLANNING_PROMPT_HEAD
+
+    entries = [
+        _user(RECALL_PLANNING_PROMPT_HEAD + "\n\n## The exchange\n\nuser: hi"),
+        _assistant_text('{"queries": []}'),
+    ]
+    payload = core.transcript_to_payload("plan-1", entries)
+    assert payload["turns"] == []
+
+
 def test_ordinary_transcript_still_yields_turns():
     entries = [_user("a real question about refactoring the parser"), _assistant_text("on it")]
     payload = core.transcript_to_payload("real-1", entries)

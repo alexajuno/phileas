@@ -1,15 +1,17 @@
-"""The Claude Code capture hooks: a pre-turn recall nudge and end-of-session ingest.
+"""The Claude Code capture hooks: pre-turn recall and end-of-session ingest.
 
-Two hooks, one job each. UserPromptSubmit nudges the model to recall relevant
-memories itself before answering. SessionEnd hands the whole finished session to
-the daemon, which normalizes the transcript into one source and queues it for the
-extraction worker to distill. Nothing is captured per turn: the transcript on
-disk is the record, and a session becomes a memory-bearing source once it is done
-(here, or via the daemon's idle sweep for a session that never ended cleanly).
+Two hooks, one job each. UserPromptSubmit asks the daemon what this prompt calls
+back to and injects the answer as context for the turn. SessionEnd hands the
+whole finished session to the daemon, which normalizes the transcript into one
+source and queues it for the extraction worker to distill. Nothing is captured
+per turn: the transcript on disk is the record, and a session becomes a
+memory-bearing source once it is done (here, or via the daemon's idle sweep for a
+session that never ended cleanly).
 
-The recall nudge is model-free from the hook's side: it is a fixed string,
-injected as context for a turn the model was already about to run, best-effort
-like everything else here.
+Recall is planned daemon-side rather than decided by the host model, because the
+model cannot reliably notice that a memory it does not have might exist — the not
+knowing is the condition memory exists to fix. The hook holds none of that logic:
+it forwards the prompt and the session id, and prints whatever comes back.
 
 Every handler is best-effort. If the daemon is unreachable it stays silent and
 returns 0; capture never blocks or breaks the session. The handlers take an
@@ -25,42 +27,24 @@ from phileas.daemon_client import call
 
 CLIENT_PREFIX = "claude_code:"
 
+# How long the hook waits for the daemon's planned recall. Sits above the
+# daemon's own planning ceiling so the daemon is the side that decides to give
+# up, and the hook hears about it, rather than both timing out independently.
+RECALL_TIMEOUT_SEC = 15.0
 
-def _is_self_extraction() -> bool:
-    """True when this hook is firing inside Phileas's own `claude -p` extraction call.
 
-    The extraction worker marks its headless subprocess with PHILEAS_EXTRACTION, and
-    the mark is inherited by any hook the harness spawns. Ingesting such a call would
-    store the extraction prompt itself as a new source and loop the worker against its
-    own output, so capture stands down when it sees the mark. The primary guard is
-    upstream (extraction runs with --setting-sources project, which never loads these
-    user hooks); this is the backstop for a hook reintroduced by a project settings file.
+def _is_self_call() -> bool:
+    """True when this hook is firing inside one of Phileas's own `claude -p` calls.
+
+    Phileas marks its headless subprocesses with PHILEAS_EXTRACTION, and the mark
+    is inherited by any hook the harness spawns. Letting a hook run there would
+    have Phileas ingesting its own prompt as a source and recalling on behalf of
+    its own planner, so capture stands down when it sees the mark. The primary
+    guard is upstream (those calls run with --setting-sources project, which never
+    loads these user hooks); this is the backstop for a hook reintroduced by a
+    project settings file.
     """
     return os.environ.get("PHILEAS_EXTRACTION") == "1"
-
-
-# Recall hint (UserPromptSubmit) ----------------------------------------------
-# Static: the model picks its own query and tool (recall / recall_recent /
-# about / find_entities / timeline — see the phileas skill's Recall section).
-# The hook doesn't call recall() itself; this is a fixed-string nudge injected as
-# context for the upcoming turn.
-_RECALL_HINT = (
-    "<phileas-recall-hint>\n"
-    "Before answering, weigh whether this prompt calls back to something "
-    "durable -- past work, a decision, a named person/project, a date -- "
-    "worth recalling first. If so, call recall yourself: don't default to "
-    "one fixed-size recall(query=<the prompt>) call. Pick your own focused "
-    "query per concept (not the prompt verbatim), phrased in English even "
-    "when this conversation is in another language -- stored memories are "
-    "in English, so a same-language query can miss them. Match the tool to "
-    "the question's shape -- recall, recall_recent, about/find_entities, "
-    "and timeline all exist for a reason; see the "
-    "phileas skill's Recall section for which one and how to size it. Fire "
-    "more than one in parallel and merge by id when the prompt holds more "
-    "than one concept. If nothing here calls for it, just answer -- don't "
-    "force a call, don't ask permission either way.\n"
-    "</phileas-recall-hint>"
-)
 
 
 def _client_key(session_id: str) -> str:
@@ -70,12 +54,26 @@ def _client_key(session_id: str) -> str:
 
 
 def handle_user_prompt_submit(payload: dict) -> int:
-    """Nudge the model to recall relevant memories before answering."""
-    if _is_self_extraction():
+    """Inject the memories this prompt calls back to, if any.
+
+    The daemon plans the lookups and runs them; this prints what it returns.
+    Anything short of a usable block — daemon down, feature off, nothing
+    relevant — prints nothing, so a turn with no memories looks like a turn
+    before any of this existed.
+    """
+    if _is_self_call():
         return 0
-    if not (payload.get("prompt") or "").strip():
+    prompt = (payload.get("prompt") or "").strip()
+    if not prompt:
         return 0
-    print(_RECALL_HINT)
+    response = call(
+        "auto_recall",
+        {"prompt": prompt, "session_id": payload.get("session_id")},
+        timeout=RECALL_TIMEOUT_SEC,
+    )
+    block = (response or {}).get("block") if isinstance(response, dict) else None
+    if block:
+        print(block)
     return 0
 
 
@@ -87,7 +85,7 @@ def handle_session_end(payload: dict) -> int:
     marks it ready so the extraction worker distills it whole. Best-effort: an
     unreachable daemon just leaves the session for the idle sweep to pick up.
     """
-    if _is_self_extraction():
+    if _is_self_call():
         return 0
     session_id = payload.get("session_id")
     if not session_id:

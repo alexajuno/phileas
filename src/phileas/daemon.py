@@ -35,6 +35,7 @@ from phileas.factory import build_engine
 
 if TYPE_CHECKING:
     from phileas.extraction_worker import ExtractionWorker
+    from phileas.llm import LLMClient
 
 log = logging.getLogger("phileas.daemon")
 
@@ -46,6 +47,17 @@ _sync_pusher: SyncPusher | None = None
 
 # Extraction worker, initialized by start() when extraction is enabled.
 _extraction_worker: ExtractionWorker | None = None
+
+# Phileas's own model clients, initialized by start(). One for distilling a
+# finished session, one for planning a turn's recall queries, on the same
+# provider and the same usage ledger but with different patience.
+_llm_client: LLMClient | None = None
+_planning_client: LLMClient | None = None
+
+# How long a recall-planning call may run. The hook that triggers it blocks the
+# user's turn, so this is a responsiveness bound, not a generosity one: past it,
+# a turn with no memories beats a turn that stalled waiting for them.
+PLANNING_TIMEOUT_SEC = 10.0
 
 # Idle-sweep bounds. The sweep is a backstop for a session that ended but whose
 # SessionEnd hook never fired (a killed terminal). It only considers a transcript
@@ -636,19 +648,32 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # (by default `claude -p` on the Claude Code subscription). Started whenever
     # extraction is enabled; an enabled-but-keyless box leaves ready sources
     # queued and visible rather than losing them.
+    # Two clients on the same provider and ledger, differing only in how long a
+    # call may run. Distilling a session is a background job that can take
+    # minutes; planning a turn's recall happens inside a hook the user is waiting
+    # on, so it is cut off long before it becomes the reason a prompt feels slow.
+    global _llm_client, _planning_client
+    from phileas.llm import LLMClient
+
+    _llm_client = LLMClient(config.llm, usage_tracker=engine._usage_tracker, home=config.home)
+    _planning_client = LLMClient(
+        config.llm,
+        usage_tracker=engine._usage_tracker,
+        home=config.home,
+        timeout_s=PLANNING_TIMEOUT_SEC,
+    )
+
     global _extraction_worker
     _extraction_worker = None
     if config.extraction.enabled:
         from phileas.extraction_worker import ExtractionWorker
-        from phileas.llm import LLMClient
 
-        client = LLMClient(config.llm, usage_tracker=engine._usage_tracker, home=config.home)
-        _extraction_worker = ExtractionWorker(engine, client)
+        _extraction_worker = ExtractionWorker(engine, _llm_client)
         _extraction_worker.seed()
         _extraction_worker.start()
         log.info(
             "extraction worker started",
-            extra={"op": "extraction", "data": {"model": config.llm.model, "available": client.available}},
+            extra={"op": "extraction", "data": {"model": config.llm.model, "available": _llm_client.available}},
         )
 
         # -- Idle sweep (backstop for sessions that never ended cleanly) ---
@@ -877,6 +902,34 @@ def _dispatch(engine: MemoryEngine, method: str, params: dict) -> dict | list | 
         if _extraction_worker is not None:
             _extraction_worker.notify(result["source_id"])
         return {"queued": True, **result}
+    elif method == "auto_recall":
+        # The UserPromptSubmit hook's entry point: plan this turn's lookups from
+        # the prompt and the tail of the session, run them, and hand back the
+        # block to inject. Returns {"block": ""} for every non-answer — feature
+        # off, no client, planner declined, queries found nothing — so the hook
+        # has one thing to check and stays silent on all of them.
+        from phileas import auto_recall as auto_recall_mod
+        from phileas import sessions
+
+        if not engine.config.auto_recall.enabled or _planning_client is None:
+            return {"block": ""}
+        session_id = params.get("session_id")
+        # A missing or unreadable transcript is the first prompt of a session,
+        # which is exactly when memory matters most: plan from the prompt alone
+        # rather than declining.
+        turns: list[dict] = []
+        if session_id:
+            payload = sessions.load_transcript_payload(session_id)
+            if payload:
+                turns = payload.get("turns", [])
+        block = auto_recall_mod.auto_recall(
+            engine,
+            _entities_for_engine(engine),
+            _planning_client,
+            prompt=params.get("prompt") or "",
+            turns=turns,
+        )
+        return {"block": block}
     # -- Graph write broker ------------------------------------------------
     # Single process holds the KuzuDB write lock; other processes proxy
     # graph mutations through these endpoints.
