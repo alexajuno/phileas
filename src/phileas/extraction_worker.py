@@ -129,6 +129,7 @@ class ExtractionWorker:
         self._engine.db.set_source_status(source.id, "extracting")
         try:
             memories = extract_memories(self._client, build_transcript(new_turns))
+            daily_ref = (source.payload or {}).get("daily_ref")
             for memory in memories:
                 self._engine.memorize(
                     content=memory["content"],
@@ -136,6 +137,7 @@ class ExtractionWorker:
                     entities=memory.get("entities", []),
                     relationships=memory.get("relationships", []),
                     source_id=source.id,
+                    daily_ref=daily_ref,
                     detect_conflict=False,
                 )
             self._engine.db.mark_source_extracted(source.id, len(turns))

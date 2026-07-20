@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -568,17 +569,55 @@ def show(memory_id: str):
 # ------------------------------------------------------------------
 
 
-@click.command()
-@click.argument("session_id")
-def ingest(session_id: str):
-    """Ingest a Claude Code session (by id) as one source for distillation.
+def _file_payload(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError(f"{path.name} is empty.")
 
-    Reads the session's transcript, stores it as one source, and queues it for the
-    extraction worker. This is the manual equivalent of the SessionEnd hook; read
-    the distilled memories back with `phileas recall`.
-    """
     try:
-        resp = _daemon_call("ingest_session", {"session_id": session_id})
+        anchor = date.fromisoformat(path.stem[:10]).isoformat()
+    except ValueError:
+        anchor = None
+
+    timestamp = f"{anchor}T12:00:00+00:00" if anchor else datetime.now(timezone.utc).isoformat()
+    return {
+        "client_key": f"file:{path.resolve()}",
+        "kind": "file",
+        "label": path.name,
+        "daily_ref": anchor,
+        "turns": [{"i": 0, "role": "self", "text": text, "ts": timestamp}],
+    }
+
+
+@click.command()
+@click.argument("target")
+def ingest(target: str):
+    """Ingest a Claude Code session (by id) or a text file as one source for distillation.
+
+    Stores it as one source and queues it for the extraction worker. A file whose
+    name starts with a date (`2026-07-19.md`) anchors its memories to that date
+    rather than today, so a backlog of diary entries lands on the days it describes.
+    Re-ingesting the same file updates the source it already opened.
+    """
+    path = Path(target).expanduser()
+    if path.is_file():
+        try:
+            payload = _file_payload(path)
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            print_error(str(exc))
+            raise SystemExit(1)
+
+        resp = _daemon_call("ingest_source", {"payload": payload})
+        if not resp or not resp.get("ok"):
+            print_error("Phileas daemon is not reachable. Start it with `phileas start`.")
+            raise SystemExit(1)
+        result = resp["result"]
+        anchored = payload["daily_ref"] or "today"
+        print_success(f"Ingested {path.name} as source {result.get('source_id', '')[:8]} (anchored to {anchored}).")
+        return
+
+    try:
+        resp = _daemon_call("ingest_session", {"session_id": target})
         if resp and resp.get("ok"):
             result = resp["result"]
             if not result.get("queued"):
