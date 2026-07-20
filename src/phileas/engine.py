@@ -1029,8 +1029,8 @@ class MemoryEngine:
         # query_cosine doubles as the relevance signal the graph hop is gated on
         # below: it maps every memory in the pool to its similarity to THIS query.
         query_cosine: dict[str, float] = {}
+        semantic_hits = self.vector.search(query, top_k=_pool)
         if all_type_ids:
-            semantic_hits = self.vector.search(query, top_k=_pool)
             query_cosine = dict(semantic_hits)
             for k in standout_keep(
                 [sim for _, sim in semantic_hits],
@@ -1478,8 +1478,7 @@ class MemoryEngine:
         # ----------------------------------------------------------
         # Cosine over the candidate pool — the dense relevance signal both
         # fusion paths consume (the RRF dense list; the floor path's base scale).
-        cosine_hits = self.vector.search(query, top_k=_pool)
-        cosine_map = {mid: sim for mid, sim in cosine_hits}
+        cosine_map = dict(semantic_hits)
         _mark("cosine_full")
 
         fusion_method, rrf_k = resolve_fusion(default="rrf")
@@ -1842,6 +1841,32 @@ class MemoryEngine:
                 retrieval_before_min=round(min(rb), 3) if rb else None,
             )
 
+        # Queue a loose cluster from the pre-cut pool: the closely-related memories
+        # that did not make the head (keyword hit AND cosine above the floor) and
+        # still lack a gist. The content gate is what makes a real theme queue rather
+        # than gather-pool size. Bookkeeping only — never let it fail a recall.
+        if _report_pool:
+            _returned = {r["id"] for r in results}
+            # A real cluster member matches on content (a keyword hit) AND carries
+            # non-trivial semantic similarity; the gather's off-topic noise fails one
+            # or the other (no keyword, or cosine near zero).
+            _related = [
+                mid
+                for mid in _report_pool
+                if mid not in _returned and mid in keyword_ids and cosine_map.get(mid, 0.0) >= REPORT_COSINE_FLOOR
+            ]
+            if _related:
+                _parents = self.graph.get_rollup_parents(_related) or {}
+                _loose = [mid for mid in _related if not _parents.get(mid)]
+                if len(_loose) >= CONSOLIDATION_MIN_LOOSE:
+                    _dates = [_report_pool[mid].created_at for mid in _loose if _report_pool[mid].created_at]
+                    _span = (min(_dates).date().isoformat(), max(_dates).date().isoformat()) if _dates else None
+                    try:
+                        self._enqueue_consolidation(query, _loose, _span)
+                    except Exception:
+                        log.debug("consolidation enqueue failed", exc_info=True)
+        _mark("consolidation_queue")
+
         _elapsed_ms = (perf_counter() - _t0) * 1000
         try:
             top1 = results[0]["score"] if results else None
@@ -1922,31 +1947,6 @@ class MemoryEngine:
                 "rollup_collapse": rollup_collapse_log,
             },
         )
-
-        # Queue a loose cluster from the pre-cut pool: the closely-related memories
-        # that did not make the head (keyword hit AND cosine above the floor) and
-        # still lack a gist. The content gate is what makes a real theme queue rather
-        # than gather-pool size. Bookkeeping only — never let it fail a recall.
-        if _report_pool:
-            _returned = {r["id"] for r in results}
-            # A real cluster member matches on content (a keyword hit) AND carries
-            # non-trivial semantic similarity; the gather's off-topic noise fails one
-            # or the other (no keyword, or cosine near zero).
-            _related = [
-                mid
-                for mid in _report_pool
-                if mid not in _returned and mid in keyword_ids and cosine_map.get(mid, 0.0) >= REPORT_COSINE_FLOOR
-            ]
-            if _related:
-                _parents = self.graph.get_rollup_parents(_related) or {}
-                _loose = [mid for mid in _related if not _parents.get(mid)]
-                if len(_loose) >= CONSOLIDATION_MIN_LOOSE:
-                    _dates = [_report_pool[mid].created_at for mid in _loose if _report_pool[mid].created_at]
-                    _span = (min(_dates).date().isoformat(), max(_dates).date().isoformat()) if _dates else None
-                    try:
-                        self._enqueue_consolidation(query, _loose, _span)
-                    except Exception:
-                        log.debug("consolidation enqueue failed", exc_info=True)
 
         return results
 
