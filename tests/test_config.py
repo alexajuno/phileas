@@ -13,6 +13,7 @@ import pytest
 from phileas.config import (
     DEFAULT_PROFILE,
     LLMConfig,
+    PhileasConfig,
     _find_project_config,
     active_profile_path,
     apply_config_update,
@@ -21,6 +22,7 @@ from phileas.config import (
     discover_profiles,
     key_reachable,
     load_config,
+    planning_llm,
     provider_needs_key,
     read_active_profile,
     resolve_home,
@@ -537,6 +539,42 @@ class TestDiscoverProfiles:
 # ------------------------------------------------------------------
 # Settings-UI surface: snapshot + validated write
 # ------------------------------------------------------------------
+
+
+class TestPlanningLLM:
+    """Which model recall planning runs on, given ``[llm]`` and its overrides."""
+
+    def test_inherits_llm_when_not_overridden(self):
+        cfg = PhileasConfig()
+        assert planning_llm(cfg) is cfg.llm
+
+    def test_an_override_leaves_extraction_alone(self):
+        # The reason the override exists: pointing planning at a fast API provider
+        # must not move whole-session distillation onto paid billing with it.
+        cfg = PhileasConfig()
+        cfg.auto_recall.provider = "anthropic"
+        cfg.auto_recall.model = "claude-haiku-4-5"
+        planning = planning_llm(cfg)
+        assert (planning.provider, planning.model) == ("anthropic", "claude-haiku-4-5")
+        assert (cfg.llm.provider, cfg.llm.model) == ("claude_code", "sonnet")
+
+    def test_a_new_provider_repoints_the_key_variable(self):
+        # Otherwise planning would look for its key under the variable belonging to
+        # whichever provider extraction happens to use.
+        cfg = PhileasConfig()
+        cfg.llm.provider = "claude_code"
+        cfg.llm.api_key_env = ""
+        cfg.auto_recall.provider = "anthropic"
+        assert planning_llm(cfg).api_key_env == "PHILEAS_ANTHROPIC_API_KEY"
+
+    def test_a_model_only_override_keeps_the_provider_and_its_key(self):
+        cfg = PhileasConfig()
+        cfg.llm.provider = "anthropic"
+        cfg.llm.api_key_env = "CUSTOM_KEY_VAR"
+        cfg.auto_recall.model = "claude-haiku-4-5"
+        planning = planning_llm(cfg)
+        assert (planning.provider, planning.api_key_env) == ("anthropic", "CUSTOM_KEY_VAR")
+        assert planning.model == "claude-haiku-4-5"
 
 
 class TestConfigSnapshot:

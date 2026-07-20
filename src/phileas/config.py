@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -102,12 +102,23 @@ class AutoRecallConfig:
     as context for the turn. Off, the hook does nothing and recall happens only
     when the host model calls a recall tool itself.
 
-    This shares ``[llm]`` with extraction, so it costs a model call per prompt on
-    the same provider. Off is the setting for a box that wants the store written
-    but not read on its behalf.
+    Off is the setting for a box that wants the store written but not read on its
+    behalf.
+
+    ``provider``/``model`` override ``[llm]`` for this call alone, and default to
+    inheriting it. The two calls want different things from a model: distilling a
+    session is a background job where quality is worth minutes, while planning a
+    turn's lookups happens inside a hook the user is waiting on, where a slower
+    answer is a worse one however good it is. The Claude Code CLI cannot serve the
+    second — it boots an agent runtime per call, about 3.5 seconds before the model
+    is even reached, regardless of which model is named — so a responsive planner
+    means pointing this at an API provider while extraction stays on the
+    subscription.
     """
 
     enabled: bool = True
+    provider: str | None = None
+    model: str | None = None
 
 
 # Providers that authenticate without a Phileas-held API key. ``claude_code``
@@ -146,6 +157,27 @@ class LLMConfig:
     provider: str = "claude_code"
     model: str = "sonnet"
     api_key_env: str = ""
+
+
+def planning_llm(cfg: PhileasConfig) -> LLMConfig:
+    """The model config recall planning runs on: ``[llm]`` under its overrides.
+
+    An override that changes the provider also repoints ``api_key_env`` at that
+    provider's conventional variable, so naming a provider is enough — otherwise
+    planning would look for its key under the env var belonging to whatever
+    provider extraction happens to use.
+    """
+    from phileas.llm import default_api_key_env
+
+    override = cfg.auto_recall
+    if not override.provider and not override.model:
+        return cfg.llm
+
+    provider = override.provider or cfg.llm.provider
+    api_key_env = cfg.llm.api_key_env
+    if provider != cfg.llm.provider:
+        api_key_env = default_api_key_env(provider) or ""
+    return replace(cfg.llm, provider=provider, model=override.model or cfg.llm.model, api_key_env=api_key_env)
 
 
 def provider_needs_key(provider: str) -> bool:

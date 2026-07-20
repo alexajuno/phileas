@@ -648,16 +648,17 @@ def start(config: PhileasConfig | None = None, foreground: bool = False) -> int:
     # (by default `claude -p` on the Claude Code subscription). Started whenever
     # extraction is enabled; an enabled-but-keyless box leaves ready sources
     # queued and visible rather than losing them.
-    # Two clients on the same provider and ledger, differing only in how long a
-    # call may run. Distilling a session is a background job that can take
-    # minutes; planning a turn's recall happens inside a hook the user is waiting
-    # on, so it is cut off long before it becomes the reason a prompt feels slow.
+    # Two clients on one ledger. Distilling a session is a background job that can
+    # take minutes; planning a turn's recall happens inside a hook the user is
+    # waiting on, so it is cut off long before it becomes the reason a prompt feels
+    # slow, and it may run on a different (faster) provider entirely.
     global _llm_client, _planning_client
+    from phileas.config import planning_llm
     from phileas.llm import LLMClient
 
     _llm_client = LLMClient(config.llm, usage_tracker=engine._usage_tracker, home=config.home)
     _planning_client = LLMClient(
-        config.llm,
+        planning_llm(config),
         usage_tracker=engine._usage_tracker,
         home=config.home,
         timeout_s=PLANNING_TIMEOUT_SEC,
