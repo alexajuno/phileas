@@ -177,8 +177,9 @@ def stats_recall(since: str, bucket: str, as_json: bool):
         click.echo("No recall events yet. Run some recalls first.", err=True)
         raise SystemExit(1)
     data = queries.recall_summary(metrics_db, since_dt)
+    stages = queries.recall_stage_breakdown(metrics_db, since_dt)
     if as_json:
-        click.echo(json_mod.dumps(data, default=str))
+        click.echo(json_mod.dumps({**data, "stages": stages}, default=str))
         return
     render.console.print(
         render.headline(
@@ -193,6 +194,20 @@ def stats_recall(since: str, bucket: str, as_json: bool):
             ],
         )
     )
+    if stages:
+        t = Table(title="By Stage — mean ms per recall, where the wall clock goes")
+        for col in ("Stage", "Mean ms", "Share", "p50", "p95", "Max"):
+            t.add_column(col)
+        for s in stages:
+            t.add_row(
+                s["stage"],
+                f"{s['mean_ms']:.0f}",
+                f"{s['share']:.1%}",
+                f"{s['p50_ms']:.0f}",
+                f"{s['p95_ms']:.0f}",
+                f"{s['max_ms']:.0f}",
+            )
+        render.console.print(t)
 
 
 @stats.command("tools")

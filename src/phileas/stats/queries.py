@@ -129,6 +129,56 @@ def recall_summary(metrics_db: Path, since: datetime | None) -> dict:
     }
 
 
+def recall_stage_breakdown(metrics_db: Path, since: datetime | None) -> list[dict]:
+    """Per-stage recall cost, descending by mean.
+
+    A stage absent from a recall counts as 0 for that recall, so ``mean_ms`` is
+    cost per recall rather than cost per recall that ran the stage — the former
+    is what says where the wall clock goes. ``share`` is of the summed stage
+    means, not of ``latency_ms``, so unmarked work does not distort it.
+    """
+    where, params = _since_clause(since)
+    with _connect(metrics_db) as conn:
+        rows = conn.execute(
+            f"SELECT stage_timings_json FROM recall_events{where}",
+            params,
+        ).fetchall()
+
+    samples: list[dict[str, float]] = []
+    for row in rows:
+        raw = row["stage_timings_json"]
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            samples.append(parsed)
+    if not samples:
+        return []
+
+    stage_names = {name for sample in samples for name in sample}
+    breakdown = []
+    for name in stage_names:
+        series = sorted(float(sample.get(name, 0.0)) for sample in samples)
+        total = sum(series)
+        breakdown.append(
+            {
+                "stage": name,
+                "mean_ms": total / len(series),
+                "p50_ms": series[len(series) // 2],
+                "p95_ms": series[min(len(series) - 1, int(0.95 * len(series)))],
+                "max_ms": series[-1],
+            }
+        )
+    breakdown.sort(key=lambda s: s["mean_ms"], reverse=True)
+    mean_total = sum(s["mean_ms"] for s in breakdown)
+    for stage in breakdown:
+        stage["share"] = stage["mean_ms"] / mean_total if mean_total else 0.0
+    return breakdown
+
+
 def tool_calls_summary(metrics_db: Path, since: datetime | None) -> dict:
     """Per-tool MCP-call cost + the drill-in rate.
 
