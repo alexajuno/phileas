@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -25,7 +26,6 @@ sys.path.insert(0, str(HERE))
 import metrics as M  # noqa: E402
 from _engine import build_engine  # noqa: E402
 
-from phileas import recall_trace  # noqa: E402
 from phileas.engine import _MEMORY_TYPES  # noqa: E402
 
 CORPUS = HERE.parent / "coldstart"
@@ -75,13 +75,24 @@ def require_real_model() -> None:
 # Scoring one query under one (already-applied) config
 # --------------------------------------------------------------------------
 
+def traced_recall(eng, query: str, k: int) -> dict:
+    started = time.perf_counter()
+    hits = eng.recall(query, top_k=k)
+    return {
+        "result_ids": [h["id"] for h in hits if h.get("id")],
+        "candidate_count": len(hits),
+        "returned": len(hits),
+        "output_chars": len(json.dumps(hits, default=str)),
+        "latency_ms": (time.perf_counter() - started) * 1000,
+        "discarded": [],
+    }
+
+
 def score_query(eng, q: dict, resolve, k: int) -> dict:
     relevant = {resolve(s) for s in q.get("relevant", [])}
     excluded = {resolve(s) for s in q.get("excluded", [])}
 
-    with recall_trace.record() as tr:
-        eng.recall(q["query"], top_k=k)
-    trace = tr.as_dict()
+    trace = traced_recall(eng, q["query"], k)
     results = [{"id": rid} for rid in trace["result_ids"]]
     returned = set(trace["result_ids"])
 

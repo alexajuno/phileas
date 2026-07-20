@@ -11,9 +11,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from phileas.config import DEFAULT_PROFILE, resolve_home
+
 EXPECTED_PROFILE = "mara-eval"
-EXPECTED_HOME = Path.home() / ".phileas-mara-eval"
-FORBIDDEN_HOME = Path.home() / ".phileas"
+EXPECTED_HOME = resolve_home(EXPECTED_PROFILE)
 
 
 def build_engine():
@@ -28,10 +29,10 @@ def build_engine():
 
     cfg = load_config(profile=EXPECTED_PROFILE)
     home = Path(cfg.home).resolve()
-    if home == FORBIDDEN_HOME.resolve():
+    if home == resolve_home(DEFAULT_PROFILE).resolve():
         raise SystemExit(f"REFUSING: resolved home is the real graph {home}")
-    if home != EXPECTED_HOME.resolve():
-        raise SystemExit(f"REFUSING: unexpected home {home} (want {EXPECTED_HOME})")
+    if home.name != EXPECTED_PROFILE:
+        raise SystemExit(f"REFUSING: unexpected home {home} (want a {EXPECTED_PROFILE} profile)")
 
     db = Database(path=cfg.db_path)
     vector = VectorStore(path=cfg.chroma_path)

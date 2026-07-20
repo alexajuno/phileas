@@ -21,8 +21,6 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from _engine import EXPECTED_HOME, build_engine  # noqa: E402
 
-from phileas.models import Event  # noqa: E402
-
 CORPUS = HERE.parent / "coldstart"
 SESSIONS = CORPUS / "sessions"
 EXTRACTIONS = CORPUS / "extractions"
@@ -49,9 +47,15 @@ def main() -> None:
             continue
 
         mems = json.loads(ext_path.read_text()).get("memories", [])
-        thread = eng.start_thread(label=f"mara-{stem}")
-        ev = Event(text=sf.read_text(), thread_id=thread["thread_id"])
-        eng.save_event(ev)
+        ingested = eng.ingest_source(
+            {
+                "client_key": f"mara-eval:{stem}",
+                "kind": "mara_eval_session",
+                "label": f"mara-{stem}",
+                "turns": [{"role": "user", "text": sf.read_text(), "ts": f"{date}T12:00:00+00:00"}],
+            },
+            mark_ready=False,
+        )
 
         for m in mems:
             res = eng.memorize(
@@ -60,7 +64,7 @@ def main() -> None:
                 daily_ref=m.get("daily_ref", date),
                 entities=m.get("entities") or None,
                 relationships=m.get("relationships") or None,
-                source_event_id=ev.id,
+                source_id=ingested["source_id"],
                 detect_conflict=True,
             )
             applied += 1
