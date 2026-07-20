@@ -182,3 +182,30 @@ def test_the_exchange_is_bounded():
     auto_recall.auto_recall(FakeEngine(), _no_entities, client, prompt="now what?", turns=turns)
     assert "turn 99" in client.seen
     assert "turn 0" not in client.seen
+
+
+# -- failure visibility ---------------------------------------------------
+
+
+def test_a_persistent_planner_failure_is_reported_once(caplog, monkeypatch):
+    # A revoked key fails on every prompt. Logged per-prompt it floods; logged only
+    # at debug it is invisible while the feature quietly stops working.
+    monkeypatch.setattr(auto_recall, "_warned", False)
+    client = FakeClient(error=RuntimeError("401 API key is invalid"))
+    with caplog.at_level("WARNING", logger="phileas.auto_recall"):
+        for _ in range(3):
+            assert auto_recall.auto_recall(FakeEngine(), _no_entities, client, prompt="what did we decide?") == ""
+    assert len(caplog.records) == 1
+    # The cause has to reach the log line, or the warning says only "something broke".
+    assert "401" in caplog.records[0].data["error"]
+
+
+def test_a_recovered_planner_can_warn_again(caplog, monkeypatch):
+    monkeypatch.setattr(auto_recall, "_warned", False)
+    broken = FakeClient(error=RuntimeError("boom"))
+    working = FakeClient(RecallPlan(queries=[]))
+    with caplog.at_level("WARNING", logger="phileas.auto_recall"):
+        auto_recall.auto_recall(FakeEngine(), _no_entities, broken, prompt="q")
+        auto_recall.auto_recall(FakeEngine(), _no_entities, working, prompt="q")
+        auto_recall.auto_recall(FakeEngine(), _no_entities, broken, prompt="q")
+    assert len(caplog.records) == 2

@@ -39,6 +39,15 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("phileas.auto_recall")
 
+# Whether a planning failure has already been reported at warning level. Planning
+# runs on every prompt, so a persistent fault (a revoked key, a provider that
+# stopped answering) would either fill the log with one line per prompt or, logged
+# only at debug, stay invisible while the feature quietly does nothing. Neither is
+# survivable: a memory layer that silently stops recalling looks exactly like one
+# whose store is empty. So the first failure is loud, the rest are quiet, and a
+# success re-arms it.
+_warned = False
+
 # How much of the block the pointer list may fill. Recall's own default is 30;
 # this is a fraction of it because these memories were not asked for, and an
 # unasked-for block earns its place by being short.
@@ -162,15 +171,25 @@ def auto_recall(
     plans queries that retrieve nothing all produce the empty string, and the turn
     proceeds as if this had never been called.
     """
+    global _warned
+
     if not prompt.strip():
         return ""
 
     try:
         queries = plan_queries(client, build_conversation(prompt, turns or []))
     except Exception as e:
-        log.debug("recall planning failed", extra={"op": "auto_recall", "data": {"error": str(e)}})
+        if not _warned:
+            _warned = True
+            log.warning(
+                "recall planning failed; prompts will get no memories until this is fixed",
+                extra={"op": "auto_recall", "data": {"error": str(e)[:300]}},
+            )
+        else:
+            log.debug("recall planning failed", extra={"op": "auto_recall", "data": {"error": str(e)}})
         return ""
 
+    _warned = False
     if not queries:
         return ""
 
