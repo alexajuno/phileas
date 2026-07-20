@@ -4,5 +4,7 @@
   "no_rerank": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "off", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"},
   "floor_fusion": {"PHILEAS_FUSION": "floor", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"},
   "gap_cut": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "gap", "PHILEAS_PATH3": "index"},
-  "legacy_path3": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "legacy"}
+  "legacy_path3": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "legacy"},
+  "deep_pool": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank:10:1000", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"},
+  "small_pool": {"PHILEAS_FUSION": "rrf", "PHILEAS_RERANK": "rank:10:25", "PHILEAS_STANDOUT": "ratio", "PHILEAS_PATH3": "index"}
 }

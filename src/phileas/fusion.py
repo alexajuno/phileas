@@ -37,12 +37,23 @@ RERANK_MODES = ("off", "rank")
 # top hit should dominate — a much sharper rank decay than fusion's k=60. k=10
 # keeps the reranked head tight while still letting rank 2-3 survive a 0.7x cut.
 RERANK_K = 10.0
-# Cap on how many fused candidates the cross-encoder reranks. Set generously so a
-# single-user corpus reranks essentially its whole gathered set — a small cap
-# buries the low-cosine rescue target (the "Sweden" case) below the reranked head
-# and the reranker never sees it. This is a latency/coverage knob, not a relevance
-# claim; tune it per deployment (corpus size, hardware) rather than hardcoding.
-RERANK_POOL = 1000
+# Cap on how many fused candidates the cross-encoder reranks — the latency/coverage
+# trade, since the cross-encoder is one forward pass per candidate and dominates a
+# recall's cost.
+#
+# Deep coverage buys the low-cosine rescue: a candidate fusion buried that the
+# reranker, seeing it against the query, lifts back into the head (the "Sweden"
+# case). Measured on a ~4k-memory store over 16 queries, that rescue is real but
+# rare — of 80 returned results, exactly one originated below fused rank 50, and
+# nothing at all sat between rank 50 and 150. So the pool that reranked everything
+# was paying roughly 2x on every query to recover about 1% of results.
+#
+# 50 takes that trade. Recall's own gather is what should surface a memory; a
+# candidate fusion ranks below 50 is one a better query reaches more reliably than
+# a deeper rerank does. Raise it where recall matters more than latency, and note
+# the measurement above is one store — ``evals/recall`` has a ``small_pool`` config
+# for re-running the comparison on another.
+RERANK_POOL = 50
 
 
 def rank_by_score(scores: dict[str, float], *, high_is_better: bool = True) -> dict[str, int]:
