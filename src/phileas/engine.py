@@ -26,7 +26,7 @@ from phileas.graph import _norm_type
 from phileas.logging import get_logger, op_extra, timed_op
 from phileas.models import MemoryItem, MemoryType, Source
 from phileas.reconcile import candidate_pairs
-from phileas.scoring import mmr_select, retrieval_strength, score_components, seed_storage_strength
+from phileas.scoring import mmr_select, retrieval_strength, score_components
 from phileas.standout import resolve_strategy, standout_keep
 from phileas.stopwords import STOP_WORDS
 from phileas.temporal import resolve_deixis, resolve_temporal
@@ -667,9 +667,6 @@ class MemoryEngine:
         item = MemoryItem(
             content=content,
             memory_type=cast(MemoryType, memory_type),
-            # Seed durable storage strength from the memory type; recall and
-            # reinforcement grow it from here.
-            storage_strength=seed_storage_strength(memory_type),
             daily_ref=daily_ref,
             source_id=primary_source_id,
         )

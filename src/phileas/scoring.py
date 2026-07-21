@@ -2,7 +2,10 @@
 
 Two-strength model (Bjork's New Theory of Disuse):
   retrieval strength — current accessibility; decays since last access, drives surfacing
-  storage strength   — durable depth; seeded from memory type, grows on successful recall
+  storage strength   — durable depth; grows on successful recall and re-study
+
+Every memory starts at the same storage strength (``MemoryItem.storage_strength``).
+Durability is earned through recall and reinforcement, not declared at write time.
 
 Final scoring formula (post-rerank):
   final = (relevance × 0.55) + (storage × 0.30) + (retrieval × 0.10) + (access × 0.05)
@@ -10,39 +13,11 @@ Final scoring formula (post-rerank):
 
 import math
 
-# --- Storage-strength seed --------------------------------------------------
-
-# Initial storage strength for a new memory, keyed on its type — the one anchored
-# write-time prior. A type carries meaning ("profile" is identity-level and
-# structurally a hub; "event" is usually a leaf), so it is a defensible coarse
-# starting point. The spread is deliberately gentle: it only sets the starting
-# half-life. Real durability is earned through recall and reinforcement over time,
-# not declared at write time, so a memory that matters rises whatever its seed.
-STORAGE_SEED_BY_TYPE = {
-    "profile": 0.7,
-    "decision": 0.7,  # a recorded choice stands until explicitly superseded, so seed it deep
-    "behavior": 0.6,
-    "knowledge": 0.5,
-    "reflection": 0.5,
-    "event": 0.4,
-}
-DEFAULT_STORAGE_SEED = 0.5
-
-
-def seed_storage_strength(memory_type: str) -> float:
-    """Initial storage strength for a new memory, from its type.
-
-    The starting point for the durable depth signal; recall and reinforcement
-    grow it from here. Unknown types fall back to the neutral mid-seed.
-    """
-    return STORAGE_SEED_BY_TYPE.get(memory_type, DEFAULT_STORAGE_SEED)
-
-
 # --- Two-strength dynamics --------------------------------------------------
 
 # Half-life (days) of retrieval strength at storage_strength == 0. Calibrated so
-# a memory seeded at storage 0.5 starts near a ~64-day half-life; recall extends
-# it from there.
+# a memory at the starting storage of 1.0 begins with a 90-day half-life; recall
+# extends it from there.
 BASE_HALFLIFE_DAYS = 45.0
 
 # Each unit of storage strength doubles the half-life (halflife = H0 · 2**SS),
@@ -61,7 +36,7 @@ def halflife_days(storage_strength: float) -> float:
     return min(HALFLIFE_CAP_DAYS, BASE_HALFLIFE_DAYS * 2.0**storage_strength)
 
 
-def retrieval_strength(days_since_access: float, storage_strength: float = 0.5) -> float:
+def retrieval_strength(days_since_access: float, storage_strength: float = 1.0) -> float:
     """Current accessibility in (0, 1]: exponential decay since last access.
 
     The decay rate shrinks as storage strength grows, so well-stored memories
@@ -102,7 +77,7 @@ def score_components(
     """The four weighted signals that sum to the final score.
 
       relevance (55%) — semantic match from reranker/cosine
-      storage   (30%) — durable depth: seeded from memory type, grown by recall
+      storage   (30%) — durable depth, grown by recall and re-study
       retrieval (10%) — current accessibility; decays since last access
       access    (5%)  — raw recall frequency, log-scaled
 

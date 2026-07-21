@@ -48,7 +48,7 @@ class MemoryItem:
     access_count: int = 0
     last_accessed: datetime | None = None
     daily_ref: str | None = None
-    storage_strength: float = 0.5  # durable depth (Bjork); seeded from memory type, grown by recall + re-study
+    storage_strength: float = 1.0  # durable depth (Bjork); grown by recall + re-study
     reinforcement_count: int = 0  # how many similar memories arrived after this one
     last_reinforced: datetime | None = None
     source_id: str | None = None  # FK to sources.id — the session this memory was distilled from

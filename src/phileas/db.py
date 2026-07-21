@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     last_accessed TEXT,
     daily_ref TEXT,
     source_id TEXT REFERENCES sources(id),
-    storage_strength REAL NOT NULL DEFAULT 0.5,
+    storage_strength REAL NOT NULL DEFAULT 1.0,
     reinforcement_count INTEGER NOT NULL DEFAULT 0,
     last_reinforced TEXT,
     created_at TEXT NOT NULL,
@@ -272,12 +272,38 @@ class Database:
             self.conn.execute("ALTER TABLE memory_items ADD COLUMN source_id TEXT")
         self.conn.commit()
 
+        self._rebase_storage_strength()
         self._migrate_legacy_sources()
 
         # The join's source_id index lives here rather than in SCHEMA: on a legacy
         # database the table only gains that column during the fold above, so
         # indexing it in the up-front schema script would fail.
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_sources_source ON memory_sources(source_id)")
+        self.conn.commit()
+
+    def _rebase_storage_strength(self) -> None:
+        """Move existing rows onto the uniform 1.0 starting strength, once.
+
+        Storage strength used to start at a per-type value (event 0.4, knowledge
+        and reflection 0.5, behavior 0.6, profile and decision 0.7); it now starts
+        at 1.0 for every memory. Subtracting the start a row was written with and
+        adding the new one shifts the whole store onto the new floor while keeping
+        each memory's earned growth intact. Stamped in ``user_version`` so a row
+        can't be shifted twice.
+        """
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] >= 1:
+            return
+        self.conn.execute(
+            """UPDATE memory_items SET storage_strength = storage_strength + 1.0 - (
+                   CASE memory_type
+                       WHEN 'profile' THEN 0.7
+                       WHEN 'decision' THEN 0.7
+                       WHEN 'behavior' THEN 0.6
+                       WHEN 'event' THEN 0.4
+                       ELSE 0.5
+                   END)"""
+        )
+        self.conn.execute("PRAGMA user_version = 1")
         self.conn.commit()
 
     def _table_exists(self, name: str) -> bool:
@@ -1006,7 +1032,7 @@ class Database:
             access_count=row["access_count"],
             last_accessed=last_accessed,
             daily_ref=row["daily_ref"],
-            storage_strength=row["storage_strength"] if "storage_strength" in row.keys() else 0.5,
+            storage_strength=row["storage_strength"] if "storage_strength" in row.keys() else 1.0,
             reinforcement_count=row["reinforcement_count"],
             last_reinforced=last_reinforced,
             source_id=row["source_id"] if "source_id" in row.keys() else None,

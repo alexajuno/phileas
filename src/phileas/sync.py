@@ -71,7 +71,7 @@ def _item_from_dict(d: dict[str, Any]) -> MemoryItem:
         access_count=d.get("access_count", 0),
         last_accessed=_dt(d.get("last_accessed")),
         daily_ref=d.get("daily_ref"),
-        storage_strength=d.get("storage_strength", 0.5),
+        storage_strength=d.get("storage_strength", 1.0),
         reinforcement_count=d.get("reinforcement_count", 0),
         last_reinforced=_dt(d.get("last_reinforced")),
         source_id=d.get("source_id"),

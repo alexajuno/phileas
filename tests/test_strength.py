@@ -2,7 +2,7 @@
 
 Companion to test_scoring.py (which covers the pure math). These exercise the
 write paths — db.record_retrieval / db.reinforce_item / the storage_strength
-backfill — and the engine wiring (seed at creation, growth on recall).
+backfill — and the engine wiring (growth on recall).
 """
 
 from __future__ import annotations
@@ -10,12 +10,14 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
+import pytest
+
 from phileas.config import load_config
 from phileas.db import Database
 from phileas.engine import MemoryEngine
 from phileas.graph import GraphStore
 from phileas.models import MemoryItem
-from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN, seed_storage_strength
+from phileas.scoring import RECALL_GAIN, RESTUDY_GAIN
 from phileas.vector import VectorStore
 
 
@@ -68,6 +70,35 @@ def test_recall_bumps_access_refreshes_and_is_monotonic(sqlite_path):
     assert after_two.storage_strength >= s1  # storage never decreases
 
 
+# --- rebase onto the uniform starting strength ------------------------------
+
+
+def test_rebase_shifts_old_rows_and_keeps_earned_growth(sqlite_path):
+    db = Database(path=sqlite_path)
+    # A store written under the per-type starts: an untouched event (0.4) and a
+    # profile that grew 0.3 above its 0.7.
+    untouched = _save(db, content="a", memory_type="event", storage_strength=0.4)
+    grown = _save(db, content="b", memory_type="profile", storage_strength=1.0)
+    db.conn.execute("PRAGMA user_version = 0")
+    db.conn.commit()
+    db.conn.close()
+
+    reopened = Database(path=sqlite_path)
+
+    assert reopened.get_item(untouched.id).storage_strength == pytest.approx(1.0)
+    assert reopened.get_item(grown.id).storage_strength == pytest.approx(1.3)
+
+
+def test_rebase_runs_only_once(sqlite_path):
+    db = Database(path=sqlite_path)
+    item = _save(db, content="a", memory_type="event", storage_strength=0.4)
+    db.conn.close()
+
+    reopened = Database(path=sqlite_path)
+
+    assert reopened.get_item(item.id).storage_strength == 0.4
+
+
 # --- reinforce_item (re-study path) ----------------------------------------
 
 
@@ -99,14 +130,12 @@ def _engine(tmp_dir: Path) -> MemoryEngine:
     )
 
 
-def test_memorize_seeds_storage_from_type(tmp_dir: Path):
+def test_memorize_starts_every_memory_at_the_same_storage(tmp_dir: Path):
     eng = _engine(tmp_dir)
-    # A one-off event seeds shallower than an identity-level profile fact.
     event = eng.memorize("met a friend for coffee", memory_type="event")
     profile = eng.memorize("the user's name is Giao", memory_type="profile")
-    assert eng.db.get_item(event["id"]).storage_strength == seed_storage_strength("event")
-    assert eng.db.get_item(profile["id"]).storage_strength == seed_storage_strength("profile")
-    assert eng.db.get_item(profile["id"]).storage_strength > eng.db.get_item(event["id"]).storage_strength
+    assert eng.db.get_item(event["id"]).storage_strength == 1.0
+    assert eng.db.get_item(profile["id"]).storage_strength == 1.0
 
 
 def test_recall_grows_storage_of_aged_memory(tmp_dir: Path):
