@@ -198,15 +198,13 @@ def test_memorize_records_a_source_set(srv):
     assert any(m.id == mem_id for m in srv.db.get_memories_for_source(s2))
 
 
-def test_hydrate_returns_full_source_set(srv):
+def test_multi_source_memory_keeps_every_source(srv):
     s1 = srv.mksource("first session")
     s2 = srv.mksource("second session")
     out = srv.engine.memorize(content="spanning memory", source_ids=[s1, s2])
-    h = srv.engine.hydrate(out["id"])
-    assert set(h["source_ids"]) == {s1, s2}
-    # Back-compat singleton stays populated (the primary source).
-    assert h["source_id"] in {s1, s2}
-    assert h["source"]["source_id"] == h["source_id"]
+    assert set(srv.db.get_source_ids_for_memory(out["id"])) == {s1, s2}
+    # The item's own column stays populated with the primary source.
+    assert srv.db.get_item(out["id"]).source_id in {s1, s2}
 
 
 def test_memorize_single_source_still_joins(srv):

@@ -153,7 +153,7 @@ def recall(query: str, top_k: int, memory_type: str | None):
 
 # ------------------------------------------------------------------
 # recall-family read tools (recall-recent, timeline, about,
-# serendipity, hydrate, thread, find-entities)
+# serendipity, source, find-entities)
 #
 # Thin wrappers over the shared phileas.tool_runner so the CLI, the MCP
 # server, and the daemon all emit byte-identical strings. Daemon first
@@ -230,13 +230,6 @@ def serendipity(n: int, exclude_ids: str | None):
     """N high-signal memories deliberately NOT gated on query relevance."""
     ids = [x.strip() for x in exclude_ids.split(",") if x.strip()] if exclude_ids else None
     _run_tool("serendipity", {"n": n, "exclude_ids": ids})
-
-
-@click.command("hydrate")
-@click.argument("memory_id")
-def hydrate(memory_id: str):
-    """Full record of one memory by id or 8-char prefix."""
-    _run_tool("hydrate", {"memory_id": memory_id})
 
 
 @click.command("source")

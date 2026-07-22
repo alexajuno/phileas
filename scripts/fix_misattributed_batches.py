@@ -4,7 +4,7 @@
 Some early batches pinned a whole session's memories onto a single context/opening
 turn whose verbatim is about an unrelated topic (a poker question carrying 19
 math-competition memories; a skill-creator doc carrying Polar SDK memories). That
-makes hydrate() report a false source turn and thread() cluster unrelated turns.
+makes a memory report a false source turn, and clusters unrelated turns together.
 
 The fix, per batch: create one honest "recovered session" thread + placeholder
 event (source_kind='recovered'), and repoint the off-topic memories onto it. The

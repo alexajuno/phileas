@@ -501,8 +501,8 @@ class Database:
 
         Returns every active-or-archived match (capped at ``limit``) so the
         caller can distinguish the no-match, unique-match, and ambiguous-prefix
-        cases. A full uuid resolves to at most one row. Used by `hydrate`
-        (AA-106) to turn a cheap pointer id8 back into a full record.
+        cases. A full uuid resolves to at most one row, so a caller holding the
+        id8 printed on a recall line can name that memory unambiguously.
         """
         clean = (prefix or "").strip()
         if not clean:

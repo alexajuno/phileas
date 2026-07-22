@@ -7,7 +7,7 @@ Three layers:
 2. Resolution — each branch of ``resolve_contradiction`` produces the right
    edges/state (archive + SUPERSEDES, dual SCOPED_TO + resolved-by-context
    CONTRADICTS, or an open CONTRADICTS with confidence).
-3. Read path — ``hydrate`` shows contradictions, and a scoped-both pair surfaces
+3. Read path — the CONTRADICTS edge is readable back, and a scoped-both pair surfaces
    under its own context in recall without the CONTRADICTS edge double-demoting.
 
 The integration tests use a real GraphStore + VectorStore + MemoryEngine (the
@@ -292,18 +292,16 @@ def test_resolve_rejects_bad_inputs(tmp_dir: Path):
     assert "No memory found" in eng.resolve_contradiction(a, "ffffffff", "coexist")
 
 
-# --- read path: hydrate ----------------------------------------------------
+# --- read path: the CONTRADICTS edge ---------------------------------------
 
 
-def test_hydrate_shows_contradictions(tmp_dir: Path):
+def test_open_contradiction_is_readable_from_the_graph(tmp_dir: Path):
     eng = _engine(tmp_dir)
     a = eng.memorize("fact a", detect_conflict=False)["id"]
     b = eng.memorize("fact b", detect_conflict=False)["id"]
     eng.resolve_contradiction(a, b, "coexist", confidence=0.7)
 
-    record = eng.hydrate(a)
-    assert record is not None
-    cons = record["contradictions"]
+    cons = eng.graph.get_contradictions_for_memory(a)
     assert len(cons) == 1
     assert cons[0]["memory_id"] == b
     assert cons[0]["resolution"] == "open"

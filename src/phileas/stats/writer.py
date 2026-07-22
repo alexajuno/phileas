@@ -214,8 +214,8 @@ class MetricsWriter:
         Captures the MCP boundary: tool name, latency, success flag,
         exception class name on failure, and ``output_chars`` — the length of
         the string the tool returned into the agent's context. That last field
-        is the realized context cost of a call, the before/after surface for
-        the recall pointer/hydrate split (AA-106). Deliberately does NOT
+        is the realized context cost of a call, the surface any change to what
+        recall returns is measured against. Deliberately does NOT
         capture arguments — queries and summaries can contain PII, and recall
         already has a richer per-call trace in `recall_traces`.
         """

@@ -28,23 +28,19 @@ Route by the shape of the question. Call several in parallel when shapes overlap
 - **Date range** spanning multiple days → `timeline(start_date=..., end_date=...)`.
 - **Wildcard / cross-topic nudge** (no anchor; you want what the task *wouldn't* surface) → `serendipity(n=3)`. Opt-in, not relevance-gated. Pass ids already in context as `exclude_ids`.
 
-### Pointers in, hydrate on demand
+### What a recall returns
 
-Recall-family tools (`recall`, `recall_recent`, `about`, `timeline`) return cheap **pointers**, not full bodies:
+Recall-family tools (`recall`, `recall_recent`, `about`, `timeline`) return one line per memory:
 
 ```
 [a1b2c3d4] [event] 2026-06-07 · Mara bought a cake in Lisbon last night · Mara, Lisbon
 ```
 
-That line is `[id8] [type] date · content · entity tags`. The content is the whole fact — for most prompts the pointers already answer the question, so **don't fan out `recall()` a dozen times hoping for depth**, and don't dump everything. `recall_recent` and `about` are bounded (a heavy day or hub entity shows a cap / `+N more` note) so they can't overflow the context.
+That line is `[id8] [type] date · content · entity tags`, and the content is the whole fact. What you read is what the memory says, so answer from it: **don't fan out `recall()` a dozen times hoping for depth**, and don't dump everything. Results are bounded by relevance and by output size (a heavy window or hub entity shows a cap / `+N more` note) so a broad query returns the strongest few rather than everything.
 
-When you genuinely need more than a pointer, drill in — cheapest to most expensive:
+The one step past a memory is the conversation it came from:
 
-- `hydrate(id8)` — the full record of **one** memory: exact timestamps, status/counts, its source turn (the raw it was distilled from), its `thread_id`, and linked entities. The inverse of the pointer trim.
-- `thread(thread_id)` — the conversation a memory came from: its raw turns in order, each with the memories it produced. Get `thread_id` from `hydrate` first. The deepest, most expensive view.
-- `about(name)` — everything tied to an entity (also bounded).
-
-Rule of thumb: scan pointers → hydrate the one or two that matter → thread only if you need the surrounding conversation. Each hop up the ladder costs more context, so climb it deliberately.
+- `source(source_id)` — the raw turns of a session, in order, plus the memories distilled from them. `recall_recent` prints a session handle (`↳id8`) on each line; `get_source_memories(id)` is the lighter version that lists a session's memories without the turns. Far more expensive than a recall, so reach for it only when the wording of the conversation itself is what you need.
 
 ### Use the context
 
@@ -71,7 +67,7 @@ Every turn is already saved verbatim by Phileas on its own. You never capture th
 
 **Writing a memory or a proposal** — the fields are the same for `memorize` and `propose_memory`:
 
-- `content` is the conclusion as a one-line pointer recall surfaces. `source_text` is the body: for `memorize` the reasoning and alternatives that `hydrate` then `thread` drill into; for `propose_memory` a short "why it's worth keeping" the user sees at review.
+- `content` is the conclusion as the single line recall surfaces. `source_text` is the body: for `memorize` the reasoning and alternatives that `source` reads back; for `propose_memory` a short "why it's worth keeping" the user sees at review.
 - `memory_type` is `decision` for a choice-and-why, else `knowledge` / `behavior` / `reflection` / `event` / `profile`.
 - Tag `entities` with what the memory governs — for a code decision the repo, the file(s) or dir, and the concept — so a later `about(<file>)` surfaces it. With no entities it is findable only by full-text search. Pick each entity's `type` from exactly this vocabulary, closest bucket wins: Person, Organization, Place, Project, Tool, Object, Animal, Activity, Event, Concept. The type is a collision-resistant bucket, not a rich label; an invented synonym (Company, Topic, Repo) splits the same referent across separate graph nodes. Put richness in the entity's `description`, a brief stable phrase saying which one this is, which also helps the linker keep same-name entities apart.
 - If a `memorize` write conflicts with an existing memory, the result ends with a resolve menu; that is how a reversed decision supersedes the one it replaces.

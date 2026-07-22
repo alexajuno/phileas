@@ -11,7 +11,6 @@ Tools:
   - about: get memories connected to an entity
   - timeline: get memories in a date range
   - recall_recent: get recent memories (last N days) for temporal queries
-  - hydrate: full record of one memory by id/id8 — the drill-in for a pointer
   - serendipity: N high-signal memories NOT gated on query relevance
   - recall with memory_type="profile": get profile-type memories (ranked)
   - status: system health/stats
@@ -53,12 +52,12 @@ mcp = FastMCP(
     instructions=(
         "Phileas is a long-term memory companion.\n"
         "\n"
-        "POINTERS, NOT BODIES: recall-family tools return cheap POINTERS — "
-        "`[id8] [type] date · content · entity tags`. Long content is clipped with an "
-        "ellipsis (hydrate(id8) returns the full body); the metadata tail is trimmed and "
-        "results are bounded by count AND output size. Treat pointers as your working "
-        "context. Only drill in when you genuinely need more, via the hydrate ladder "
-        "below — don't fan out recall() dozens of times hoping for depth.\n"
+        "What you get back: recall-family tools return one line per memory — "
+        "`[id8] [type] date · content · entity tags`. The content is the whole fact, "
+        "so the line you read is the memory: answer from it rather than re-querying "
+        "for depth that isn't there. Results are bounded by relevance and by output "
+        "size, so a broad query returns the strongest few, not everything — don't fan "
+        "out recall() dozens of times hoping for more.\n"
         "\n"
         "Using what you recall: a recalled memory is a prior that shapes your answer, "
         "not content to repeat back. By default hold it: let it set your stance and "
@@ -87,11 +86,11 @@ mcp = FastMCP(
         "- serendipity(n): N high-signal memories NOT gated on relevance — a wildcard slot for "
         "cross-topic context the task wouldn't retrieve. Opt-in; keep n small.\n"
         "\n"
-        "Drill-in ladder (hydrate lazily — each step costs more):\n"
-        "- hydrate(id8): full record of ONE memory — exact timestamps, counts, its source "
-        "(the session it was distilled from) and source_id, linked entities. The inverse of the pointer trim.\n"
-        "- source(source_id): the session a memory came from — its turns in order and the "
-        "memories it produced. Get the source_id from hydrate. The deepest, most expensive view.\n"
+        "Reading a whole session back:\n"
+        "- source(source_id): the raw turns of one session, in order, plus the memories "
+        "distilled from them. recall_recent prints a session handle (↳id8) on each line. "
+        "The most expensive view by far — reach for it only when the wording of the "
+        "conversation itself is what you need.\n"
         "\n" + _capture_instructions
     ),
 )
@@ -155,10 +154,10 @@ def memorize(
     for this when the user explicitly says to remember or record something, above
     all a *decision* — a choice and the reasoning behind it.
 
-    Pointer/body split: `content` is the one-line pointer recall surfaces;
-    `source_text` is the full body (the reasoning, the alternatives passed over,
-    what it changes) that `hydrate` → `source` drills into. Put the decision in
-    `content`, the "why" in `source_text`.
+    Fact/body split: `content` is the line recall surfaces; `source_text` is the
+    surrounding body (the reasoning, the alternatives passed over, what it
+    changes) that `source` reads back. Put the decision in `content`, the "why"
+    in `source_text`.
 
     Tag `entities` with what the memory governs so it is findable later. For a
     code decision that means the repo, the file(s) or dir it applies to, and the
@@ -258,9 +257,9 @@ def recall(
     """Retrieve memories relevant to a focused term query.
 
     Hybrid retrieval: keyword (FTS5 OR-match across tokens, ranked by BM25) + semantic + graph
-    entity lookup + session-text fanout. Returns up to top_k POINTER
-    lines (`[id8] [type] date · content · entity tags`) — long content is
-    clipped, metadata is trimmed. Call hydrate(id8) for a memory's full detail.
+    entity lookup + session-text fanout. Returns up to top_k lines
+    (`[id8] [type] date · content · entity tags`), each carrying the memory's
+    whole content; the record's metadata tail is what's left off.
 
     Query shape (important):
         Pass focused noun-phrase queries — one concept, 1–4 words.
@@ -288,30 +287,14 @@ def recall(
 def source(source_id: str) -> str:
     """Return a session: its turns in order and the memories it produced.
 
-    Follow a memory back to where it came from — `hydrate` gives you a memory's
-    `source_id`; pass it here to read the whole session. The turns are the spine;
-    the memories are what was distilled from them.
+    Read a whole session back from its handle — `recall_recent` prints one
+    (`↳id8`) per session line. The turns are the spine; the memories are what
+    was distilled from them.
 
     Args:
-        source_id: A source id (from hydrate), or a client_key / id prefix.
+        source_id: A source id, or a client_key / id prefix.
     """
     return _call("source", {"source_id": source_id})
-
-
-@mcp.tool()
-def hydrate(memory_id: str) -> str:
-    """Inspect ONE memory in full — the drill-in for a cheap pointer.
-
-    Recall-family tools return *pointers* (`[id8] [type] date · content · entities`)
-    to keep the main context cheap. When you need what a pointer trims off —
-    exact timestamps, status/access counts, the full source_id
-    (then call `source` on it for the originating session), and linked
-    entities — pass the pointer's id8 (or the full uuid) here.
-
-    Args:
-        memory_id: A memory id or its 8-char pointer prefix (e.g. "a1b2c3d4").
-    """
-    return _call("hydrate", {"memory_id": memory_id})
 
 
 @mcp.tool()
@@ -553,8 +536,8 @@ def about(
 ) -> str:
     """Get memories connected to an entity in the knowledge graph.
 
-    Returns POINTER lines, bounded (hub entities show a "+N more" footer —
-    narrow with memory_type, or drill in via timeline / hydrate).
+    Returns memory lines, bounded (hub entities show a "+N more" footer —
+    narrow with memory_type, or drill in via timeline).
 
     Args:
         name: Name of the entity to look up (e.g., "<person>", "React").
@@ -601,8 +584,9 @@ def recall_recent(days: int = 7) -> str:
     'last chat', 'last night', 'last session', 'last time we talked'. If the
     prompt already carries a topic, prefer a focused recall(query): recall
     folds recency into its score, so it's recency-aware without enumerating
-    the whole window. Output is POINTER lines, every memory in the window
-    grouped by day (summaries clipped; hydrate(id8) for the full body).
+    the whole window. Output is one line per recent session, newest first, each
+    standing in for the session with its handle (↳id8) for `source` /
+    `get_source_memories`.
 
     Args:
         days: How many days back to look (default 7).

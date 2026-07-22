@@ -445,97 +445,6 @@ class MemoryEngine:
         )
         return [_item_to_dict(m) for m in items]
 
-    def hydrate(self, memory_id: str) -> dict | None:
-        """Resolve a pointer id (full uuid or 8-char prefix) to a full record.
-
-        The inverse of the pointer trim: returns everything the cheap pointer
-        line drops — exact timestamps, status/access counts, the
-        *full* source_id (the handle for `source`), and linked entities.
-        Powers the "inspect this one memory" drill-in (AA-106).
-
-        Returns the record dict on a unique match, ``None`` for no match, or
-        ``{"error": ..., "candidates": [...]}`` when an id prefix is ambiguous.
-        """
-        clean = (memory_id or "").strip()
-        if not clean:
-            return None
-        matches = self.db.get_items_by_id_prefix(clean)
-        if not matches:
-            return None
-        if len(matches) > 1:
-            return {
-                "error": f"ambiguous id prefix '{clean}' matched {len(matches)} memories",
-                "candidates": [{"id": m.id, "content": m.content} for m in matches],
-            }
-        item = matches[0]
-        entities: list[dict] = []
-        try:
-            entities = self.graph.get_entities_for_memory(item.id)
-        except Exception as e:
-            log.debug("hydrate entity lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
-        # Scoping (AA-119): contexts the memory holds/excludes in, plus validity
-        # windows. Empty ⇒ globally valid. `historical` flags a closed past
-        # window so the drill-in can label an expired temporal scope distinctly
-        # from an archived memory (never auto-superseded).
-        scopes: list[dict] = []
-        try:
-            scopes = self.graph.get_scopes_for_memory(item.id)
-        except Exception as e:
-            log.debug("hydrate scope lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
-        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        for s in scopes:
-            s["historical"] = _scope_is_expired(s, now_utc)
-        # Contradictions (AA-120): memories this one is in conflict with, with
-        # how the conflict was settled ('context' = contextual variants, 'open'
-        # = competing hypotheses). Empty ⇒ no recorded conflict.
-        contradictions: list[dict] = []
-        try:
-            contradictions = self.graph.get_contradictions_for_memory(item.id)
-        except Exception as e:
-            log.debug("hydrate contradiction lookup failed", extra={"op": "hydrate", "data": {"error": str(e)}})
-        # Provenance: the set of sessions this memory was distilled from. The
-        # `memory_sources` join is authoritative; fall back to the single
-        # `source_id` column so a memory's primary source always shows.
-        # `source(source_id)` reads the session back.
-        source_ids = self.db.get_source_ids_for_memory(item.id)
-        if not source_ids and item.source_id:
-            source_ids = [item.source_id]
-        sources_meta: list[dict] = []
-        for sid in source_ids:
-            src = self.db.get_source(sid)
-            if src is None:
-                continue
-            sources_meta.append(
-                {
-                    "source_id": src.id,
-                    "client_key": src.client_key,
-                    "kind": src.kind,
-                    "label": src.label,
-                    "turn_count": src.turn_count,
-                }
-            )
-        # Back-compat singleton: the memory's primary (first) source.
-        source_id = source_ids[0] if source_ids else None
-        source_meta = sources_meta[0] if sources_meta else None
-        return {
-            "id": item.id,
-            "content": item.content,
-            "type": item.memory_type,
-            "status": item.status,
-            "access_count": item.access_count,
-            "reinforcement_count": item.reinforcement_count,
-            "daily_ref": item.daily_ref,
-            "created_at": item.created_at.isoformat() if item.created_at else None,
-            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            "source_id": source_id,
-            "source_ids": source_ids,
-            "source": source_meta,
-            "sources": sources_meta,
-            "entities": entities,
-            "scopes": scopes,
-            "contradictions": contradictions,
-        }
-
     def serendipity(self, n: int = 3, exclude_ids: list[str] | None = None) -> list[dict]:
         """Pick N high-signal memories **not gated on query relevance** (AA-106).
 
@@ -2490,9 +2399,8 @@ class MemoryEngine:
     ) -> str:
         """Scope a memory to a context: SCOPED_TO edge, post-hoc.
 
-        Accepts a full memory uuid or an 8-char pointer prefix (same
-        resolution as ``hydrate``). Idempotent — repeat calls update the
-        edge's qualifiers in place.
+        Accepts a full memory uuid or the 8-char prefix a recall line prints.
+        Idempotent — repeat calls update the edge's qualifiers in place.
         """
         op_extra(memory_id=memory_id, context=context, polarity=polarity)
         clean = (memory_id or "").strip()

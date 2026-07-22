@@ -18,7 +18,6 @@ from phileas.cli.commands import (
     contradictions,
     export_cmd,
     find_entities,
-    hydrate,
     ingest,
     init_cmd,
     recall,
@@ -90,7 +89,6 @@ app.add_command(recall_recent)
 app.add_command(timeline)
 app.add_command(about)
 app.add_command(serendipity)
-app.add_command(hydrate)
 app.add_command(source)
 app.add_command(find_entities)
 app.add_command(scope_cmd)

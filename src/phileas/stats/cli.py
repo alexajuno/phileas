@@ -253,7 +253,7 @@ def stats_tools(since: str, bucket: str, as_json: bool):
 @stats.command("bounds")
 @_shared_flags
 def stats_bounds(since: str, bucket: str, as_json: bool):
-    """recall_recent output: content-clip fire rate + savings."""
+    """recall_recent output: how often the session budget binds, and by how much."""
     cfg = load_config()
     since_dt, _, _ = _resolve_window(since)
     metrics_db = cfg.home / "metrics.db"
@@ -275,14 +275,14 @@ def stats_bounds(since: str, bucket: str, as_json: bool):
             ],
         )
     )
-    t = Table(title="Content clip (POINTER_CONTENT_CHARS in recall_format.py; 0 = off)")
-    for col in ("Fired", "Fire rate", "Effect"):
+    t = Table(title="Session budget (DEFAULT_MAX_SOURCES / DEFAULT_MAX_CHARS in recent.py)")
+    for col in ("Capped", "Cap rate", "Effect"):
         t.add_column(col)
-    trunc = data["truncation"]
+    budget = data["budget"]
     t.add_row(
-        str(trunc["fired_calls"]),
-        f"{trunc['fire_rate']:.0%}",
-        f"{trunc['memories_truncated']:,} summaries clipped, {trunc['chars_saved']:,} chars saved",
+        str(budget["capped_calls"]),
+        f"{budget['cap_rate']:.0%}",
+        f"{budget['sources_hidden']:,} sessions held back, {budget['memories_in_window']:,} memories gathered",
     )
     render.console.print(t)
     if data["uninstrumented"]:

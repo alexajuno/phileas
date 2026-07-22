@@ -28,8 +28,8 @@ DISTILLED_TYPE = "reflection"
 DEFAULT_MAX_SOURCES = 12
 DEFAULT_MAX_CHARS = 3000
 
-# Per-line overhead beyond the clipped content (id8, type, counts, span, tags),
-# charged against the char budget so a wide session costs roughly what it renders.
+# Per-line overhead beyond the content (id8, type, counts, span, tags), charged
+# against the char budget so a wide session costs roughly what it renders.
 _LINE_OVERHEAD = 70
 
 
@@ -61,7 +61,6 @@ def group_recent_sources(
     *,
     max_sources: int = 12,
     max_chars: int = 3000,
-    clip: int = 200,
 ) -> dict:
     """Group items by source session, rank by recency, keep newest within budget.
 
@@ -97,7 +96,7 @@ def group_recent_sources(
     kept: list[dict] = []
     chars = 0
     for s in snaps:
-        cost = min(len((s["rep"].get("content") or "").strip()), clip) + _LINE_OVERHEAD
+        cost = len((s["rep"].get("content") or "").strip()) + _LINE_OVERHEAD
         # Always keep at least one session; otherwise stop at the first bound hit.
         if kept and (len(kept) >= max_sources or chars + cost > max_chars):
             break
@@ -107,7 +106,7 @@ def group_recent_sources(
     return {"sources": kept, "total_sources": len(snaps), "shown": len(kept)}
 
 
-def render_source_line(snap: dict, entities_by_id: dict[str, list[dict]] | None, *, clip: int) -> str:
+def render_source_line(snap: dict, entities_by_id: dict[str, list[dict]] | None) -> str:
     """One snapshot line: the representative pointer plus the session's badge.
 
     Reuses ``pointer_line`` for the ``[id8] [type] content · entities`` head, then
@@ -115,7 +114,7 @@ def render_source_line(snap: dict, entities_by_id: dict[str, list[dict]] | None,
     ``get_source_memories`` for the full session.
     """
     rep = snap["rep"]
-    base = pointer_line(rep, entities_by_id, show_date=False, max_content_chars=clip)
+    base = pointer_line(rep, entities_by_id, show_date=False)
     start, end = snap["span"]
     s0 = (start or "")[5:16].replace("T", " ")
     s1 = (end or "")[5:16].replace("T", " ")

@@ -120,8 +120,8 @@ def test_parse_transcript_records_failed_memorize():
 def test_parse_transcript_separates_turns_and_classifies_other_tools():
     entries = [
         _user("first question about the weather today"),
-        _assistant_tool("tu1", "mcp__phileas__hydrate", {"memory_id": "aaaaaaaa"}),
-        _tool_result("tu1", _env("[aaaaaaaa] full body")),
+        _assistant_tool("tu1", "mcp__phileas__scopes", {"memory_id": "aaaaaaaa"}),
+        _tool_result("tu1", _env("[aaaaaaaa] globally valid")),
         _assistant_text("here is the answer"),
         _user("a completely separate second question"),
         _assistant_text("second answer"),
@@ -131,7 +131,7 @@ def test_parse_transcript_separates_turns_and_classifies_other_tools():
 
     assert len(turns) == 2
     assert turns[0].index == 1 and turns[1].index == 2
-    assert turns[0].other_tools == ["hydrate"]  # not a recall, not a store
+    assert turns[0].other_tools == ["scopes"]  # not a recall, not a store
     assert turns[0].recalls == [] and turns[0].stores == []
     assert turns[1].reply == "second answer"
 

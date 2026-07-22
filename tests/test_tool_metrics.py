@@ -41,8 +41,8 @@ def test_tool_calls_summary_percentiles_and_drill_in_rate(tmp_path: Path):
     writer = MetricsWriter(tmp_path / "metrics.db")
     for chars in (1000, 2000, 3000, 4000):
         writer.record_tool_call(tool="recall", latency_ms=10.0, ok=True, output_chars=chars)
-    writer.record_tool_call(tool="hydrate", latency_ms=4.0, ok=True, output_chars=300)
-    writer.record_tool_call(tool="thread", latency_ms=8.0, ok=True, output_chars=900)
+    writer.record_tool_call(tool="source", latency_ms=4.0, ok=True, output_chars=300)
+    writer.record_tool_call(tool="get_source_memories", latency_ms=8.0, ok=True, output_chars=900)
     writer.record_tool_call(tool="recall", latency_ms=10.0, ok=False, error="ValueError", output_chars=None)
 
     summary = tool_calls_summary(tmp_path / "metrics.db", None)
@@ -53,7 +53,7 @@ def test_tool_calls_summary_percentiles_and_drill_in_rate(tmp_path: Path):
     # 4 char samples (the failed call had None) -> p50 picks an upper-middle sample
     assert by_tool["recall"]["p50_chars"] in (2000, 3000)
     assert by_tool["recall"]["p95_chars"] == 4000
-    # drill-in rate = (hydrate + thread) / (recall + recall_recent) = 2 / 5
+    # drill-in rate = (source + get_source_memories) / (recall + recall_recent) = 2 / 5
     assert summary["drill_in_rate"] == 2 / 5
     assert summary["total_calls"] == 7
 

@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 
 from phileas import tool_runner
 from phileas.llm.recall_planning import plan_queries
-from phileas.recall_format import POINTER_CONTENT_CHARS, pointer_line
+from phileas.recall_format import pointer_line
 
 if TYPE_CHECKING:
     from phileas.engine import MemoryEngine
@@ -103,8 +103,8 @@ _PREAMBLE = (
     "Relevant memories from past sessions with this user, retrieved before this turn. "
     "They are prior context, not content to repeat back: let them inform the answer the "
     "way knowing someone informs it. Say what you remember only when the user asks about "
-    "the past, or when naming it changes the answer. hydrate(id) for a full memory, "
-    "source(id) for the conversation it came from."
+    "the past, or when naming it changes the answer. source(id) reads back the "
+    "conversation a memory came from."
 )
 
 
@@ -181,9 +181,7 @@ def render(sections: list[tuple[str, list[dict]]], entities_fn) -> str:
     for label, items in sections:
         lines.append(f"{label} —")
         entities = entities_fn(items)
-        lines.extend(
-            pointer_line(item, entities, show_date=True, max_content_chars=POINTER_CONTENT_CHARS) for item in items
-        )
+        lines.extend(pointer_line(item, entities, show_date=True) for item in items)
         lines.append("")
     lines.append(BLOCK_CLOSE)
     return "\n".join(lines)

@@ -17,8 +17,9 @@ the curated surface; reach ``m.engine`` for everything the facade does not
 re-expose (``survey``, ``reconcile``, ``scope``, ``expand``, ...).
 
 The canonical verbs match the rest of Phileas (the MCP tools and CLI):
-``memorize`` / ``recall`` / ``hydrate`` / ``forget``. ``add`` / ``search`` /
-``get`` / ``delete`` are aliases for callers who expect that vocabulary.
+``memorize`` / ``recall`` / ``forget``. ``add`` / ``search`` / ``delete`` are
+aliases for callers who expect that vocabulary, alongside ``get`` for a
+by-id fetch.
 """
 
 from __future__ import annotations
@@ -70,10 +71,6 @@ class Memory:
         """Retrieve memories for a query. See ``MemoryEngine.recall``."""
         return self._engine.recall(query, top_k=top_k, **kwargs)
 
-    def hydrate(self, memory_id: str) -> dict | None:
-        """Return a memory's full body by id (or id prefix)."""
-        return self._engine.hydrate(memory_id)
-
     def update(self, memory_id: str, **kwargs) -> dict:
         """Update a memory in place. See ``MemoryEngine.update``."""
         return self._engine.update(memory_id, **kwargs)
@@ -101,8 +98,11 @@ class Memory:
         return self.recall(query, top_k=top_k, **kwargs)
 
     def get(self, memory_id: str) -> dict | None:
-        """Alias for :meth:`hydrate`."""
-        return self.hydrate(memory_id)
+        """Fetch one memory by id (or unambiguous id prefix); None if no single match."""
+        from phileas.engine import _item_to_dict
+
+        matches = self._engine.db.get_items_by_id_prefix((memory_id or "").strip())
+        return _item_to_dict(matches[0]) if len(matches) == 1 else None
 
     def delete(self, memory_id: str, reason: str | None = None) -> str:
         """Alias for :meth:`forget`."""

@@ -6,8 +6,8 @@ Two layers:
    historical decision in isolation, no graph.
 2. Integration tests against a real ``GraphStore`` + ``MemoryEngine`` (the
    test_recall_thread pattern) covering resolve/expand, lifting over PART_OF,
-   the ranking outcomes, the no-context passthrough guarantee, and hydrate's
-   scope display.
+   the ranking outcomes, the no-context passthrough guarantee, and the
+   `scopes` read path.
 """
 
 from __future__ import annotations
@@ -282,34 +282,32 @@ def test_expired_validity_retrievable_but_ranked_down(tmp_dir: Path):
     assert ids.index(fresh) < ids.index(expired)  # ranked down
 
 
-def test_hydrate_shows_scopes_and_historical(tmp_dir: Path):
+def test_scopes_marks_an_expired_window_historical(tmp_dir: Path):
     eng = _engine(tmp_dir)
     mid = _seed(eng, "internship period fact", id="cccc0000-0000-0000-0000-000000000000")
     eng.graph.add_scope(mid, "ownego internship", valid_from="2026-01-01", valid_to="2020-06-30")
 
-    out = eng.hydrate("cccc0000")
-    assert out is not None and "scopes" in out
-    assert len(out["scopes"]) == 1
-    s = out["scopes"][0]
-    assert s["context_name"]
-    assert s["polarity"] == "holds"
-    assert s["historical"] is True  # valid_to is in the past
+    rows = eng.graph.get_scopes_for_memory(mid)
+    assert len(rows) == 1
+    assert rows[0]["context_name"]
+    assert rows[0]["polarity"] == "holds"
 
 
-def test_tool_runner_hydrate_renders_scope_block(tmp_dir: Path):
-    """The hydrate pointer-drill-in surfaces the scope line, marked historical."""
+def test_tool_runner_scopes_renders_scope_block(tmp_dir: Path):
+    """The `scopes` read path surfaces the scope line, marked historical."""
     from phileas import tool_runner
 
     eng = _engine(tmp_dir)
     mid = _seed(eng, "scoped fact", id="dddd0000-0000-0000-0000-000000000000")
     eng.graph.add_scope(mid, "ownego internship", valid_to="2020-06-30")
 
-    out = tool_runner.hydrate(eng, lambda items: {}, memory_id="dddd0000")
-    assert "scoped to 1 context(s):" in out["text"]
+    out = tool_runner.scopes(eng, lambda items: {}, memory_id="dddd0000")
+    assert "Scoped to 1 context(s):" in out["text"]
     assert "ownego internship" in out["text"].lower()
-    assert "historical" in out["text"]
+    assert "historical" in out["text"]  # valid_to is in the past
 
-    # An unscoped memory renders no scope block at all.
+    # An unscoped memory says so instead of rendering a scope block.
     _seed(eng, "plain fact", id="eeee0000-0000-0000-0000-000000000000")
-    out2 = tool_runner.hydrate(eng, lambda items: {}, memory_id="eeee0000")
-    assert "scoped to" not in out2["text"]
+    out2 = tool_runner.scopes(eng, lambda items: {}, memory_id="eeee0000")
+    assert "Scoped to" not in out2["text"]
+    assert "globally valid" in out2["text"]

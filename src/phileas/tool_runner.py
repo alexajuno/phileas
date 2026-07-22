@@ -20,14 +20,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import date as _date
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from phileas import recent
 from phileas.db import clean_source_id
 from phileas.recall_format import (
     ABOUT_MAX,
-    POINTER_CONTENT_CHARS,
     id8,
     render_pointers,
 )
@@ -97,8 +96,7 @@ def recall_recent(
     if not items:
         return {"items": [], "text": f"No memories found in the last {days} day(s)."}
 
-    clip = POINTER_CONTENT_CHARS
-    res = recent.group_recent_sources(items, max_sources=max_threads, max_chars=max_chars, clip=clip)
+    res = recent.group_recent_sources(items, max_sources=max_threads, max_chars=max_chars)
     sources = res["sources"]
 
     # Entity tags only for the representative of each shown session.
@@ -108,7 +106,7 @@ def recall_recent(
         f"Recent sessions (newest first — {res['shown']} of {res['total_sources']}; "
         "expand any with get_source_memories(<id>)):"
     ]
-    lines.extend(recent.render_source_line(s, ents, clip=clip) for s in sources)
+    lines.extend(recent.render_source_line(s, ents) for s in sources)
     output = "\n".join(lines)
 
     bounds = {
@@ -125,9 +123,8 @@ def get_source_memories(engine, entities_fn: EntitiesFn, *, source_id: str) -> T
     items = engine.get_source_memories(source_id)
     if not items:
         return {"items": [], "text": f"No memories found for source {id8(source_id)}."}
-    clip = POINTER_CONTENT_CHARS
     lines = [f"{len(items)} memory(ies) in source {id8(source_id)} (newest first):"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True))
     return {"items": items, "text": "\n".join(lines)}
 
 
@@ -146,10 +143,9 @@ def timeline(
             return {"items": [], "text": f"No memories found between {start_date} and {end_date}."}
         return {"items": [], "text": f"No memories found for {start_date}."}
 
-    clip = POINTER_CONTENT_CHARS
     range_str = f"{start_date} to {end_date}" if end_date else start_date
     lines = [f"Memories for {range_str} ({len(items)} found):"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True))
     return {"items": items, "text": "\n".join(lines)}
 
 
@@ -166,13 +162,12 @@ def about(
     if not items:
         return {"items": [], "text": f"No memories found for '{name}'."}
 
-    clip = POINTER_CONTENT_CHARS
     cap = ABOUT_MAX
     shown = items[:cap]
     lines = [f"Memories about '{name}' ({len(items)} found):"]
-    lines.extend(render_pointers(shown, entities_fn(shown), show_date=True, max_content_chars=clip))
+    lines.extend(render_pointers(shown, entities_fn(shown), show_date=True))
     if len(items) > cap:
-        lines.append(f"  … +{len(items) - cap} more (narrow with memory_type, or use timeline / hydrate to drill in)")
+        lines.append(f"  … +{len(items) - cap} more (narrow with memory_type, or use timeline to drill in)")
     return {"items": shown, "text": "\n".join(lines)}
 
 
@@ -187,71 +182,9 @@ def serendipity(
     items = engine.serendipity(n=n, exclude_ids=parsed)
     if not items:
         return {"items": [], "text": "No memories available for serendipity."}
-    clip = POINTER_CONTENT_CHARS
     lines = [f"Serendipity — {len(items)} high-signal memories (NOT query-matched):"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=clip))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True))
     return {"items": items, "text": "\n".join(lines)}
-
-
-def hydrate(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
-    result = engine.hydrate(memory_id)
-    if result is None:
-        return {"items": [], "text": f"No memory found for id '{memory_id}'."}
-    if "error" in result:
-        candidates = result.get("candidates", [])
-        lines = [result["error"] + " — disambiguate:"]
-        for c in candidates:
-            lines.append(f"  [{id8(c['id'])}] {c['content']}")
-        return {"items": candidates, "text": "\n".join(lines)}
-
-    ent_names = ", ".join(dict.fromkeys(e.get("name", "") for e in (result.get("entities") or []) if e.get("name")))
-    lines = [
-        f"[{result['id']}] [{result['type']}]",
-        f"  {result['content']}",
-        f"  status={result['status']}  "
-        f"access_count={result['access_count']}  reinforcement_count={result['reinforcement_count']}",
-        f"  created={result['created_at']}  updated={result['updated_at']}",
-        f"  daily_ref={result.get('daily_ref') or '—'}",
-    ]
-    # Provenance: the session this memory was distilled from. source(source_id)
-    # reads back the whole session.
-    src = result.get("source")
-    if src:
-        label = src.get("label") or src.get("client_key") or src.get("kind") or "session"
-        turns = src.get("turn_count", 0)
-        lines.append(
-            f"  from source [{id8(src['source_id'])}]: {label} ({turns} turn(s))  "
-            "(call source() on it for the full session)"
-        )
-    else:
-        lines.append(f"  source_id={result.get('source_id') or '—'}")
-    lines.append(f"  entities: {ent_names or '—'}")
-    # Scoping (AA-119): only render when present — an unscoped memory is
-    # globally valid and the line would be noise on the vast majority.
-    scopes = result.get("scopes") or []
-    if scopes:
-        lines.append(f"  scoped to {len(scopes)} context(s):")
-        for r in scopes:
-            quals = [r.get("polarity") or "holds"]
-            if r.get("valid_from"):
-                quals.append(f"from {r['valid_from']}")
-            if r.get("valid_to"):
-                quals.append(f"to {r['valid_to']}")
-            if r.get("confidence") is not None:
-                quals.append(f"confidence={r['confidence']}")
-            if r.get("historical"):
-                quals.append("historical")
-            types = "/".join(r.get("context_types") or []) or "?"
-            lines.append(f"    {r['context_name']} [{types}] ({', '.join(quals)})")
-    # Contradictions (AA-120): only render when present.
-    contradictions = result.get("contradictions") or []
-    if contradictions:
-        lines.append(f"  contradicts {len(contradictions)} memory(ies):")
-        for c in contradictions:
-            kind = "resolved by context" if c.get("resolution") == "context" else "open"
-            tail = f", confidence={c['confidence']}" if c.get("confidence") is not None else ""
-            lines.append(f"    [{id8(c['memory_id'])}] ({kind}{tail})")
-    return {"items": [result], "text": "\n".join(lines)}
 
 
 def source(engine, entities_fn: EntitiesFn, *, source_id: str) -> ToolResult:
@@ -305,8 +238,14 @@ def scopes(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
             "text": f"[{id8(item.id)}] has no SCOPED_TO contexts — globally valid.\n  {item.content}",
         }
 
+    # `historical` flags a closed past window, so an expired temporal scope reads
+    # differently from an archived memory (which is never auto-superseded).
+    from phileas.engine import _scope_is_expired
+
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     lines = [f"[{id8(item.id)}] {item.content}", f"Scoped to {len(rows)} context(s):"]
     for r in rows:
+        r["historical"] = _scope_is_expired(r, now_utc)
         quals = [r.get("polarity") or "holds"]
         if r.get("valid_from"):
             quals.append(f"from {r['valid_from']}")
@@ -314,6 +253,8 @@ def scopes(engine, entities_fn: EntitiesFn, *, memory_id: str) -> ToolResult:
             quals.append(f"to {r['valid_to']}")
         if r.get("confidence") is not None:
             quals.append(f"confidence={r['confidence']}")
+        if r["historical"]:
+            quals.append("historical")
         types = "/".join(r.get("context_types") or []) or "?"
         lines.append(f"  {r['context_name']} [{types}] ({', '.join(quals)})")
     return {"items": rows, "text": "\n".join(lines)}
@@ -342,7 +283,6 @@ TOOLS: dict[str, Callable[..., ToolResult]] = {
     "timeline": timeline,
     "about": about,
     "serendipity": serendipity,
-    "hydrate": hydrate,
     "source": source,
     "find_entities": find_entities,
     "scopes": scopes,
@@ -466,7 +406,7 @@ def recall(
         return "No relevant memories found."
 
     lines = [f"Found {len(items)} memories:"]
-    lines.extend(render_pointers(items, entities_fn(items), show_date=True, max_content_chars=POINTER_CONTENT_CHARS))
+    lines.extend(render_pointers(items, entities_fn(items), show_date=True))
     return "\n".join(lines)
 
 
@@ -491,7 +431,7 @@ def memorize(
     # The pointer/body split for a human-initiated write: when the caller hands
     # over verbatim source (a decision's reasoning, the alternatives passed over),
     # capture it as a one-turn source and hang the memory off it. `content` is the
-    # pointer recall surfaces; this source is the body hydrate → source drills into.
+    # pointer recall surfaces; this source is the body `source()` reads back.
     if source_text and source_id is None:
         source_id = _manual_source(engine, source_text)
     source_id = _resolve_source_id(engine, source_id)
@@ -837,7 +777,7 @@ def ingest_source(engine, entities_fn: EntitiesFn, *, payload: dict, mark_ready:
 
 def _trace_recent(engine, items: list[dict], days: int, latency_ms: float, bounds: dict | None = None) -> None:
     """Best-effort trace write for the recall_recent MCP tool (mirrors the old
-    stdio-side trace). ``bounds`` carries the per-memory clip counters."""
+    stdio-side trace). ``bounds`` carries the snapshot's budget counters."""
     try:
         from phileas.engine import _trace_recall
 
@@ -865,13 +805,10 @@ def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) 
         engine.db.mark_consolidation(dismiss, "dismissed")
         return f"Dismissed consolidation cluster {dismiss[:8]}."
 
-    def _clip(s: str) -> str:
-        return s if len(s) <= POINTER_CONTENT_CHARS else s[:POINTER_CONTENT_CHARS] + "…"
-
     blocks: list[str] = []
     shown_ids: list[str] = []
     for row in engine.db.list_pending_consolidations():
-        # Refs, not snapshots: hydrate to current state and drop members archived or
+        # Refs, not snapshots: resolve to current state and drop members archived or
         # already rolled up since detection.
         items = [it for it in (engine.db.get_item(mid) for mid in row["member_ids"]) if it and it.status == "active"]
         if items:
@@ -885,7 +822,7 @@ def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) 
         span = row["span"]
         when = f" ({span[0]} → {span[1]})" if span and span[0] else ""
         head = f"[{row['id'][:8]}] {label} · {len(items)} memories{when}"
-        body = [f"    · [{it.id[:8]}] {_clip(it.content)}" for it in items[:CONSOLIDATE_SAMPLE]]
+        body = [f"    · [{it.id[:8]}] {it.content}" for it in items[:CONSOLIDATE_SAMPLE]]
         if len(items) > CONSOLIDATE_SAMPLE:
             body.append(f"    · (+{len(items) - CONSOLIDATE_SAMPLE} more — survey this theme to split and roll up)")
         blocks.append(head + "\n" + "\n".join(body))
