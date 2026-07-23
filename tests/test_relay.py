@@ -61,8 +61,8 @@ def test_run_mcp_read_family_and_specials(tmp_dir: Path):
     _seed(eng)
     ef = tool_runner.no_entities
     assert "sailing" in tool_runner.run_mcp(eng, ef, "about", {"name": "sailing"})
-    # recall_recent and get_source_memories are special-cased in run_mcp
-    assert isinstance(tool_runner.run_mcp(eng, ef, "recall_recent", {"days": 7}), str)
+    # get_source_memories is special-cased in run_mcp (unknown handle → clean message)
+    assert isinstance(tool_runner.run_mcp(eng, ef, "get_source_memories", {"source_id": "nope"}), str)
     assert isinstance(tool_runner.run_mcp(eng, ef, "find_entities", {"query": "sail"}), str)
 
 

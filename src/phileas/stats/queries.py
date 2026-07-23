@@ -183,9 +183,9 @@ def tool_calls_summary(metrics_db: Path, since: datetime | None) -> dict:
     """Per-tool MCP-call cost + the drill-in rate.
 
     ``output_chars`` (p50/p95) is the realized context cost a tool dumps into
-    the agent. The drill-in rate (``source`` over recall+recall_recent) gauges
-    whether a recall answers on its own: near-zero means it does, and a rising
-    rate means the model keeps needing the raw conversation behind the memory.
+    the agent. The drill-in rate (``source`` over ``recall``) gauges whether a
+    recall answers on its own: near-zero means it does, and a rising rate means
+    the model keeps needing the raw conversation behind the memory.
     """
     where, params = _since_clause(since)
     with _connect(metrics_db) as conn:
@@ -224,74 +224,12 @@ def tool_calls_summary(metrics_db: Path, since: datetime | None) -> dict:
     out.sort(key=lambda a: -a["calls"])
 
     counts = {a["tool"]: a["calls"] for a in out}
-    recall_entry = counts.get("recall", 0) + counts.get("recall_recent", 0)
+    recall_entry = counts.get("recall", 0)
     drill_in = counts.get("source", 0) + counts.get("get_source_memories", 0)
     return {
         "total_calls": sum(counts.values()),
         "drill_in_rate": (drill_in / recall_entry) if recall_entry else 0.0,
         "by_tool": out,
-    }
-
-
-def recall_bounds_summary(metrics_db: Path, since: datetime | None) -> dict:
-    """Snapshot-budget effectiveness for recall_recent's output.
-
-    Reads the bounds counters recall_recent writes into recall_traces.extra:
-    how often the session budget actually cut the window, how much it cut, and
-    the final output_chars distribution. This is the "does the bound prove
-    itself?" report: a budget that never binds is set too loose, and one that
-    hides most of the window on every call is set too tight. Traces from before
-    the counters existed are reported as ``uninstrumented``.
-    """
-    where, params = _since_clause(since)
-    where = f"{where} AND" if where else " WHERE"
-    with _connect(metrics_db) as conn:
-        rows = conn.execute(
-            f"SELECT extra FROM recall_traces{where} source = 'engine.recall_recent'",
-            params,
-        ).fetchall()
-
-    calls = len(rows)
-    uninstrumented = 0
-    capped_calls = 0
-    sources_hidden = 0
-    memories_in_window = 0
-    output_chars: list[int] = []
-    for r in rows:
-        try:
-            extra = json.loads(r["extra"] or "{}")
-        except (TypeError, ValueError):
-            extra = {}
-        if "output_chars" not in extra:
-            uninstrumented += 1
-            continue
-        output_chars.append(int(extra["output_chars"]))
-        memories_in_window += int(extra.get("memories_in_window") or 0)
-        total = int(extra.get("sources_total") or 0)
-        shown = int(extra.get("sources_shown") or 0)
-        if total > shown:
-            capped_calls += 1
-            sources_hidden += total - shown
-
-    def _pct(values: list[int], q: float) -> int:
-        if not values:
-            return 0
-        ordered = sorted(values)
-        return int(ordered[min(len(ordered) - 1, int(q * len(ordered)))])
-
-    instrumented = calls - uninstrumented
-    return {
-        "calls": calls,
-        "instrumented": instrumented,
-        "uninstrumented": uninstrumented,
-        "budget": {
-            "capped_calls": capped_calls,
-            "cap_rate": (capped_calls / instrumented) if instrumented else 0.0,
-            "sources_hidden": sources_hidden,
-            "memories_in_window": memories_in_window,
-        },
-        "p50_output_chars": _pct(output_chars, 0.5),
-        "p95_output_chars": _pct(output_chars, 0.95),
     }
 
 

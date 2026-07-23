@@ -21,7 +21,6 @@ from phileas.cli.commands import (
     ingest,
     init_cmd,
     recall,
-    recall_recent,
     reconcile,
     resolve_cmd,
     restart_cmd,
@@ -85,7 +84,6 @@ def app(ctx: click.Context, profile: str | None):
 
 app.add_command(status)
 app.add_command(recall)
-app.add_command(recall_recent)
 app.add_command(timeline)
 app.add_command(about)
 app.add_command(serendipity)

@@ -433,7 +433,7 @@ class MemoryEngine:
 
         ``handle`` is a source_id or client_key. Unlike ``source``, this returns
         only the distilled memory pointers, not the turns: the light expand for a
-        recall_recent source line. Empty when the handle resolves to nothing.
+        session handle. Empty when the handle resolves to nothing.
         """
         src = self._resolve_source(handle)
         if src is None:

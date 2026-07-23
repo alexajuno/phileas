@@ -45,17 +45,12 @@ MAX_QUERIES = 4
 class PlannedQuery(BaseModel):
     """One lookup: which recall-family tool to run, and what to ask it."""
 
-    tool: Literal["recall", "about", "recall_recent"] = "recall"
+    tool: Literal["recall", "about"] = "recall"
     query: str = Field(
         default="",
         description=(
-            "For recall: a focused term query in English, one concept, 1-4 words. "
-            "For about: the entity's name. For recall_recent: leave empty."
+            "For recall: a focused term query in English, one concept, 1-4 words. For about: the entity's name."
         ),
-    )
-    days: int | None = Field(
-        default=None,
-        description="For recall_recent only: how many days back to summarize.",
     )
 
 
@@ -72,10 +67,10 @@ class PlanningUnavailable(RuntimeError):
 def plan_queries(client: LLMClient, conversation: str) -> list[PlannedQuery]:
     """Plan the lookups for one turn from the recent exchange.
 
-    Drops queries the schema allowed but retrieval cannot use — an empty term for
-    a tool that needs one — rather than sending them on to score nothing, and
-    truncates to ``MAX_QUERIES``. Raises when the client cannot run; the caller
-    treats planning as best-effort and stays silent.
+    Drops queries the schema allowed but retrieval cannot use — an empty term —
+    rather than sending them on to score nothing, and truncates to
+    ``MAX_QUERIES``. Raises when the client cannot run; the caller treats
+    planning as best-effort and stays silent.
     """
     if not client.available:
         raise PlanningUnavailable("planning client not configured")
@@ -83,5 +78,5 @@ def plan_queries(client: LLMClient, conversation: str) -> list[PlannedQuery]:
     prompt = _PROMPT_PATH.read_text(encoding="utf-8").format(conversation=conversation)
     plan = client.invoke_structured("recall_planning", RecallPlan, prompt)
 
-    usable = [q for q in plan.queries if q.tool == "recall_recent" or q.query.strip()]
+    usable = [q for q in plan.queries if q.query.strip()]
     return usable[:MAX_QUERIES]

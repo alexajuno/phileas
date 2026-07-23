@@ -58,11 +58,11 @@ class FakeClient:
 
 
 def test_plan_drops_queries_with_no_term():
-    # The schema permits an empty query (recall_recent needs none), so a term-less
-    # recall would otherwise reach retrieval and score nothing.
-    plan = RecallPlan(queries=[_query("tennis"), _query("   "), PlannedQuery(tool="recall_recent", days=3)])
+    # The schema defaults query to "", so a term-less query would otherwise reach
+    # retrieval and score nothing; the planner drops it before it runs.
+    plan = RecallPlan(queries=[_query("tennis"), _query("   "), PlannedQuery(tool="about", query="Alex")])
     kept = plan_queries(FakeClient(plan), "user: hi")
-    assert [(q.tool, q.query) for q in kept] == [("recall", "tennis"), ("recall_recent", "")]
+    assert [(q.tool, q.query) for q in kept] == [("recall", "tennis"), ("about", "Alex")]
 
 
 def test_plan_is_capped():

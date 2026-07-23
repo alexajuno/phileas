@@ -20,21 +20,15 @@ from __future__ import annotations
 import json
 import re
 from datetime import date as _date
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Callable
 
-from phileas import recent
 from phileas.db import clean_source_id
 from phileas.recall_format import (
     ABOUT_MAX,
     id8,
     render_pointers,
 )
-
-# recall_recent gathers at least this many days regardless of the requested
-# `days`, so a small or arbitrary `days` cannot starve the snapshot; the budget,
-# not the window, bounds the output. `days` is advisory.
-MIN_GATHER_DAYS = 30
 
 EntitiesFn = Callable[[list[dict]], dict[str, list[dict]]]
 ToolResult = dict  # {"items": list[dict], "text": str, "tokens": int}
@@ -74,52 +68,8 @@ def estimate_tokens(text: str) -> int:
     return (len(text) + 3) // 4 if text else 0
 
 
-def recall_recent(
-    engine,
-    entities_fn: EntitiesFn,
-    *,
-    days: int = 7,
-    max_threads: int = recent.DEFAULT_MAX_SOURCES,
-    max_chars: int = recent.DEFAULT_MAX_CHARS,
-) -> ToolResult:
-    """Recent activity as a session snapshot — the newest sessions, one line each.
-
-    Groups the gather window's memories by their source session, ranks sessions
-    newest first, and keeps the top ones under a budget. A single busy session
-    collapses to one line (its latest reflection, or latest memory) carrying the
-    session's memory count and handle, so one burst can't drown the snapshot and
-    the size is bounded by the budget rather than by ``days``.
-    """
-    end = _date.today()
-    start = end - timedelta(days=max(days, MIN_GATHER_DAYS))
-    items = engine.timeline(start.isoformat(), end_date=end.isoformat(), window=0)
-    if not items:
-        return {"items": [], "text": f"No memories found in the last {days} day(s)."}
-
-    res = recent.group_recent_sources(items, max_sources=max_threads, max_chars=max_chars)
-    sources = res["sources"]
-
-    # Entity tags only for the representative of each shown session.
-    reps = [s["rep"] for s in sources]
-    ents = entities_fn(reps)
-    lines = [
-        f"Recent sessions (newest first — {res['shown']} of {res['total_sources']}; "
-        "expand any with get_source_memories(<id>)):"
-    ]
-    lines.extend(recent.render_source_line(s, ents) for s in sources)
-    output = "\n".join(lines)
-
-    bounds = {
-        "sources_total": res["total_sources"],
-        "sources_shown": res["shown"],
-        "memories_in_window": len(items),
-        "output_chars": len(output),
-    }
-    return {"items": reps, "text": output, "bounds": bounds, "sources": sources}
-
-
 def get_source_memories(engine, entities_fn: EntitiesFn, *, source_id: str) -> ToolResult:
-    """The memories of one session, newest first — the snapshot drill-in."""
+    """The memories of one session, newest first — the session drill-in."""
     items = engine.get_source_memories(source_id)
     if not items:
         return {"items": [], "text": f"No memories found for source {id8(source_id)}."}
@@ -279,7 +229,6 @@ def find_entities(engine, entities_fn: EntitiesFn, *, query: str) -> ToolResult:
 # web playground, and the CLI. ``recall`` is intentionally excluded: it already
 # has its own daemon method (returns a raw list for /api/recall) and its own UI.
 TOOLS: dict[str, Callable[..., ToolResult]] = {
-    "recall_recent": recall_recent,
     "timeline": timeline,
     "about": about,
     "serendipity": serendipity,
@@ -775,24 +724,6 @@ def ingest_source(engine, entities_fn: EntitiesFn, *, payload: dict, mark_ready:
     return engine.ingest_source(payload, mark_ready=mark_ready)
 
 
-def _trace_recent(engine, items: list[dict], days: int, latency_ms: float, bounds: dict | None = None) -> None:
-    """Best-effort trace write for the recall_recent MCP tool (mirrors the old
-    stdio-side trace). ``bounds`` carries the snapshot's budget counters."""
-    try:
-        from phileas.engine import _trace_recall
-
-        _trace_recall(
-            engine._metrics,
-            source="engine.recall_recent",
-            query=None,
-            latency_ms=latency_ms,
-            result=items,
-            extra={"days": days, **(bounds or {})},
-        )
-    except Exception:
-        pass
-
-
 def consolidate(engine, entities_fn: EntitiesFn, *, dismiss: str | None = None) -> str:
     """Drain the consolidation queue: the loose clusters recall flagged for roll-up.
 
@@ -908,19 +839,6 @@ def run_mcp(engine, entities_fn: EntitiesFn, name: str, params: dict | None = No
     action = MCP_ACTIONS.get(name)
     if action is not None:
         return action(engine, entities_fn, **params)
-    if name == "recall_recent":
-        from time import perf_counter
-
-        t0 = perf_counter()
-        result = recall_recent(engine, entities_fn, **params)
-        _trace_recent(
-            engine,
-            result["items"],
-            params.get("days", 7),
-            (perf_counter() - t0) * 1000,
-            result.get("bounds"),
-        )
-        return result["text"]
     if name == "get_source_memories":
         return get_source_memories(engine, entities_fn, **params)["text"]
     if name in TOOL_NAMES:

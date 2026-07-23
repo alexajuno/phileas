@@ -78,9 +78,9 @@ BLOCK_OPEN = "<phileas-memory>"
 BLOCK_CLOSE = "</phileas-memory>"
 
 # What ``nudge`` mode injects, and what ``plan`` falls back to when it cannot run.
-# The model picks its own query and tool here (recall / recall_recent / about /
-# find_entities / timeline — see the phileas skill's Recall section), so this
-# steers that choice without making it: nothing below runs a lookup.
+# The model picks its own query and tool here (recall / about / find_entities /
+# timeline — see the phileas skill's Recall section), so this steers that choice
+# without making it: nothing below runs a lookup.
 RECALL_HINT = (
     "<phileas-recall-hint>\n"
     "Before answering, weigh whether this prompt calls back to something "
@@ -90,7 +90,7 @@ RECALL_HINT = (
     "query per concept (not the prompt verbatim), phrased in English even "
     "when this conversation is in another language -- stored memories are "
     "in English, so a same-language query can miss them. Match the tool to "
-    "the question's shape -- recall, recall_recent, about/find_entities, "
+    "the question's shape -- recall, about/find_entities, "
     "and timeline all exist for a reason; see the "
     "phileas skill's Recall section for which one and how to size it. Fire "
     "more than one in parallel and merge by id when the prompt holds more "
@@ -129,15 +129,10 @@ def _items_for(engine: MemoryEngine, entities_fn, query: PlannedQuery) -> list[d
         return engine.recall(query.query, top_k=PER_QUERY_TOP_K, reinforce=False)
     if query.tool == "about":
         return tool_runner.run(engine, entities_fn, "about", {"name": query.query})["items"][:PER_QUERY_TOP_K]
-    if query.tool == "recall_recent":
-        params = {"days": query.days} if query.days else {}
-        return tool_runner.run(engine, entities_fn, "recall_recent", params)["items"][:PER_QUERY_TOP_K]
     return []
 
 
 def _label(query: PlannedQuery) -> str:
-    if query.tool == "recall_recent":
-        return f"recent activity ({query.days or 7}d)"
     return f'{query.tool}: "{query.query}"'
 
 

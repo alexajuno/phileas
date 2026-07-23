@@ -20,9 +20,8 @@ Reach for the durable nouns rather than the verbs of the moment. If the user say
 
 ## Choosing a tool
 
-- recall: the workhorse. A topic, a concept, a subsystem, a thing. Use it unless one of the others clearly fits better.
+- recall: the workhorse. A topic, a concept, a subsystem, a thing. Use it unless about clearly fits better.
 - about: an entity by name, when the prompt turns on who or what something is. A person, a project, a tool, a place. Put the entity's name in query.
-- recall_recent: no topic at all, only time. "Where were we", "what did we do yesterday", "last session". Set days and leave query empty.
 
 ## When to return nothing
 

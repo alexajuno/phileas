@@ -31,7 +31,7 @@ def pointer_line(
 
     The uuid tail and the score/event/time-of-day metadata are dropped; the
     content itself is whole, so a caller reading the line reads the whole fact.
-    ``show_date`` is False for day-grouped callers (recall_recent) where a
+    ``show_date`` is False for callers that group by date themselves, where a
     per-line date is redundant.
     """
     mid = item.get("id", "")

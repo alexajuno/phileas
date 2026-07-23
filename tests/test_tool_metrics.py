@@ -53,7 +53,7 @@ def test_tool_calls_summary_percentiles_and_drill_in_rate(tmp_path: Path):
     # 4 char samples (the failed call had None) -> p50 picks an upper-middle sample
     assert by_tool["recall"]["p50_chars"] in (2000, 3000)
     assert by_tool["recall"]["p95_chars"] == 4000
-    # drill-in rate = (source + get_source_memories) / (recall + recall_recent) = 2 / 5
+    # drill-in rate = (source + get_source_memories) / recall = 2 / 5
     assert summary["drill_in_rate"] == 2 / 5
     assert summary["total_calls"] == 7
 

@@ -34,9 +34,7 @@ from phileas.llm import INNER_PROMPT_HEADS
 
 # Phileas MCP tools, grouped by what the inspector shows them as. Names are the
 # bare tool name (the segment after the last ``__`` in ``mcp__<server>__<name>``).
-RETRIEVE_TOOLS = frozenset(
-    {"recall", "recall_recent", "timeline", "about", "find_entities", "serendipity", "expand", "survey"}
-)
+RETRIEVE_TOOLS = frozenset({"recall", "timeline", "about", "find_entities", "serendipity", "expand", "survey"})
 STORE_TOOLS = frozenset({"memorize", "update", "forget"})
 
 # Transcript user entries that look like prompts but were never typed by the human:

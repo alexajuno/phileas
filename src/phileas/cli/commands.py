@@ -152,7 +152,7 @@ def recall(query: str, top_k: int, memory_type: str | None):
 
 
 # ------------------------------------------------------------------
-# recall-family read tools (recall-recent, timeline, about,
+# recall-family read tools (timeline, about,
 # serendipity, source, find-entities)
 #
 # Thin wrappers over the shared phileas.tool_runner so the CLI, the MCP
@@ -192,13 +192,6 @@ def _run_tool(method: str, params: dict) -> None:
     except Exception as exc:
         print_error(str(exc))
         raise SystemExit(1)
-
-
-@click.command("recall-recent")
-@click.option("--days", default=7, type=int, help="How many days back to look.")
-def recall_recent(days: int):
-    """Each day's memories for the last N days (time-relative queries)."""
-    _run_tool("recall_recent", {"days": days})
 
 
 @click.command("timeline")

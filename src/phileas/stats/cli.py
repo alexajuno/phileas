@@ -250,45 +250,6 @@ def stats_tools(since: str, bucket: str, as_json: bool):
         render.console.print(t)
 
 
-@stats.command("bounds")
-@_shared_flags
-def stats_bounds(since: str, bucket: str, as_json: bool):
-    """recall_recent output: how often the session budget binds, and by how much."""
-    cfg = load_config()
-    since_dt, _, _ = _resolve_window(since)
-    metrics_db = cfg.home / "metrics.db"
-    if not metrics_db.exists():
-        click.echo("No recall traces yet. Run some recall_recent calls first.", err=True)
-        raise SystemExit(1)
-    data = queries.recall_bounds_summary(metrics_db, since_dt)
-    if as_json:
-        click.echo(json_mod.dumps(data, default=str))
-        return
-    render.console.print(
-        render.headline(
-            f"recall_recent Output Bounds ({since})",
-            [
-                ("Calls", str(data["calls"])),
-                ("Instrumented", str(data["instrumented"])),
-                ("Output p50", f"{data['p50_output_chars']:,} chars"),
-                ("Output p95", f"{data['p95_output_chars']:,} chars"),
-            ],
-        )
-    )
-    t = Table(title="Session budget (DEFAULT_MAX_SOURCES / DEFAULT_MAX_CHARS in recent.py)")
-    for col in ("Capped", "Cap rate", "Effect"):
-        t.add_column(col)
-    budget = data["budget"]
-    t.add_row(
-        str(budget["capped_calls"]),
-        f"{budget['cap_rate']:.0%}",
-        f"{budget['sources_hidden']:,} sessions held back, {budget['memories_in_window']:,} memories gathered",
-    )
-    render.console.print(t)
-    if data["uninstrumented"]:
-        render.console.print(f"[dim]{data['uninstrumented']} calls without bounds counters excluded.[/dim]")
-
-
 @stats.command("ingest")
 @_shared_flags
 def stats_ingest(since: str, bucket: str, as_json: bool):

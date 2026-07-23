@@ -10,7 +10,6 @@ Tools:
   - relate: create a graph edge between entities
   - about: get memories connected to an entity
   - timeline: get memories in a date range
-  - recall_recent: get recent memories (last N days) for temporal queries
   - serendipity: N high-signal memories NOT gated on query relevance
   - recall with memory_type="profile": get profile-type memories (ranked)
   - status: system health/stats
@@ -76,21 +75,19 @@ mcp = FastMCP(
         "  term queries and merge results by id. Example: instead of\n"
         "  recall('what did the user say about <person> and tennis'), call\n"
         "  recall('<person>') and recall('tennis') in parallel.\n"
-        "- recall_recent(days): recent memories by date (bounded by count and size) — for "
-        "topic-less time questions ('recently', 'yesterday', 'last chat', 'last night', "
-        "'last session', 'last time we talked'). If the question carries a topic, prefer "
-        "focused recall() — it already folds recency into its score.\n"
         "- timeline(start, end): memories anchored to a date. One day, a range, or today "
-        "(omit start). For a single-day deep dive pass that date with window=0.\n"
+        "(omit start). For a single-day deep dive pass that date with window=0. This is also "
+        "the read for topic-less time questions ('recently', 'yesterday', 'last chat', "
+        "'last session'): resolve the phrase to dates and ask for them. If the question "
+        "carries a topic, prefer focused recall() — it already folds recency into its score.\n"
         "- about(name): memories linked to a person/entity (bounded; '+N more' when capped) — for 'who is X'\n"
         "- serendipity(n): N high-signal memories NOT gated on relevance — a wildcard slot for "
         "cross-topic context the task wouldn't retrieve. Opt-in; keep n small.\n"
         "\n"
         "Reading a whole session back:\n"
         "- source(source_id): the raw turns of one session, in order, plus the memories "
-        "distilled from them. recall_recent prints a session handle (↳id8) on each line. "
-        "The most expensive view by far — reach for it only when the wording of the "
-        "conversation itself is what you need.\n"
+        "distilled from them. The most expensive view by far — reach for it only when the "
+        "wording of the conversation itself is what you need.\n"
         "\n" + _capture_instructions
     ),
 )
@@ -287,9 +284,8 @@ def recall(
 def source(source_id: str) -> str:
     """Return a session: its turns in order and the memories it produced.
 
-    Read a whole session back from its handle — `recall_recent` prints one
-    (`↳id8`) per session line. The turns are the spine; the memories are what
-    was distilled from them.
+    Read a whole session back from its handle. The turns are the spine; the
+    memories are what was distilled from them.
 
     Args:
         source_id: A source id, or a client_key / id prefix.
@@ -493,9 +489,9 @@ def expand(memory_id: str) -> str:
 def get_source_memories(source_id: str) -> str:
     """List the memories a session produced, newest first.
 
-    The cheap drill-in for a `recall_recent` session line: pass the source handle
-    shown there (the `↳<id>`) to see every memory that session produced, without
-    the turns. Use `source` instead when you want the whole session.
+    The cheap session drill-in: pass a source handle to see every memory that
+    session produced, without the turns. Use `source` instead when you want the
+    whole session.
 
     Args:
         source_id: A source handle (or client_key) for the session.
@@ -574,24 +570,6 @@ def timeline(start_date: str | None = None, end_date: str | None = None, window:
             exactly the requested day(s).
     """
     return _call("timeline", {"start_date": start_date, "end_date": end_date, "window": window})
-
-
-@mcp.tool()
-def recall_recent(days: int = 7) -> str:
-    """Return each day's memories for the last N days, grouped newest-day first.
-
-    Use for genuinely topic-less time queries: 'recently', 'yesterday',
-    'last chat', 'last night', 'last session', 'last time we talked'. If the
-    prompt already carries a topic, prefer a focused recall(query): recall
-    folds recency into its score, so it's recency-aware without enumerating
-    the whole window. Output is one line per recent session, newest first, each
-    standing in for the session with its handle (↳id8) for `source` /
-    `get_source_memories`.
-
-    Args:
-        days: How many days back to look (default 7).
-    """
-    return _call("recall_recent", {"days": days})
 
 
 @mcp.tool()

@@ -7,7 +7,7 @@ description: Phileas long-term companion memory. Use it two ways. To recall, whe
 
 Phileas is the user's centralized memory layer — three databases (SQLite + ChromaDB + KuzuDB) behind an MCP connector that store facts, find them semantically, and connect entities.
 
-Tool names below are written bare (`recall_recent`, `about`, `recall`, …). They map to whatever prefix your environment exposes them under — `mcp__phileas__*` in local Claude Code, the connector's prefix on claude.ai. Use the matching name from your tool list.
+Tool names below are written bare (`recall`, `about`, `timeline`, …). They map to whatever prefix your environment exposes them under — `mcp__phileas__*` in local Claude Code, the connector's prefix on claude.ai. Use the matching name from your tool list.
 
 ## Recall — load context before answering
 
@@ -21,7 +21,7 @@ Phileas reads `recall(query=...)` best as a *focused term phrase* — one concep
 
 Route by the shape of the question. Call several in parallel when shapes overlap, then merge results by `id`:
 
-- **Time-relative** ("yesterday", "recently", "last week", "last session", "last time we talked") → `recall_recent(days=N)`. Top memories per day, newest first, bounded. Reach for this first when the question has a temporal anchor.
+- **Time-relative** ("yesterday", "recently", "last week", "last session", "last time we talked") → resolve the phrase to a date or range and call `timeline`. For a single day pass `window=0`; for "last week" pass a `start_date`/`end_date` span. If the question also carries a topic, prefer `recall` — it folds recency into its score.
 - **Named entity** in the prompt (person, project, tool) → `about(name=...)`. Pass the bare name without a leading `@`. Returns every memory linked to that entity in the graph — the cheapest, most precise "who is X / what about Y" lookup. Bounded ("+N more" footer when a hub entity is capped).
 - **Explicit date** ("2026-04-14", "Apr 14") → `timeline(start_date="YYYY-MM-DD", window=0)`. Every active memory anchored to that day.
 - **Topic / concept** with no entity or date anchor → `recall(query=<focused term, 1–4 words>)`. Hybrid gather + cross-encoder rerank.
@@ -30,7 +30,7 @@ Route by the shape of the question. Call several in parallel when shapes overlap
 
 ### What a recall returns
 
-Recall-family tools (`recall`, `recall_recent`, `about`, `timeline`) return one line per memory:
+Recall-family tools (`recall`, `about`, `timeline`) return one line per memory:
 
 ```
 [a1b2c3d4] [event] 2026-06-07 · Mara bought a cake in Lisbon last night · Mara, Lisbon
@@ -40,7 +40,7 @@ That line is `[id8] [type] date · content · entity tags`, and the content is t
 
 The one step past a memory is the conversation it came from:
 
-- `source(source_id)` — the raw turns of a session, in order, plus the memories distilled from them. `recall_recent` prints a session handle (`↳id8`) on each line; `get_source_memories(id)` is the lighter version that lists a session's memories without the turns. Far more expensive than a recall, so reach for it only when the wording of the conversation itself is what you need.
+- `source(source_id)` — the raw turns of a session, in order, plus the memories distilled from them. A memory's `↳id8` handle is the session it came from; `get_source_memories(id)` is the lighter version that lists a session's memories without the turns. Far more expensive than a recall, so reach for it only when the wording of the conversation itself is what you need.
 
 ### Use the context
 

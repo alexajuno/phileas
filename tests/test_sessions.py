@@ -42,7 +42,7 @@ def _env(inner: str) -> str:
 def test_base_tool_name_strips_server_and_filters_non_phileas():
     assert core.base_tool_name("mcp__phileas__recall") == "recall"
     assert core.base_tool_name("mcp__claude_ai_Phileas__recall") == "recall"
-    assert core.base_tool_name("mcp__phileas__recall_recent") == "recall_recent"
+    assert core.base_tool_name("mcp__phileas__get_source_memories") == "get_source_memories"
     assert core.base_tool_name("mcp__linear__create_issue") is None
     assert core.base_tool_name("Read") is None
     assert core.base_tool_name(None) is None
