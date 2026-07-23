@@ -12,7 +12,7 @@ Measuring phileas on [LongMemEval](https://github.com/xiaowu0162/LongMemEval) (I
       -> reader (an LLM answers from what recall surfaced)
       -> judge  (LongMemEval's own per-type prompt grades the answer)
 
-This exercises the whole system and yields the per-type accuracy the field reports (comparable to Mem0 / Zep / Letta). All three LLM roles (extract, read, judge) run on gpt-4o-mini through the OpenAI API — the cost-tractable judge the field uses. The pipeline is model-agnostic: point `MODEL` at another chat model to swap it.
+This exercises the whole system and yields the per-type accuracy the field reports (comparable to Mem0 / Zep / Letta). All three LLM roles (extract, read, judge) run on Claude Haiku through headless `claude -p`, drawing on the Claude Code subscription rather than a metered API key. It reuses phileas's own `PhileasClaudeCodeChat` adapter, so the subprocess isolations that adapter carries apply here too. The model is one knob: point `MODEL` at another Claude Code alias (`haiku`, `sonnet`, `opus`) to swap it.
 
 ## Data
 
@@ -25,15 +25,14 @@ curl -sSL -O https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/reso
 
 ## Run
 
-From the `core/` root, with the OpenAI key sourced:
+From the `core/` root, with a logged-in `claude` CLI on PATH (no key to source):
 
 ```bash
-source ~/.secrets/openai.env
 .venv/bin/python evals/longmemeval/faithful.py 1                  # 1/type = 6 instances (smoke)
-.venv/bin/python evals/longmemeval/faithful.py 10 faithful_s.json # 10/type = 60 instances (~$0.55)
+.venv/bin/python evals/longmemeval/faithful.py 10 faithful_s.json # 10/type = 60 instances
 ```
 
-Args are positional: `PER_TYPE` (instances per question type, default 1) and `OUT_NAME` (results file, default `faithful_s.json`). Results checkpoint to `OUT_NAME` after every instance, so a run is safe to interrupt and inspect mid-flight. Each line prints `[i/N] <type> <sessions>s -> <memories>mem | OK|MISS|EXTRACT-FAIL`.
+Args are positional: `PER_TYPE` (instances per question type, default 1) and `OUT_NAME` (results file, default `faithful_s.json`). Results checkpoint to `OUT_NAME` after every instance, so a run is safe to interrupt and inspect mid-flight. Each line prints `[i/N] <type> <sessions>s -> <memories>mem | OK|MISS|EXTRACT-FAIL`. The cost is subscription rate limits rather than dollars: extraction dominates (~50 headless calls per instance), and the retry/backoff loop absorbs the 429s that pacing would otherwise avoid.
 
 ## Reading the output
 

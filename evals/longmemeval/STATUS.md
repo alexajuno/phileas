@@ -14,12 +14,12 @@ Get a real, comparable accuracy number for phileas on LongMemEval `s` (500 quest
 
 ## Harness state
 
-All three LLM roles (extract, read, judge) run on **gpt-4o-mini** through the OpenAI API. The model is a single knob: `MODEL` at the top of `faithful.py`. gpt-4o-mini is the cost-tractable judge the field uses (~$0.55 for a 60-instance run) and has enough rate headroom to run the whole suite without pacing.
+All three LLM roles (extract, read, judge) run on **Claude Haiku** through headless `claude -p`, drawing on the Claude Code subscription (no API key, no per-call fee). It reuses phileas's own `PhileasClaudeCodeChat` adapter, so the subprocess isolations that adapter carries apply here too. The model is a single knob: `MODEL` at the top of `faithful.py` (a Claude Code alias — `haiku`, `sonnet`, `opus`). The cost is subscription rate limits, not dollars: extraction dominates (~50 calls per instance), so a 60-instance run is ~3k headless calls — the retry/backoff loop absorbs the 429s that pacing would otherwise avoid.
 
 ## Resume checklist
 
 1. Data (not committed, ~277 MB): download `longmemeval_s_cleaned.json` into a sibling `LongMemEval/data/` checkout (see README "Data").
-2. Key: `source ~/.secrets/openai.env` (the harness exits early if `OPENAI_API_KEY` is unset).
+2. Auth: a logged-in `claude` CLI on PATH (the harness exits early if the binary is missing). No key to source.
 3. Smoke: `.venv/bin/python evals/longmemeval/faithful.py 1` (1/type = 6 instances). Confirm no EXTRACT-FAIL.
 4. Real run: `.venv/bin/python evals/longmemeval/faithful.py 10 faithful_s.json` (10/type = 60 instances) for the first real per-type number. Results checkpoint to `faithful_s.json` after every instance.
 

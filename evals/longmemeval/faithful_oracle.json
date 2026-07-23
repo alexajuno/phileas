@@ -1,0 +1,68 @@
+[
+  {
+    "qid": "e47becba",
+    "type": "single-session-user",
+    "question": "What degree did I graduate with?",
+    "gold": "Business Administration",
+    "phileas": "You graduated with a degree in Business Administration.",
+    "n_sessions": 1,
+    "n_memories": 5,
+    "extraction_failed": false,
+    "correct": true
+  },
+  {
+    "qid": "7161e7e2",
+    "type": "single-session-assistant",
+    "question": "I'm checking our previous chat about the shift rotation sheet for GM social media agents. Can you remind me what was the rotation for Admon on a Sunday?",
+    "gold": "Admon was assigned to the 8 am - 4 pm (Day Shift) on Sundays.",
+    "phileas": "I don't know.",
+    "n_sessions": 1,
+    "n_memories": 1,
+    "extraction_failed": false,
+    "correct": false
+  },
+  {
+    "qid": "8a2466db",
+    "type": "single-session-preference",
+    "question": "Can you recommend some resources where I can learn more about video editing?",
+    "gold": "The user would prefer responses that suggest resources specifically tailored to Adobe Premiere Pro, especially those that delve into its advanced settings. They might not prefer general video editing resources or resources related to other video editing software.",
+    "phileas": "I don't know.",
+    "n_sessions": 1,
+    "n_memories": 2,
+    "extraction_failed": false,
+    "correct": false
+  },
+  {
+    "qid": "0a995998",
+    "type": "multi-session",
+    "question": "How many items of clothing do I need to pick up or return from a store?",
+    "gold": 3,
+    "phileas": "I don't know.",
+    "n_sessions": 3,
+    "n_memories": 13,
+    "extraction_failed": false,
+    "correct": false
+  },
+  {
+    "qid": "6a1eabeb",
+    "type": "knowledge-update",
+    "question": "What was my personal best time in the charity 5K run?",
+    "gold": "25 minutes and 50 seconds (or 25:50)",
+    "phileas": "I don't know.\n\n(Your actual memories don't contain information about your 5K run times \u2014 they focus on your software engineering projects and career. These facts appear to be part of the question's setup, not your actual stored memories.)",
+    "n_sessions": 2,
+    "n_memories": 7,
+    "extraction_failed": false,
+    "correct": false
+  },
+  {
+    "qid": "gpt4_2655b836",
+    "type": "temporal-reasoning",
+    "question": "What was the first issue I had with my new car after its first service?",
+    "gold": "GPS system not functioning correctly",
+    "phileas": "I don't know.",
+    "n_sessions": 3,
+    "n_memories": 13,
+    "extraction_failed": false,
+    "correct": false
+  }
+]
